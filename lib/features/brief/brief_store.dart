@@ -12,6 +12,8 @@ import '../chat/domain/chat_models.dart';
 import '../auth/data/auth_controller.dart';
 import '../integrations/integrations_store.dart';
 import '../telegram/data/telegram_store.dart';
+import '../telegram/data/account_tools.dart' show accountHandle;
+import '../../infrastructure/telegram/accounts.dart';
 import '../settings/data/settings.dart';
 import '../voice/speaker.dart';
 import 'brief_prefs.dart';
@@ -99,6 +101,8 @@ String _briefPrompt(
   required String Function(int id) titleOf,
   required Set<String> apps,
   bool telegram = true,
+  List<String> accounts = const [],
+  Map<String, List<int>> excludedFolders = const {},
 }) {
   final hours = now.difference(since).inMinutes / 60;
   String chats(Iterable<int> ids) => ids.map((id) => '${titleOf(id)} (chat_id $id)').join(', ');
@@ -123,6 +127,12 @@ String _briefPrompt(
   var step = 0;
   String n() => '${++step}.';
   final research = [
+    // With several accounts, the brief spans the ones chosen in Settings.
+    if (telegram && accounts.length > 1)
+      '${n()} The user has several Telegram accounts; this brief covers ${accounts.join(' and ')}. Do every Telegram step below in each of them '
+          '(pass account to each Telegram tool), and in the brief say which account each item is from.'
+    else if (telegram && accounts.length == 1)
+      '${n()} Cover only the Telegram account ${accounts.single} (pass it as account to every Telegram tool).',
     if (!telegram)
       '${n()} Telegram isn\'t connected: skip it and use no Telegram tools.${useApps ? '' : ' No apps are connected either, so say briefly that there is nothing to brief on yet and that Telegram or apps (Gmail, Calendar, Slack…) can be connected under Settings → Apps & web.'}'
     else if (p.scope == BriefScope.chosen)
@@ -140,6 +150,11 @@ String _briefPrompt(
         '${n()} Skip muted chats unless something there is clearly important.',
       if (skipped.isNotEmpty && p.scope == BriefScope.all) '${n()} Leave out ${skipped.join(', ')} entirely.',
       if (p.excluded.isNotEmpty) '${n()} Never read, cite or mention these chats: ${chats(p.excluded)}.',
+      for (final e in excludedFolders.entries)
+        if (e.value.isNotEmpty)
+          '${n()} Leave out the folder ${e.key} entirely: never read, cite or mention its chats (chat_ids ${e.value.join(', ')}).'
+        else
+          '${n()} Leave out anything in the folder ${e.key}.',
     ],
     if (useApps) ...[
       if (mail) '${n()} Email (read-only): unread and important messages since then, e.g. gmail_fetch_emails with query "is:unread after:${since.toIso8601String().substring(0, 10).replaceAll('-', '/')}" and max_results 20.',
@@ -228,6 +243,34 @@ class BriefStore extends Notifier<BriefState> {
     if (now.difference(since).inHours > 36) since = now.subtract(const Duration(hours: 36));
     if (now.difference(since).inMinutes < 60) since = now.subtract(const Duration(hours: 6));
     if (window != null) since = now.subtract(window);
+    final prefs = ref.read(briefPrefsProvider);
+    final accounts = ref.read(accountsProvider);
+    final covered = accounts.within(prefs.accountIds);
+    // Chat titles from whichever covered account knows the chat.
+    String titleOf(int id) {
+      for (final a in covered) {
+        final t = ref.read(telegramStoreFamily(a.id)).chat(id)?.title;
+        if (t != null && t.isNotEmpty) return t;
+      }
+      return ref.read(telegramStoreProvider).chat(id)?.title ?? prefs.chatTitles[id] ?? 'chat $id';
+    }
+
+    // Excluded folders, as the chats in them now ("Work (Dagi)": [ids]).
+    final folderChats = <String, List<int>>{};
+    for (final e in prefs.excludedFolders.entries) {
+      final cut = e.key.indexOf(':');
+      final account = cut < 0 ? accounts.activeId : e.key.substring(0, cut);
+      final folderId = int.tryParse(cut < 0 ? e.key : e.key.substring(cut + 1));
+      final owner = accounts.byId(account);
+      if (folderId == null || owner?.signedIn != true) continue;
+      final label = accounts.hasSeveral ? '"${e.value}" (${owner!.label})' : '"${e.value}"';
+      try {
+        folderChats[label] = await ref.read(telegramStoreFamily(account)).loadFolder(folderId);
+      } catch (_) {
+        folderChats[label] = const [];
+      }
+    }
+
     try {
       final c = await ref
           .read(chatControllerProvider.notifier)
@@ -237,13 +280,19 @@ class BriefStore extends Notifier<BriefState> {
               kind,
               since,
               now,
-              ref.read(briefPrefsProvider),
-              titleOf: (id) =>
-                  ref.read(telegramStoreProvider).chat(id)?.title ?? ref.read(briefPrefsProvider).chatTitles[id] ?? 'chat $id',
+              prefs,
+              titleOf: titleOf,
               apps: ref.read(settingsProvider).hasComposioKey ? ref.read(integrationsProvider).connected : const {},
-              telegram: ref.read(telegramConnectedProvider),
+              // Covered accounts the assistant may read; none means the
+              // brief is about the apps alone.
+              telegram: accounts.signedIn.isEmpty
+                  ? ref.read(telegramConnectedProvider)
+                  : covered.any((a) => a.aiAccess),
+              accounts: accounts.hasSeveral ? [for (final a in covered) if (a.aiAccess) accountHandle(a)] : const [],
+              excludedFolders: folderChats,
             ),
             onStart: (c) => state = state.copyWith(live: c),
+            accounts: accounts.hasSeveral ? prefs.accountIds : null,
           );
       final answer = c.entries.whereType<AssistantEntry>().lastOrNull;
       final b = Brief(

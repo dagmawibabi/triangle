@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:handy_tdlib/api.dart' as td;
 
+import '../../../infrastructure/telegram/accounts.dart';
 import '../../../infrastructure/telegram/telegram_client.dart';
 import '../../chat/data/chat_repository.dart';
 
@@ -96,11 +97,13 @@ class AuthController extends Notifier<AuthUiState> {
   Future<void> submitPassword(String password) =>
       _client.send<td.Ok>(td.CheckAuthenticationPassword(password: password));
 
-  /// Signs out of Telegram and forgets this app's conversations, which
-  /// quote the account's messages.
-  Future<void> signOut() async {
-    await _client.logOut();
-    await ref.read(chatRepositoryProvider).clearAll();
+  /// Signs the active account out. With other accounts still signed in it
+  /// is removed and another one opens. Signing out the last account also
+  /// forgets this app's conversations, which quote the account's messages.
+  Future<void> signOut([String? accountId]) async {
+    final String id = accountId ?? ref.read(activeAccountIdProvider);
+    final removed = await ref.read(accountsProvider.notifier).signOut(id);
+    if (!removed) await ref.read(chatRepositoryProvider).clearAll();
     state = const AuthUiState();
   }
 }

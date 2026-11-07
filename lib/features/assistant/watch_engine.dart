@@ -10,7 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:handy_tdlib/api.dart' as td;
 import 'package:intl/intl.dart';
 
-import '../../infrastructure/telegram/telegram_client.dart';
+import '../../infrastructure/telegram/accounts.dart';
 import '../../infrastructure/telegram/open_chats.dart';
 import '../chat/data/chat_controller.dart';
 import '../chat/domain/chat_models.dart';
@@ -92,13 +92,19 @@ class WatchStatus {
 /// It works while the app's process is alive. With "Keep running in the
 /// background" on, a quiet ongoing notification keeps it alive after the
 /// app leaves the screen.
+///
+/// Every signed-in Telegram account is heard, whichever is on screen. Each
+/// watch covers the accounts it was set to ([Watch.covers]); a message
+/// heard in an account goes to that account's watches, and the run that
+/// follows defaults to that account.
 class WatchEngine {
   WatchEngine(this._ref);
   final Ref _ref;
 
   final status = ValueNotifier(const WatchStatus());
 
-  StreamSubscription<td.TdObject>? _sub;
+  /// One subscription per account heard, by account id.
+  final Map<String, StreamSubscription<td.TdObject>> _subs = {};
   Timer? _clock;
   bool _started = false;
   late int _since;
@@ -109,7 +115,13 @@ class WatchEngine {
   final Map<String, List<DateTime>> _aiRuns = {};
   final Set<String> _running = {};
   final LinkedHashSet<String> _seen = LinkedHashSet();
-  final Set<int> _opened = {};
+
+  /// Messages each watch has taken, so a group two accounts share fires a
+  /// watch covering both once.
+  final LinkedHashSet<String> _taken = LinkedHashSet();
+
+  /// Groups and channels kept open, by account.
+  final Map<String, Set<int>> _opened = {};
   final Object _openChatOwner = Object();
 
   /// A burst of messages is handled together once it goes quiet for the
@@ -138,8 +150,10 @@ class WatchEngine {
     if (_started) return;
     _started = true;
     _since = DateTime.now().millisecondsSinceEpoch ~/ 1000 - 30;
-    final client = _ref.read(telegramClientProvider);
-    _sub = client.updates.listen(_onUpdate);
+    // Every account is heard; accounts added or removed later join or
+    // leave.
+    _listenToAccounts();
+    _ref.listen(accountsProvider, (_, _) => _listenToAccounts());
     _clock = Timer.periodic(const Duration(seconds: 30), (_) => _tick());
     _ref.listen(watchStoreProvider, (_, _) => _sync(), fireImmediately: true);
     _ref.listen(reminderStoreProvider, (_, _) => _sync());
@@ -148,6 +162,47 @@ class WatchEngine {
     unawaited(_ref.read(appNotifierProvider).init());
     _ref.read(reminderStoreProvider.notifier).runJob = _runJob;
     status.value = status.value.copyWith(listening: true);
+  }
+
+  /// The accounts to hear: every signed-in one, and the one on screen
+  /// (the first account before its sign-in is recorded), never one still
+  /// being added.
+  Set<String> _accountIds() {
+    final s = _ref.read(accountsProvider);
+    return {
+      for (final a in s.signedIn) a.id,
+      if (s.activeId != s.addingId) s.activeId,
+    };
+  }
+
+  void _listenToAccounts() {
+    final ids = _accountIds();
+    var changed = false;
+    for (final id in _subs.keys.toList()) {
+      if (ids.contains(id)) continue;
+      // Signed out: its client is gone, and its chats with it.
+      _subs.remove(id)?.cancel();
+      _opened.remove(id);
+      _openChats.remove(id);
+      changed = true;
+    }
+    for (final id in ids) {
+      if (_subs.containsKey(id)) continue;
+      _subs[id] = _ref.read(telegramClientFamily(id)).updates.listen((u) => _onUpdate(id, u));
+      changed = true;
+    }
+    if (changed) unawaited(_sync());
+  }
+
+  TelegramStore _store(String accountId) => _ref.read(telegramStoreFamily(accountId));
+
+  bool get _several => _ref.read(accountsProvider).hasSeveral;
+
+  /// " · Work" after a title when several accounts are signed in.
+  String _accountSuffix(String? accountId) {
+    if (accountId == null || !_several) return '';
+    final a = _ref.read(accountsProvider).byId(accountId);
+    return a == null ? '' : ' · ${a.label}';
   }
 
   /// A scheduled job is due: the assistant does what it says, in the
@@ -167,6 +222,7 @@ class WatchEngine {
         .runAutomatic(
           job,
           'Scheduled job "${r.text}" is due now${r.cron == null ? '' : ' (${Cron.describe(r.cron!)})'}. Do this: ${r.prompt}',
+          accounts: r.accountIds,
         );
     if (result == null) {
       await _ref
@@ -197,17 +253,21 @@ class WatchEngine {
   }
 
   void dispose() {
-    _sub?.cancel();
+    for (final sub in _subs.values) {
+      sub.cancel();
+    }
     _clock?.cancel();
     for (final t in _debounce.values) {
       t.cancel();
     }
     // Read while starting: providers can't be read while this one is
     // being disposed.
-    _openChats?.releaseAll(_openChatOwner);
+    for (final o in _openChats.values) {
+      o.releaseAll(_openChatOwner);
+    }
   }
 
-  OpenChats? _openChats;
+  final Map<String, OpenChats> _openChats = {};
 
   List<Watch> get _active {
     final s = _ref.read(settingsProvider);
@@ -224,11 +284,14 @@ class WatchEngine {
     if ((active.any((w) => w.notify) && s.notifications) || s.mentionAlerts)
       await notifier.requestPermission();
     await _syncKeepAlive();
-    final store = _ref.read(telegramStoreProvider);
+    // A folder watch loads its folder in the account it belongs to.
+    final heard = _subs.keys.toSet();
     for (final w in active.where(
       (w) => w.scope == WatchScope.folder && w.folderId != null,
     )) {
-      await store.loadFolder(w.folderId!).then((_) {}, onError: (_) {});
+      final account = w.folderAccountId ?? legacyAccountId;
+      if (!heard.contains(account)) continue;
+      await _store(account).loadFolder(w.folderId!).then((_) {}, onError: (_) {});
     }
     await _syncOpenChats();
   }
@@ -271,14 +334,21 @@ class WatchEngine {
       status.value = status.value.copyWith(background: notifier.alive);
   }
 
-  /// Opens the groups and channels the watches cover, and closes ones no
-  /// longer watched.
-  bool get _telegram => _ref.read(telegramClientProvider).authState is td.AuthorizationStateReady;
-
+  /// Opens the groups and channels the watches cover, in each account they
+  /// cover, and closes ones no longer watched.
   Future<void> _syncOpenChats() async {
-    // Nothing to keep open without a Telegram account.
-    if (!_telegram) return;
-    final store = _ref.read(telegramStoreProvider);
+    var opened = 0;
+    for (final account in _subs.keys.toList()) {
+      // Nothing to keep open in an account that isn't signed in.
+      if (_ref.read(telegramClientFamily(account)).authState is! td.AuthorizationStateReady) continue;
+      await _syncOpenChatsIn(account);
+      opened += _opened[account]?.length ?? 0;
+    }
+    status.value = status.value.copyWith(opened: opened);
+  }
+
+  Future<void> _syncOpenChatsIn(String account) async {
+    final store = _store(account);
     bool needsOpen(ChatInfo c) =>
         c.type is td.ChatTypeSupergroup || c.type is td.ChatTypeBasicGroup;
     final want = <int>{};
@@ -291,7 +361,7 @@ class WatchEngine {
       return list.take(_openPerScope).toList();
     }
 
-    for (final w in _active) {
+    for (final w in _active.where((w) => w.covers(account))) {
       switch (w.scope) {
         case WatchScope.chats:
           want.addAll(
@@ -317,23 +387,22 @@ class WatchEngine {
           break;
       }
     }
-    final openChats = _ref.read(openChatsProvider);
-    _openChats = openChats;
-    for (final id in want.difference(_opened)) {
+    final openChats = _openChats[account] = _ref.read(openChatsFamily(account));
+    final opened = _opened[account] ??= {};
+    for (final id in want.difference(opened)) {
       try {
         await openChats.acquire(id, _openChatOwner);
-        _opened.add(id);
+        opened.add(id);
       } catch (e) {
         debugPrint('[Watches] open $id: $e');
       }
     }
-    for (final id in _opened.difference(want).toList()) {
+    for (final id in opened.difference(want).toList()) {
       try {
         await openChats.release(id, _openChatOwner);
       } catch (_) {}
-      _opened.remove(id);
+      opened.remove(id);
     }
-    status.value = status.value.copyWith(opened: _opened.length);
   }
 
   bool _matches(Watch w, td.Message m, TelegramStore store) {
@@ -364,14 +433,16 @@ class WatchEngine {
   /// New alerts start from what the app knows now: someone already online
   /// when the alert is made fires next time they come online.
   void _seedOnline() {
-    final store = _ref.read(telegramStoreProvider);
+    final stores = [for (final id in _accountIds()) _store(id)];
     for (final a in _ref.read(onlineAlertStoreProvider)) {
-      _wasOnline.putIfAbsent(a.userId, () => store.users[a.userId]?.status is td.UserStatusOnline);
+      _wasOnline.putIfAbsent(a.userId, () => stores.any((s) => s.users[a.userId]?.status is td.UserStatusOnline));
     }
     unawaited(_syncKeepAlive());
   }
 
-  Future<void> _statusChanged(int userId, td.UserStatus status) async {
+  /// Status updates for one person arrive from every account that sees
+  /// them; [_wasOnline] makes the first one count and the rest repeat it.
+  Future<void> _statusChanged(String account, int userId, td.UserStatus status) async {
     final online = status is td.UserStatusOnline;
     final was = _wasOnline[userId] ?? false;
     _wasOnline[userId] = online;
@@ -381,52 +452,53 @@ class WatchEngine {
     if (a == null) return;
     // A repeating alert stays quiet for a while after it fires.
     if (!a.once && a.lastFired != null && DateTime.now().difference(a.lastFired!) < const Duration(minutes: 15)) return;
-    final name = _ref.read(telegramStoreProvider).users.containsKey(userId)
-        ? _ref.read(telegramStoreProvider).userName(userId)
-        : a.name;
+    final store = _store(account);
+    final name = store.users.containsKey(userId) ? store.userName(userId) : a.name;
     await alerts.fired(userId);
     await _ref.read(appNotifierProvider).show(
       '$name is online',
       a.once ? 'Tap to open your chat.' : 'Tap to open your chat. You\'ll hear again next time they come online.',
-      // A private chat's id is the user's id.
-      conversationId: 'chat:$userId',
+      // A private chat's id is the user's id; it opens in the account that
+      // saw them come online.
+      conversationId: 'chat:$userId@$account',
     );
   }
 
-  void _onUpdate(td.TdObject u) {
+  void _onUpdate(String account, td.TdObject u) {
     switch (u) {
       case td.UpdateUserStatus(:final userId, :final status) when _wasOnline.containsKey(userId) || _ref.read(onlineAlertStoreProvider.notifier).of(userId) != null:
-        unawaited(_statusChanged(userId, status));
+        unawaited(_statusChanged(account, userId, status));
       case td.UpdateNewMessage(:final message):
-        _consider(message);
+        _consider(account, message);
         if (message.containsUnreadMention && !message.isOutgoing)
-          unawaited(_mentioned(message));
+          unawaited(_mentioned(account, message));
       case td.UpdateChatLastMessage(:final lastMessage?):
-        _consider(lastMessage);
+        _consider(account, lastMessage);
       case td.UpdateChatUnreadMentionCount(
         :final chatId,
         :final unreadMentionCount,
       ):
         // Groups the app hasn't opened don't send their messages, but the
         // mention count always arrives: a rise means a new mention.
+        final key = '$account:$chatId';
         final before =
-            _mentionCounts[chatId] ??
-            _ref.read(telegramStoreProvider).chat(chatId)?.unreadMentionCount ??
+            _mentionCounts[key] ??
+            _store(account).chat(chatId)?.unreadMentionCount ??
             0;
-        _mentionCounts[chatId] = unreadMentionCount;
-        if (unreadMentionCount > before) unawaited(_latestMention(chatId));
+        _mentionCounts[key] = unreadMentionCount;
+        if (unreadMentionCount > before) unawaited(_latestMention(account, chatId));
       default:
         break;
     }
   }
 
-  final Map<int, int> _mentionCounts = {};
+  final Map<String, int> _mentionCounts = {};
   final LinkedHashSet<String> _mentionSeen = LinkedHashSet();
 
-  Future<void> _latestMention(int chatId) async {
+  Future<void> _latestMention(String account, int chatId) async {
     try {
       final r = await _ref
-          .read(telegramClientProvider)
+          .read(telegramClientFamily(account))
           .send<td.FoundChatMessages>(
             td.SearchChatMessages(
               chatId: chatId,
@@ -440,20 +512,22 @@ class WatchEngine {
             ),
             limited: true,
           );
-      if (r.messages.isNotEmpty) await _mentioned(r.messages.first);
+      if (r.messages.isNotEmpty) await _mentioned(account, r.messages.first);
     } catch (e) {
       debugPrint('[Mentions] $chatId: $e');
     }
   }
 
   /// Someone mentioned the account (or replied to it): a notification that
-  /// opens the chat, unless the person turned these off.
-  Future<void> _mentioned(td.Message m) async {
+  /// opens the chat, unless the person turned these off, for every account
+  /// or for this one (Settings → Telegram → Accounts).
+  Future<void> _mentioned(String account, td.Message m) async {
     if (!_ref.read(settingsProvider).mentionAlerts) return;
+    if (!(_ref.read(accountsProvider).byId(account)?.mentionAlerts ?? true)) return;
     if (m.date < _since) return;
-    if (!_mentionSeen.add('${m.chatId}:${m.id}')) return;
+    if (!_mentionSeen.add('$account:${m.chatId}:${m.id}')) return;
     if (_mentionSeen.length > 500) _mentionSeen.remove(_mentionSeen.first);
-    final store = _ref.read(telegramStoreProvider);
+    final store = _store(account);
     final chat = store.chat(m.chatId)?.title ?? 'a chat';
     final who = store.senderName(m.senderId);
     final g = gistOf(m.content);
@@ -461,35 +535,42 @@ class WatchEngine {
     await _ref
         .read(appNotifierProvider)
         .show(
-          '$who mentioned you in $chat',
+          '$who mentioned you in $chat${_accountSuffix(account)}',
           text.length > 300 ? '${text.substring(0, 300)}…' : text,
-          conversationId: 'chat:${m.chatId}',
+          conversationId: 'chat:${m.chatId}@$account',
         );
   }
 
-  void _consider(td.Message m) {
+  void _consider(String account, td.Message m) {
     // Only what others write, and only new: the account's own messages,
     // the assistant's replies included, never trigger a watch.
     if (m.isOutgoing || m.sendingState != null || m.schedulingState != null)
       return;
     if (m.date < _since) return;
     if (gistOf(m.content).kind == 'service') return;
-    final key = '${m.chatId}:${m.id}';
+    final key = '$account:${m.chatId}:${m.id}';
     if (!_seen.add(key)) return;
     if (_seen.length > 2000) _seen.remove(_seen.first);
     status.value = status.value.copyWith(heard: status.value.heard + 1);
 
-    final store = _ref.read(telegramStoreProvider);
+    final store = _store(account);
     for (final w in _active) {
-      if (!_matches(w, m, store)) continue;
+      if (!w.covers(account) || !_matches(w, m, store)) continue;
+      // A supergroup or channel both accounts are in delivers the same
+      // message to each (their message ids are shared); it fires once.
+      // Elsewhere message ids are each account's own, so nothing is merged.
+      if (store.chat(m.chatId)?.type is td.ChatTypeSupergroup) {
+        if (!_taken.add('${w.id}:${m.chatId}:${m.id}')) continue;
+        if (_taken.length > 2000) _taken.remove(_taken.first);
+      }
       status.value = status.value.copyWith(
         matched: status.value.matched + 1,
         last:
             '${w.name}: ${store.chat(m.chatId)?.title ?? 'a chat'} at ${DateFormat.Hm().format(DateTime.now())}',
       );
-      // One batch per watch and chat: a burst in one chat is one run about
-      // that chat, never mixed with whatever else matched meanwhile.
-      final key = '${w.id}|${m.chatId}';
+      // One batch per watch, account and chat: a burst in one chat is one
+      // run about that chat, never mixed with whatever else matched.
+      final key = '${w.id}|$account|${m.chatId}';
       (_pending[key] ??= []).add(m);
       _firstPending[key] ??= DateTime.now();
       _debounce[key]?.cancel();
@@ -535,7 +616,9 @@ class WatchEngine {
   }
 
   Future<void> _flush(String key) async {
-    final watchId = key.split('|').first;
+    final parts = key.split('|');
+    final watchId = parts.first;
+    final account = parts[1];
     final messages = _pending.remove(key) ?? const [];
     _firstPending.remove(key);
     _debounce.remove(key);
@@ -551,7 +634,7 @@ class WatchEngine {
       _debounce[key] = Timer(_busyRetry, () => _flush(key));
       return;
     }
-    await _fire(w, messages);
+    await _fire(w, messages, account: account);
   }
 
   /// Fires [w] now, with the newest matching message there is (or as a
@@ -561,21 +644,19 @@ class WatchEngine {
       await _fire(w, const [], scheduled: true, test: true);
       return null;
     }
-    final store = _ref.read(telegramStoreProvider);
-    final candidates =
-        store.chats.values
-            .where(
-              (c) =>
-                  c.lastMessage != null &&
-                  !c.lastMessage!.isOutgoing &&
-                  _matches(w, c.lastMessage!, store),
-            )
-            .map((c) => c.lastMessage!)
-            .toList()
-          ..sort((a, b) => b.date.compareTo(a.date));
-    if (candidates.isEmpty)
+    // The newest matching message in any account the watch covers.
+    (td.Message, String)? newest;
+    for (final account in _accountIds().where(w.covers)) {
+      final store = _store(account);
+      for (final c in store.chats.values) {
+        final m = c.lastMessage;
+        if (m == null || m.isOutgoing || !_matches(w, m, store)) continue;
+        if (newest == null || m.date > newest.$1.date) newest = (m, account);
+      }
+    }
+    if (newest == null)
       return 'No message from someone else matches this watch yet.';
-    await _fire(w, [candidates.first], test: true);
+    await _fire(w, [newest.$1], test: true, account: newest.$2);
     return null;
   }
 
@@ -593,8 +674,8 @@ class WatchEngine {
 
   /// Looks up the messages [messages] reply to, so the assistant knows what
   /// someone is answering ("yes" to which question?).
-  Future<void> _loadReplies(List<td.Message> messages, TelegramStore store) async {
-    final client = _ref.read(telegramClientProvider);
+  Future<void> _loadReplies(List<td.Message> messages, TelegramStore store, String account) async {
+    final client = _ref.read(telegramClientFamily(account));
     for (final m in messages.take(12)) {
       final r = m.replyTo;
       if (r is! td.MessageReplyToMessage || r.messageId == 0 || _replied.containsKey(m.id)) continue;
@@ -613,7 +694,7 @@ class WatchEngine {
     if (_replied.length > 500) _replied.remove(_replied.keys.first);
   }
 
-  PostSnapshot _snapshot(td.Message m, TelegramStore store) {
+  PostSnapshot _snapshot(td.Message m, TelegramStore store, String account) {
     final g = gistOf(m.content);
     final chat = store.chat(m.chatId);
     return PostSnapshot(
@@ -626,6 +707,7 @@ class WatchEngine {
           ? null
           : store.senderName(m.senderId),
       kind: g.kind,
+      accountId: account,
     );
   }
 
@@ -634,10 +716,15 @@ class WatchEngine {
     List<td.Message> messages, {
     bool scheduled = false,
     bool test = false,
+    String? account,
   }) async {
     final settings = _ref.read(settingsProvider);
     final notifier = _ref.read(appNotifierProvider);
-    final store = _ref.read(telegramStoreProvider);
+    // The account the messages came from; a scheduled run reads the first
+    // account it covers for chat titles.
+    final String storeAccount =
+        account ?? _accountIds().where((id) => coversAccount(w.runAccounts, id)).firstOrNull ?? _ref.read(activeAccountIdProvider);
+    final store = _store(storeAccount);
     final controller = _ref.read(chatControllerProvider.notifier);
     final started = DateTime.now();
     _running.add(w.id);
@@ -648,11 +735,10 @@ class WatchEngine {
             w.id,
             (x) => x.copyWith(lastRunAt: DateTime.now(), runs: x.runs + 1),
           );
-      await _loadReplies(messages, store);
+      await _loadReplies(messages, store, storeAccount);
       final chats = {for (final m in messages) m.chatId};
-      final where = chats.length == 1
-          ? (store.chat(chats.first)?.title ?? 'a chat')
-          : '${chats.length} chats';
+      final where = '${chats.length == 1 ? (store.chat(chats.first)?.title ?? 'a chat') : '${chats.length} chats'}'
+          '${_accountSuffix(account)}';
 
       if (w.mode == WatchMode.notify && !scheduled) {
         // Straight to the chat and the notification shade; no AI.
@@ -667,7 +753,7 @@ class WatchEngine {
         final event =
             '${test ? 'Test run · ' : ''}${messages.length} new message${messages.length == 1 ? '' : 's'} in $where';
         final placed = await controller.postNotice(w, event, markdown, [
-          for (final m in messages) _snapshot(m, store),
+          for (final m in messages) _snapshot(m, store, storeAccount),
         ]);
         if (settings.notifications && w.notify && !placed.seen) {
           final body = [
@@ -718,7 +804,19 @@ class WatchEngine {
                     td.MessageSenderUser(:final userId) => ', from user_id $userId',
                     _ => '',
                   }}): ${_line(m, store)}'].join('\n')}';
-      final result = await controller.runAutomatic(w, event);
+      // With several accounts, the run is told where the messages came from
+      // and which accounts it may use.
+      final accountsNote = !_several
+          ? ''
+          : account != null
+          ? '\n(Heard in the user\'s Telegram account ${_ref.read(accountsProvider).byId(account)?.label ?? account}: act there unless the instructions say otherwise.)'
+          : '\n(This run covers ${w.runAccounts == null ? 'all of the user\'s Telegram accounts' : 'these Telegram accounts: ${_ref.read(accountsProvider).within(w.runAccounts).map((a) => a.label).join(', ')}'}; say which account each finding is from.)';
+      final result = await controller.runAutomatic(
+        w,
+        '$event$accountsNote',
+        accounts: w.runAccounts,
+        account: account,
+      );
       // The app may have shut down while the run went on.
       if (!_ref.mounted) return;
       // A widget's refresh: its history says whether it updated.

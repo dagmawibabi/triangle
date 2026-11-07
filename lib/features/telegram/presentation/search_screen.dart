@@ -14,6 +14,8 @@ import 'media_viewer.dart';
 import 'message_tile.dart' show snapshotOf;
 import 'td_image.dart';
 import 'tg_avatar.dart';
+import '../../../infrastructure/telegram/accounts.dart';
+import '../../account/account_switcher.dart';
 
 /// Every chat at once, by kind of content: all the photos, files, links or
 /// voice messages people sent, optionally matching words, newest first.
@@ -53,6 +55,17 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       if (_scroll.position.pixels > _scroll.position.maxScrollExtent - 500) _more();
     });
     if (_type != 'any' || widget.initialQuery.isNotEmpty) _search();
+    // A search of all chats follows the account picked in the app bar.
+    if (widget.chatId == null) {
+      ref.listenManual(activeAccountIdProvider, (_, _) {
+        setState(() {
+          _results.clear();
+          _searched = false;
+          _error = null;
+        });
+        if (_query.text.trim().isNotEmpty || _type != 'any') _search();
+      });
+    }
   }
 
   @override
@@ -149,6 +162,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             filled: false,
           ),
         ),
+        actions: [if (widget.chatId == null) const AccountSwitcherButton()],
       ),
       body: Column(
         children: [

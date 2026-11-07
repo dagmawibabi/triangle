@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../infrastructure/telegram/accounts.dart';
+
 /// What a watch listens to.
 enum WatchScope {
   chats('Specific chats'),
@@ -60,7 +62,26 @@ class Watch {
     this.query = '',
     this.builtIn = false,
     this.quietAtNight = false,
+    this.accountIds,
+    this.folderAccountId,
   });
+
+  /// The Telegram accounts it covers: it hears their messages, and its
+  /// assistant runs may use only them. Null: every account.
+  final List<String>? accountIds;
+
+  /// A folder belongs to one account (folder ids repeat across accounts),
+  /// so a folder watch covers that account alone. Folder watches made
+  /// before several accounts existed belong to the first one.
+  final String? folderAccountId;
+
+  /// Whether this watch hears messages in [accountId].
+  bool covers(String accountId) => scope == WatchScope.folder
+      ? (folderAccountId ?? legacyAccountId) == accountId
+      : coversAccount(accountIds, accountId);
+
+  /// The accounts its assistant runs may use (null: all).
+  List<String>? get runAccounts => scope == WatchScope.folder ? [folderAccountId ?? legacyAccountId] : accountIds;
 
   /// One of the app's own watches (the check-in): it can be changed and
   /// turned off, never deleted.
@@ -122,6 +143,9 @@ class Watch {
     String? app,
     String? query,
     bool? quietAtNight,
+    List<String>? accountIds,
+    bool allAccounts = false,
+    String? folderAccountId,
   }) => Watch(
     id: id,
     name: name ?? this.name,
@@ -143,6 +167,8 @@ class Watch {
     query: query ?? this.query,
     builtIn: builtIn,
     quietAtNight: quietAtNight ?? this.quietAtNight,
+    accountIds: allAccounts ? null : (accountIds ?? this.accountIds),
+    folderAccountId: folderAccountId ?? this.folderAccountId,
   );
 
   Map<String, dynamic> toJson() => {
@@ -166,6 +192,8 @@ class Watch {
     if (query.isNotEmpty) 'query': query,
     if (builtIn) 'built_in': true,
     if (quietAtNight) 'quiet_at_night': true,
+    'accounts': ?accountIds,
+    'folder_account': ?folderAccountId,
   };
 
   factory Watch.fromJson(Map<String, dynamic> j) => Watch(
@@ -189,6 +217,8 @@ class Watch {
     query: j['query'] ?? '',
     builtIn: j['built_in'] ?? false,
     quietAtNight: j['quiet_at_night'] ?? false,
+    accountIds: (j['accounts'] as List?)?.map((e) => '$e').toList(),
+    folderAccountId: j['folder_account'],
   );
 
   /// For the assistant and the Watches screen.
@@ -211,6 +241,7 @@ class Watch {
     if (lastRunAt != null) 'last_run': lastRunAt!.toIso8601String().substring(0, 16),
     if (builtIn) 'built_in': 'can be changed or turned off, not deleted',
     if (quietAtNight) 'quiet_at_night': true,
+    'accounts': accountIds ?? 'all',
   };
 }
 

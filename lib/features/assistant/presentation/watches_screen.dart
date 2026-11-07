@@ -18,6 +18,8 @@ import '../watches.dart';
 import '../../auth/data/auth_controller.dart';
 import '../../integrations/app_toolkits.dart';
 import '../../integrations/integrations_store.dart';
+import '../../account/account_switcher.dart';
+import '../../../infrastructure/telegram/accounts.dart';
 
 String watchTrigger(Watch w, TelegramStore store) => switch (w.scope) {
   WatchScope.chats => w.chatIds.map((id) => store.chat(id)?.title ?? 'chat $id').join(', '),
@@ -207,6 +209,7 @@ class _Reminders extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final all = ref.watch(reminderStoreProvider);
     final store = ref.read(reminderStoreProvider.notifier);
+    final accounts = ref.watch(accountsProvider);
     final shown = all.where((r) => r.enabled || r.repeats).toList()
       ..sort((a, b) => (a.next ?? DateTime(9999)).compareTo(b.next ?? DateTime(9999)));
     return Column(
@@ -246,6 +249,7 @@ class _Reminders extends ConsumerWidget {
                             [
                               if (r.cron != null) Cron.describe(r.cron!),
                               if (r.next != null) 'next ${DateFormat('EEE d MMM HH:mm').format(r.next!)}',
+                              if (r.isJob && accounts.hasSeveral) accountScopeLabel(accounts, r.accountIds),
                               if (r.isJob) 'does: ${r.prompt}',
                             ].join(' · '),
                             maxLines: 2,
@@ -258,6 +262,16 @@ class _Reminders extends ConsumerWidget {
                     PopupMenuButton<String>(
                       onSelected: (v) => switch (v) {
                         'test' => store.runNow(r),
+                        'accounts' => pickAccountScope(
+                          context,
+                          initial: r.accountIds,
+                          title: 'ACCOUNTS THIS JOB USES',
+                          note: 'When it runs, the assistant may use only these Telegram accounts.',
+                        ).then((picked) async {
+                          if (picked != null) {
+                            await store.update(r.id, (x) => x.copyWith(accountIds: picked.ids, allAccounts: picked.ids == null));
+                          }
+                        }),
                         'delete' => confirmDelete(
                           context,
                           title: 'Delete this reminder?',
@@ -267,9 +281,10 @@ class _Reminders extends ConsumerWidget {
                         }),
                         _ => null,
                       },
-                      itemBuilder: (_) => const [
-                        PopupMenuItem(value: 'test', child: Text('Run now')),
-                        PopupMenuItem(value: 'delete', child: Text('Delete')),
+                      itemBuilder: (_) => [
+                        const PopupMenuItem(value: 'test', child: Text('Run now')),
+                        if (r.isJob && accounts.hasSeveral) const PopupMenuItem(value: 'accounts', child: Text('Accounts…')),
+                        const PopupMenuItem(value: 'delete', child: Text('Delete')),
                       ],
                     ),
                     Switch(
@@ -308,6 +323,14 @@ class _WatchEditorState extends ConsumerState<WatchEditor> {
   late String _app = widget.watch?.app ?? 'gmail';
   late final _query = TextEditingController(text: widget.watch?.query ?? '');
 
+  /// The accounts it covers (null: all).
+  late List<String>? _accounts = widget.watch?.accountIds;
+
+  /// A folder watch's account: folder ids belong to one account.
+  late String _folderAccount = widget.watch?.scope == WatchScope.folder
+      ? (widget.watch?.folderAccountId ?? legacyAccountId)
+      : ref.read(activeAccountIdProvider);
+
   @override
   void dispose() {
     _name.dispose();
@@ -321,6 +344,10 @@ class _WatchEditorState extends ConsumerState<WatchEditor> {
     final name = _name.text.trim().isEmpty ? 'Watch' : _name.text.trim();
     if (_scope == WatchScope.chats && _chatIds.isEmpty) {
       showSnack(context, 'Pick at least one chat', icon: Icons.info_outline_rounded);
+      return;
+    }
+    if (_scope == WatchScope.folder && _folderId == null) {
+      showSnack(context, 'Pick a folder', icon: Icons.info_outline_rounded);
       return;
     }
     final schedule = _scope == WatchScope.schedule;
@@ -344,6 +371,8 @@ class _WatchEditorState extends ConsumerState<WatchEditor> {
           createdAt: DateTime.now(),
           app: appWatch ? _app : null,
           query: appWatch ? _query.text.trim() : '',
+          accountIds: _scope == WatchScope.folder ? null : _accounts,
+          folderAccountId: _scope == WatchScope.folder ? _folderAccount : null,
         ),
       );
     } else {
@@ -368,6 +397,11 @@ class _WatchEditorState extends ConsumerState<WatchEditor> {
           createdAt: w.createdAt,
           app: appWatch ? _app : null,
           query: appWatch ? _query.text.trim() : '',
+          // Kept as they were: the editor doesn't show them.
+          builtIn: w.builtIn,
+          quietAtNight: w.quietAtNight,
+          accountIds: _scope == WatchScope.folder ? null : _accounts,
+          folderAccountId: _scope == WatchScope.folder ? _folderAccount : null,
         ),
       );
     }
@@ -384,7 +418,14 @@ class _WatchEditorState extends ConsumerState<WatchEditor> {
   @override
   Widget build(BuildContext context) {
     final store = ref.watch(telegramStoreProvider);
-    final telegram = ref.watch(telegramConnectedProvider);
+    final accounts = ref.watch(accountsProvider);
+    // The folder's account may not be signed in any more: fall back to the
+    // account on screen.
+    if (accounts.byId(_folderAccount)?.signedIn != true && accounts.signedIn.isNotEmpty) {
+      _folderAccount = accounts.activeId;
+    }
+    final folderStore = ref.watch(accountStoreProvider(_folderAccount));
+    final telegram = ref.watch(telegramConnectedProvider) || accounts.signedIn.isNotEmpty;
     final connected = ref.watch(integrationsProvider).connected;
     final w = widget.watch;
     return Scaffold(
@@ -464,15 +505,37 @@ class _WatchEditorState extends ConsumerState<WatchEditor> {
                 onTap: _pickChats,
               ),
             ),
-          if (_scope == WatchScope.folder)
+          if (_scope == WatchScope.folder) ...[
+            // Folders belong to one account: pick the account, then its folder.
+            if (accounts.hasSeveral) ...[
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final a in accounts.signedIn)
+                    ChoiceChip(
+                      showCheckmark: false,
+                      avatar: AccountAvatar(account: a, size: 20),
+                      label: Text(a.label),
+                      selected: _folderAccount == a.id,
+                      onSelected: (_) => setState(() {
+                        if (_folderAccount != a.id) _folderId = null;
+                        _folderAccount = a.id;
+                      }),
+                    ),
+                ],
+              ),
+              const SizedBox(height: Space.s),
+            ],
             Wrap(
               spacing: 6,
               children: [
-                for (final f in store.folders)
+                for (final f in folderStore.folders)
                   ChoiceChip(label: Text(f.title), selected: _folderId == f.id, onSelected: (_) => setState(() => _folderId = f.id)),
-                if (store.folders.isEmpty) Text('You have no folders.', style: context.text.bodySmall),
+                if (folderStore.folders.isEmpty) Text('No folders in this account.', style: context.text.bodySmall),
               ],
             ),
+          ],
           if (!telegram)
             Padding(
               padding: const EdgeInsets.only(bottom: Space.s),
@@ -567,6 +630,16 @@ class _WatchEditorState extends ConsumerState<WatchEditor> {
               value: _includeMuted,
               onChanged: (v) => setState(() => _includeMuted = v),
             ),
+          if (_scope != WatchScope.folder && accounts.hasSeveral) ...[
+            const SizedBox(height: Space.l),
+            AccountScopePicker(
+              value: _accounts,
+              onChanged: (v) => setState(() => _accounts = v),
+              note: _scope.needsTelegram
+                  ? 'It hears messages in these accounts, and the assistant may use only them when it runs.'
+                  : 'When it runs, the assistant may use only these Telegram accounts.',
+            ),
+          ],
           const SizedBox(height: Space.xl),
           Text('THEN', style: context.text.labelSmall),
           const SizedBox(height: Space.s),
@@ -951,6 +1024,15 @@ class _CheckInSheetState extends ConsumerState<_CheckInSheet> {
           value: w.notify,
           onChanged: (v) => _set((x) => x.copyWith(notify: v)),
         ),
+        if (ref.watch(accountsProvider).hasSeveral) ...[
+          const SizedBox(height: Space.s),
+          AccountScopePicker(
+            value: w.accountIds,
+            onChanged: (v) => _set((x) => x.copyWith(accountIds: v, allAccounts: v == null)),
+            note: 'The Telegram accounts it looks through.',
+          ),
+          const SizedBox(height: Space.s),
+        ],
         const SizedBox(height: Space.s),
         Row(
           children: [

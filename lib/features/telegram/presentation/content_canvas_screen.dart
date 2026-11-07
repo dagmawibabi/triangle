@@ -20,6 +20,7 @@ import '../data/message_content.dart';
 import '../data/telegram_store.dart';
 import 'chat_actions.dart' show confirmAction;
 import 'tg_avatar.dart';
+import '../../../infrastructure/telegram/accounts.dart';
 
 /// Exports [folder]: pick a format, then open the file or save a copy.
 Future<void> showCanvasExport(BuildContext context, WidgetRef ref, CanvasFolder folder) async {
@@ -157,6 +158,7 @@ PostSnapshot _snapshot(WidgetRef ref, td.Message m, String chatTitle) {
     text: g.text.isNotEmpty ? g.text : (g.detail ?? ''),
     sender: channel ? null : (m.isOutgoing ? 'You' : store.senderName(m.senderId)),
     kind: g.kind,
+    accountId: ref.read(activeAccountIdProvider),
   );
 }
 

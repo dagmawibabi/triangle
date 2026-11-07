@@ -12,6 +12,7 @@ import '../telegram/presentation/chat_actions.dart' show confirmAction;
 import 'brief_settings_screen.dart';
 import 'brief_schedule.dart';
 import 'brief_store.dart';
+import 'brief_export.dart';
 
 /// Briefs: write one now, see the latest, browse earlier ones, and set the
 /// morning and night times.
@@ -30,6 +31,13 @@ class BriefScreen extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('Brief'),
         actions: [
+          // The newest brief, as a PDF, Markdown or copied text.
+          if (latest != null && latest.error == null && latest.text.isNotEmpty)
+            IconButton(
+              tooltip: 'Export latest brief',
+              icon: const Icon(Icons.ios_share_rounded),
+              onPressed: () => showBriefExportSheet(context, latest),
+            ),
           IconButton(
             tooltip: 'Brief settings',
             icon: const Icon(Icons.tune_rounded),
@@ -249,7 +257,17 @@ class BriefView extends StatelessWidget {
   Widget build(BuildContext context) {
     final answer = brief.answer;
     return Scaffold(
-      appBar: AppBar(title: Text('${brief.kind.emoji} ${DateFormat('EEE d MMM, HH:mm').format(brief.at)}')),
+      appBar: AppBar(
+        title: Text('${brief.kind.emoji} ${DateFormat('EEE d MMM, HH:mm').format(brief.at)}'),
+        actions: [
+          if (brief.error == null && brief.text.isNotEmpty)
+            IconButton(
+              tooltip: 'Export',
+              icon: const Icon(Icons.ios_share_rounded),
+              onPressed: () => showBriefExportSheet(context, brief),
+            ),
+        ],
+      ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(Space.l, Space.s, Space.l, Space.x4),
         children: [

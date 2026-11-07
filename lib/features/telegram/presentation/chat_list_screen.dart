@@ -13,6 +13,8 @@ import '../data/telegram_tools.dart';
 import 'chat_actions.dart';
 import 'chat_view_screen.dart';
 import 'tg_avatar.dart';
+import '../../../infrastructure/telegram/accounts.dart';
+import '../../account/account_switcher.dart';
 
 enum BrowseSection {
   dms('DMs', Icons.person_outline_rounded),
@@ -112,6 +114,24 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
       _loadContacts();
     if (widget.folder != null)
       ref.read(telegramStoreProvider).loadFolder(widget.folder!.id);
+    ref.listenManual(activeAccountIdProvider, (_, _) => _accountSwitched());
+  }
+
+  /// Another account was picked from the app bar: its chats replace these.
+  /// A folder belongs to one account, so its page closes instead.
+  void _accountSwitched() {
+    if (widget.folder != null) {
+      Navigator.of(context).maybePop();
+      return;
+    }
+    ref.read(telegramStoreProvider).ensureChatsLoaded();
+    if (widget.section == BrowseSection.contacts) {
+      setState(() {
+        _contacts = null;
+        _error = null;
+      });
+      _loadContacts();
+    }
   }
 
   Future<void> _loadContacts() async {
@@ -241,6 +261,7 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
     final count = contacts ? (_contacts?.length ?? 0) : source.length;
     return Scaffold(
       appBar: AppBar(
+        actions: const [AccountSwitcherButton()],
         title: Row(
           children: [
             Text(widget.title),

@@ -282,7 +282,10 @@ class _EverywhereSearchScreenState extends ConsumerState<EverywhereSearchScreen>
               children: [
                 for (final s in _sources) ...[
                   ChoiceChip(
-                    avatar: Icon(s.icon, size: 16),
+                    // Coloured here: the chip theme's default is dark on
+                    // the dark theme, and the checkmark would hide it.
+                    showCheckmark: false,
+                    avatar: Icon(s.icon, size: 16, color: _source == s ? AppColors.accent : AppColors.text2),
                     label: Text(s.label),
                     selected: _source == s,
                     onSelected: (_) {

@@ -29,9 +29,14 @@ class Reminder {
     this.conversationId,
     this.lastRunAt,
     this.runs = 0,
+    this.accountIds,
   });
 
   final String id;
+
+  /// For jobs: the Telegram accounts the assistant may use when it runs.
+  /// Null: every account.
+  final List<String>? accountIds;
 
   /// What to remind about; the notification's text.
   final String text;
@@ -70,6 +75,8 @@ class Reminder {
     String? conversationId,
     DateTime? lastRunAt,
     int? runs,
+    List<String>? accountIds,
+    bool allAccounts = false,
   }) => Reminder(
     id: id,
     text: text ?? this.text,
@@ -81,6 +88,7 @@ class Reminder {
     lastRunAt: lastRunAt ?? this.lastRunAt,
     runs: runs ?? this.runs,
     createdAt: createdAt,
+    accountIds: allAccounts ? null : (accountIds ?? this.accountIds),
   );
 
   Map<String, dynamic> toJson() => {
@@ -94,6 +102,7 @@ class Reminder {
     'last_run': lastRunAt?.toIso8601String(),
     'runs': runs,
     'created': createdAt.toIso8601String(),
+    'accounts': ?accountIds,
   };
 
   factory Reminder.fromJson(Map<String, dynamic> j) => Reminder(
@@ -107,6 +116,7 @@ class Reminder {
     lastRunAt: DateTime.tryParse(j['last_run'] ?? ''),
     runs: (j['runs'] as num?)?.toInt() ?? 0,
     createdAt: DateTime.tryParse(j['created'] ?? '') ?? DateTime.now(),
+    accountIds: (j['accounts'] as List?)?.map((e) => '$e').toList(),
   );
 
   /// For the assistant and the Watches screen.
@@ -118,6 +128,7 @@ class Reminder {
     if (cron != null) 'cron': cron,
     if (cron != null) 'repeats': Cron.describe(cron!),
     if (isJob) 'prompt': prompt,
+    if (isJob) 'accounts': accountIds ?? 'all',
     'runs': runs,
     if (lastRunAt != null) 'last_run': lastRunAt!.toIso8601String().substring(0, 16),
   };
@@ -295,7 +306,7 @@ class ReminderStore extends Notifier<List<Reminder>> {
     return at;
   }
 
-  Future<Reminder> add({required String text, DateTime? at, String? cron, String prompt = '', String? conversationId}) async {
+  Future<Reminder> add({required String text, DateTime? at, String? cron, String prompt = '', String? conversationId, List<String>? accountIds}) async {
     await ready;
     final next = firstTime(at: at, cron: cron);
     if (next == null) throw const FormatException('Give a time (at / in_minutes) or a cron expression.');
@@ -307,6 +318,7 @@ class ReminderStore extends Notifier<List<Reminder>> {
       cron: cron,
       prompt: prompt,
       conversationId: conversationId,
+      accountIds: accountIds,
       createdAt: DateTime.now(),
     );
     state = [...state, r];

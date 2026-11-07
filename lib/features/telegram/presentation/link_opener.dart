@@ -5,7 +5,10 @@ import 'package:handy_tdlib/api.dart' as td;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../app/theme.dart';
+import '../../../infrastructure/telegram/accounts.dart';
 import '../../../infrastructure/telegram/telegram_client.dart';
+import '../../account/account_router.dart';
+import '../../account/account_switcher.dart';
 import '../../chat/domain/chat_models.dart';
 import '../../chat/presentation/widgets/post_viewer.dart';
 import '../data/telegram_store.dart';
@@ -61,13 +64,35 @@ Future<void> openUrl(String url, {BuildContext? context}) async {
     return;
   }
   final container = ProviderScope.containerOf(ctx, listen: false);
-  final runner = container.read(toolRunnerProvider);
   final store = container.read(telegramStoreProvider);
   final nav = Navigator.of(ctx);
-  Map<String, dynamic> r;
-  try {
-    r = await runner.resolveLink(url);
-  } catch (_) {
+  // The account on screen first. A link it can't open (a post in a private
+  // group, an invite to a group only another account is in) is tried in the
+  // other accounts.
+  final accounts = container.read(accountsProvider);
+  final order = [accounts.activeId, for (final a in accounts.signedIn) if (a.id != accounts.activeId) a.id];
+  Map<String, dynamic>? r;
+  var account = accounts.activeId;
+  for (final id in order) {
+    Map<String, dynamic> found;
+    try {
+      found = await container.read(toolRunnerFamily(id)).resolveLink(url);
+    } catch (_) {
+      continue;
+    }
+    r ??= found;
+    final opens = switch (found['kind']) {
+      'message' => found['message_id'] is int,
+      'invite' => found['already_member'] == true,
+      _ => true,
+    };
+    if (opens) {
+      r = found;
+      account = id;
+      break;
+    }
+  }
+  if (r == null) {
     await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
     return;
   }
@@ -84,6 +109,7 @@ Future<void> openUrl(String url, {BuildContext? context}) async {
           chatTitle: '${r['chat'] ?? 'Post'}',
           date: DateTime.tryParse('${m?['date'] ?? ''}') ?? DateTime.now(),
           text: '${m?['text'] ?? m?['detail'] ?? ''}',
+          accountId: account,
         ),
       );
     case 'chat' || 'bot_start' || 'story' || 'video_chat' || 'web_app' || 'bot_add_to_group' when chatId != null:
@@ -92,13 +118,14 @@ Future<void> openUrl(String url, {BuildContext? context}) async {
       await nav.push(MaterialPageRoute<void>(builder: (_) => ChatViewScreen(chatId: chatId)));
     case 'invite':
       if (chatId != null && r['already_member'] == true) {
-        await nav.push(MaterialPageRoute<void>(builder: (_) => ChatViewScreen(chatId: chatId)));
+        // Possibly a group only another account is in: that account opens.
+        await openChatInAccount(nav.context, chatId, hint: account);
       } else {
         await showModalBottomSheet<void>(
           context: nav.context,
           showDragHandle: true,
           backgroundColor: AppColors.surface,
-          builder: (_) => _InviteSheet(info: r),
+          builder: (_) => _InviteSheet(info: r!),
         );
       }
     default:
@@ -118,15 +145,19 @@ class _InviteSheet extends ConsumerStatefulWidget {
 class _InviteSheetState extends ConsumerState<_InviteSheet> {
   bool _joining = false;
 
+  /// The account that joins: the one on screen unless another is picked.
+  late String _account = ref.read(activeAccountIdProvider);
+
   Future<void> _join() async {
     setState(() => _joining = true);
     try {
       final chat = await ref
-          .read(telegramClientProvider)
+          .read(telegramClientFamily(_account))
           .send<td.Chat>(td.JoinChatByInviteLink(inviteLink: '${widget.info['invite_link']}'), limited: true);
       if (!mounted) return;
       final nav = Navigator.of(context)..pop();
-      await nav.push(MaterialPageRoute<void>(builder: (_) => ChatViewScreen(chatId: chat.id)));
+      // The chat opens in the account that joined it.
+      await openChatInAccount(nav.context, chat.id, hint: _account);
     } catch (e) {
       if (mounted) {
         setState(() => _joining = false);
@@ -139,6 +170,9 @@ class _InviteSheetState extends ConsumerState<_InviteSheet> {
   Widget build(BuildContext context) {
     final i = widget.info;
     final approval = i['needs_approval_to_join'] == true;
+    final accounts = ref.watch(accountsProvider);
+    // Signed out while the sheet was open: back to the account on screen.
+    if (accounts.byId(_account)?.signedIn != true) _account = accounts.activeId;
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(Space.l, 0, Space.l, Space.l),
@@ -160,6 +194,25 @@ class _InviteSheetState extends ConsumerState<_InviteSheet> {
             if ('${i['description'] ?? ''}'.isNotEmpty) ...[
               const SizedBox(height: Space.m),
               Text('${i['description']}', textAlign: TextAlign.center, maxLines: 6, overflow: TextOverflow.ellipsis),
+            ],
+            if (accounts.hasSeveral) ...[
+              const SizedBox(height: Space.l),
+              Text('JOIN AS', style: context.text.labelSmall),
+              const SizedBox(height: Space.s),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final a in accounts.signedIn)
+                    ChoiceChip(
+                      showCheckmark: false,
+                      avatar: AccountAvatar(account: a, size: 20),
+                      label: Text(a.label),
+                      selected: _account == a.id,
+                      onSelected: _joining ? null : (_) => setState(() => _account = a.id),
+                    ),
+                ],
+              ),
             ],
             const SizedBox(height: Space.l),
             FilledButton(

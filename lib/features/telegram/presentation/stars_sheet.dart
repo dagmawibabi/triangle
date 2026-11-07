@@ -242,7 +242,7 @@ class _StarSheetState extends ConsumerState<_StarSheet> {
                     onSelected: (_) => setState(() => _amount = n),
                   ),
                 ChoiceChip(
-                  avatar: const Icon(Icons.edit_outlined, size: 15),
+                  avatar: Icon(Icons.edit_outlined, size: 15, color: AppColors.text2),
                   label: Text(_presets.contains(_amount) ? 'Custom' : '$_amount ⭐'),
                   selected: !_presets.contains(_amount),
                   selectedColor: starGold.withValues(alpha: 0.25),

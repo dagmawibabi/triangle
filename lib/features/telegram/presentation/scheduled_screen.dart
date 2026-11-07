@@ -13,6 +13,8 @@ import '../data/telegram_tools.dart';
 import 'chat_actions.dart' show confirmAction;
 import 'chat_view_screen.dart';
 import 'tg_avatar.dart';
+import '../../../infrastructure/telegram/accounts.dart';
+import '../../account/account_switcher.dart';
 
 /// Every message waiting to be sent, across all chats: grouped by when it
 /// goes out or by the chat it goes to, with send-now, reschedule, copy and
@@ -37,6 +39,10 @@ class _ScheduledScreenState extends ConsumerState<ScheduledScreen> {
   void initState() {
     super.initState();
     _load();
+    ref.listenManual(activeAccountIdProvider, (_, _) {
+      setState(() => _messages = null);
+      _load();
+    });
   }
 
   Future<void> _load() async {
@@ -113,7 +119,10 @@ class _ScheduledScreenState extends ConsumerState<ScheduledScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Scheduled messages'),
-        actions: [IconButton(tooltip: 'Refresh', icon: const Icon(Icons.refresh_rounded), onPressed: _loading ? null : _load)],
+        actions: [
+          IconButton(tooltip: 'Refresh', icon: const Icon(Icons.refresh_rounded), onPressed: _loading ? null : _load),
+          const AccountSwitcherButton(),
+        ],
       ),
       body: RefreshIndicator(
         onRefresh: _load,

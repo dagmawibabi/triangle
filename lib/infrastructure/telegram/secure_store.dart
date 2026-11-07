@@ -15,14 +15,18 @@ class SecureStore {
   final FlutterSecureStorage _storage;
 
   /// Changing this orphans every existing TDLib database, so it is fixed.
+  /// The first account keeps it; each added account has its own key.
   static const String _databaseKey = 'tdlib_database_key';
 
-  Future<String?> readDatabaseKey() => _read(_databaseKey);
+  static String _keyFor(String? account) =>
+      account == null || account == 'main' ? _databaseKey : '${_databaseKey}_$account';
 
-  Future<void> writeDatabaseKey(String key) =>
-      _storage.write(key: _databaseKey, value: key);
+  Future<String?> readDatabaseKey([String? account]) => _read(_keyFor(account));
 
-  Future<void> clearDatabaseKey() => _storage.delete(key: _databaseKey);
+  Future<void> writeDatabaseKey(String key, [String? account]) =>
+      _storage.write(key: _keyFor(account), value: key);
+
+  Future<void> clearDatabaseKey([String? account]) => _storage.delete(key: _keyFor(account));
 
   /// 256 random bits from the platform CSPRNG.
   ///

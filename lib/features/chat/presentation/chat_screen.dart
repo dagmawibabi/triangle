@@ -24,13 +24,14 @@ import '../../voice/voice_note_recorder.dart';
 import '../../media/audio_player_ui.dart';
 import '../../../app/app.dart' show appRouteObserver;
 import '../../telegram/presentation/attach_sheet.dart';
-import '../../telegram/presentation/chat_view_screen.dart';
 import 'history_drawer.dart';
 import '../../share/ask_sheet.dart';
 import '../../share/share_intake.dart';
 import 'widgets/chat_sheets.dart';
 import 'widgets/message_view.dart';
 import 'widgets/chat_date_divider.dart';
+import '../../account/account_switcher.dart';
+import '../../account/account_router.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key});
@@ -133,9 +134,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       if (!mounted) return;
       Navigator.of(context).popUntil((r) => r.isFirst);
       // A mention opens the Telegram chat it happened in.
-      final chat = RegExp(r'^chat:(-?\d+)$').firstMatch(id);
+      // "chat:<id>@<account>": a mention or alert from that account, which
+      // is switched to first so the chat opens in it.
+      final chat = RegExp(r'^chat:(-?\d+)(?:@(.+))?$').firstMatch(id);
       if (chat != null) {
-        Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ChatViewScreen(chatId: int.parse(chat[1]!))));
+        openChatInAccount(context, int.parse(chat[1]!), hint: chat[2]);
         return;
       }
       ref.read(chatControllerProvider.notifier).open(id);
@@ -252,6 +255,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           onTap: _pickModel,
         ),
         actions: [
+          // The account the assistant's Telegram tools use by default.
+          const AccountSwitcherButton(),
           const ContextMeter(),
           IconButton(
             tooltip: 'New chat',
@@ -761,8 +766,55 @@ class _Composer extends ConsumerStatefulWidget {
   ConsumerState<_Composer> createState() => _ComposerState();
 }
 
+/// Ideas for the empty input box, one at a time, so it suggests what the
+/// assistant can do instead of always saying the same thing.
+const _telegramHints = [
+  'What did I miss today?',
+  'Summarise my unread channels…',
+  'Who\'s waiting on my reply?',
+  'Draft a reply to my last DM…',
+  'Any mentions I haven\'t seen?',
+  'What are my groups talking about?',
+  'Find that link from last week…',
+  'Watch my DMs for anything urgent…',
+  'Write my morning brief…',
+  'Schedule a message for 9 am…',
+  'Which chats can I mute?',
+  'Save that post to my canvas…',
+];
+
+const _generalHints = [
+  'Ask me anything…',
+  'Remind me to stretch at 5…',
+  'What\'s on my calendar today?',
+  'Search the web for…',
+  'How\'s my phone\'s battery?',
+  'Am I on Wi-Fi or mobile data?',
+  'Turn on the flashlight…',
+  'Explain this like I\'m five…',
+  'Help me plan my week…',
+  'Make me an image of…',
+  'Anything important in my email?',
+  'Translate this into Amharic…',
+];
+
 class _ComposerState extends ConsumerState<_Composer> {
   final List<Attachment> _files = [];
+
+  /// The idea shown in the empty box: a random one, and a new one each time
+  /// a new chat starts.
+  final _random = Random();
+  late int _hint = _random.nextInt(1 << 20);
+
+  String _hintText(bool telegram) {
+    final ideas = telegram ? [..._telegramHints, ..._generalHints] : _generalHints;
+    return ideas[_hint % ideas.length];
+  }
+
+  /// A different idea from the one showing.
+  void _nextHint() {
+    if (mounted) setState(() => _hint += 1 + _random.nextInt(5));
+  }
 
   /// Files shared from another app, added as if picked here.
   void addAttachments(List<Attachment> files) => setState(() => _files.addAll(files));
@@ -778,6 +830,8 @@ class _ComposerState extends ConsumerState<_Composer> {
   void initState() {
     super.initState();
     widget.controller.addListener(_changed);
+    // A new chat (or another one opened) gets a new idea.
+    ref.listenManual(chatControllerProvider.select((s) => s.conversation.id), (_, _) => _nextHint());
   }
 
   @override
@@ -925,7 +979,10 @@ class _ComposerState extends ConsumerState<_Composer> {
                                 ? 'Listening…'
                                 : dictation.transcribing
                                 ? 'Transcribing…'
-                                : 'Ask about your Telegram…',
+                                : _hintText(ref.watch(telegramConnectedProvider)),
+                            // One line, cut short rather than wrapped.
+                            hintMaxLines: 1,
+                            hintStyle: TextStyle(color: AppColors.text3, overflow: TextOverflow.ellipsis),
                             isDense: true,
                             filled: false,
                             border: InputBorder.none,

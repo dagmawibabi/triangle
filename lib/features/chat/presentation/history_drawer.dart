@@ -7,7 +7,9 @@ import '../../telegram/data/telegram_store.dart';
 import '../../telegram/presentation/calls_screen.dart';
 import '../../telegram/presentation/chat_list_screen.dart';
 import '../../telegram/presentation/chat_profile_screen.dart';
+import '../../../infrastructure/telegram/accounts.dart';
 import '../../../infrastructure/telegram/telegram_client.dart';
+import '../../account/account_switcher.dart';
 import '../../settings/data/settings.dart';
 
 import 'package:handy_tdlib/api.dart' as td;
@@ -395,6 +397,10 @@ class _HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                   widget.onOpenSettings();
                 },
               ),
+              // Long press: switch to another account or add one.
+              onLongPress: telegram || ref.read(accountsProvider).hasSeveral
+                  ? () => showAccountsSheet(context, ref)
+                  : null,
               onTap: me == null
                   ? (telegram ? null : () => go((_) => const AppsWebScreen()))
                   : () async {

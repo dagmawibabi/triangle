@@ -202,10 +202,13 @@ abstract final class BriefHomeWidget {
           if (b != null) 'when': DateFormat('EEE d MMM, HH:mm').format(b.at),
           'empty': 'No brief yet. Tap to open Triangle and write one.',
           'brief': true,
+          // The list scrolls, so the whole brief goes in and no row is cut
+          // short: scrolling reaches the end.
+          'full': true,
           'items': b == null
               ? const []
               : [
-                  for (final para in forWidget(b.text, l.content).split(RegExp(r'\n\s*\n')))
+                  for (final para in forWidget(b.text, l.content, null).split(RegExp(r'\n\s*\n')))
                     if (para.trim().isNotEmpty) {'x': para.trim()},
                 ],
         }),
@@ -218,7 +221,8 @@ abstract final class BriefHomeWidget {
 
   /// Plain text that fits a widget: the part of the brief [content] asks
   /// for, without Markdown or post links.
-  static String forWidget(String markdown, [WidgetContent content = WidgetContent.full]) {
+  /// [limit] cuts it for places that can't scroll; null keeps it all.
+  static String forWidget(String markdown, [WidgetContent content = WidgetContent.full, int? limit = 1400]) {
     String section(RegExp start) {
       final m = start.firstMatch(markdown);
       if (m == null) return '';
@@ -238,6 +242,6 @@ abstract final class BriefHomeWidget {
     final text = Speaker.clean(
       picked.replaceAll(RegExp(r'https?://\S+'), '').replaceAll(RegExp(r'\(\s*\)'), ''),
     );
-    return text.length > 1400 ? '${text.substring(0, 1400)}…' : text;
+    return limit != null && text.length > limit ? '${text.substring(0, limit)}…' : text;
   }
 }

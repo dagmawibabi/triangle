@@ -18,6 +18,9 @@ import 'apps_screen.dart';
 import 'cloud_settings.dart';
 import 'settings_screen.dart' show SettingsScreen, SettingsSection;
 import 'telegram_tab.dart';
+import '../../../infrastructure/telegram/accounts.dart';
+import '../../account/account_switcher.dart';
+import '../../telegram/data/account_tools.dart';
 
 /// The three kinds of tools Settings → Tools switches between.
 enum ToolGroup {
@@ -41,12 +44,86 @@ List<TelegramTool> toolsIn(ToolGroup group) => [
     if (group.has(t)) t,
 ];
 
+/// The account whose own tool switches the page edits; null for the
+/// switches every account shares. Overridden by [ToolsScreen].
+final toolScopeProvider = Provider<String?>((ref) => null, dependencies: const []);
+
+/// The tool switches in scope: one account's, or all accounts'.
+///
+/// With an account picked, a switch changes that account only: the first
+/// change gives it its own copy of the switches. With "All accounts", a
+/// switch changes every account, those with their own copies included.
+class ToolSwitches {
+  ToolSwitches._(this._ref, this.settings, this.account, this.accounts);
+
+  factory ToolSwitches.of(WidgetRef ref) {
+    final id = ref.watch(toolScopeProvider);
+    final accounts = ref.watch(accountsProvider);
+    return ToolSwitches._(ref, ref.watch(settingsProvider), id == null ? null : accounts.byId(id), accounts);
+  }
+
+  final WidgetRef _ref;
+  final AppSettings settings;
+  final AccountsState accounts;
+
+  /// The account being edited, or null for all of them.
+  final TelegramAccount? account;
+
+  AccountsController get _ctl => _ref.read(accountsProvider.notifier);
+
+  bool editable(TelegramTool t) => true;
+
+  bool _ownChoice(TelegramAccount a, TelegramTool t) =>
+      t.destructive ? a.enabledDangerTools!.contains(t.name) : !a.disabledTools!.contains(t.name);
+
+  bool chosen(TelegramTool t) => account != null && account!.customTools
+      ? _ownChoice(account!, t)
+      : settings.toolChosen(t.name, destructive: t.destructive);
+
+  bool on(TelegramTool t) => account == null ? t.isOn(settings) : toolOnFor(t, settings, account!);
+
+  /// Gives [a] its own switches (a copy of the shared ones) if it has none.
+  void _ensureOwn(TelegramAccount a) {
+    if (!a.customTools) {
+      _ctl.setCustomTools(a.id, true, disabled: settings.disabledTools, danger: settings.enabledDangerTools);
+    }
+  }
+
+  Future<void> set(TelegramTool t, bool enabled) => setAll([t], enabled);
+
+  Future<void> setAll(Iterable<TelegramTool> tools, bool enabled) async {
+    final list = tools.toList();
+    if (account != null) {
+      _ensureOwn(account!);
+      for (final t in list) {
+        _ctl.setAccountTool(account!.id, t.name, enabled, destructive: t.destructive);
+      }
+      return;
+    }
+    // All accounts: the shared switches, and every account's own copy.
+    for (final a in accounts.accounts.where((a) => a.customTools)) {
+      for (final t in list) {
+        _ctl.setAccountTool(a.id, t.name, enabled, destructive: t.destructive);
+      }
+    }
+    for (final danger in [false, true]) {
+      final names = [for (final t in list) if (t.destructive == danger) t.name];
+      if (names.isNotEmpty) {
+        await _ref.read(settingsProvider.notifier).setToolsEnabled(names, enabled, destructive: danger);
+      }
+    }
+  }
+}
+
 /// Every tool the assistant can use, each one switchable, in three groups:
 /// Telegram, apps and the web, and the phone itself. Destructive tools have
 /// their own red tab and start off.
 class ToolsScreen extends ConsumerStatefulWidget {
-  const ToolsScreen({super.key, this.group = ToolGroup.telegram});
+  const ToolsScreen({super.key, this.group = ToolGroup.telegram, this.accountId});
   final ToolGroup group;
+
+  /// Opens on this account's own Telegram tool switches.
+  final String? accountId;
 
   @override
   ConsumerState<ToolsScreen> createState() => _ToolsScreenState();
@@ -55,8 +132,24 @@ class ToolsScreen extends ConsumerStatefulWidget {
 class _ToolsScreenState extends ConsumerState<ToolsScreen> {
   late ToolGroup _group = widget.group;
 
+  /// Whose Telegram tool switches are shown: null for all accounts.
+  late String? _account = widget.accountId;
+
   @override
   Widget build(BuildContext context) {
+    final accounts = ref.watch(accountsProvider);
+    // An account that is gone (signed out meanwhile) falls back to all.
+    if (_account != null && accounts.byId(_account!)?.signedIn != true) _account = null;
+    final scoped = accounts.hasSeveral;
+    final account = scoped ? _account : null;
+    return ProviderScope(
+      key: ValueKey(account),
+      overrides: [toolScopeProvider.overrideWithValue(account)],
+      child: _page(context, accounts, scoped, account),
+    );
+  }
+
+  Widget _page(BuildContext context, AccountsState accounts, bool scoped, String? account) {
     final all = toolsIn(_group);
     final partitions = {for (final access in ToolAccess.values)
       access: all.where((t) => t.access == access).toList()};
@@ -72,9 +165,40 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
         appBar: AppBar(
           title: const Text('Tools'),
           bottom: PreferredSize(
-            preferredSize: const Size.fromHeight(104),
+            preferredSize: Size.fromHeight(scoped ? 152 : 104),
             child: Column(
               children: [
+                if (scoped)
+                  SizedBox(
+                    height: 48,
+                    child: ListView(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.fromLTRB(Space.l, 0, Space.l, Space.s),
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: ChoiceChip(
+                            showCheckmark: false,
+                            avatar: Icon(Icons.groups_outlined, size: 18, color: account == null ? AppColors.accent : AppColors.text2),
+                            label: const Text('All accounts'),
+                            selected: account == null,
+                            onSelected: (_) => setState(() => _account = null),
+                          ),
+                        ),
+                        for (final a in accounts.signedIn)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 6),
+                            child: ChoiceChip(
+                              showCheckmark: false,
+                              avatar: AccountAvatar(account: a, size: 20),
+                              label: Text(a.label),
+                              selected: account == a.id,
+                              onSelected: (_) => setState(() => _account = a.id),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(Space.l, 0, Space.l, Space.s),
                   child: SizedBox(
@@ -104,7 +228,7 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
         ),
         body: TabBarView(
           children: [for (final access in ToolAccess.values)
-            _ToolList(key: ValueKey('$_group-$access'), tools: partitions[access]!,
+            _ToolList(key: ValueKey('$_group-$access-$account'), tools: partitions[access]!,
               danger: access == ToolAccess.destructive, intro: intro(access)),
           ],
         ),
@@ -171,6 +295,9 @@ class _ToolListState extends ConsumerState<_ToolList> {
   @override
   Widget build(BuildContext context) {
     final s = ref.watch(settingsProvider);
+    final switches = ToolSwitches.of(ref);
+    final account = switches.account;
+    final several = ref.watch(accountsProvider.select((a) => a.hasSeveral));
     final connected = ref.watch(integrationsProvider).connected;
     final telegram = ref.watch(authStateProvider).value is td.AuthorizationStateReady;
     final danger = widget.danger;
@@ -191,6 +318,43 @@ class _ToolListState extends ConsumerState<_ToolList> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(Space.l, 0, Space.l, Space.x4),
           children: [
+            if (account != null)
+              Padding(
+                padding: const EdgeInsets.only(top: Space.m),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        account.customTools
+                            ? 'These switches are ${account.label}\'s own: changes here apply to it alone.'
+                            : 'Same as all accounts. Change one to give ${account.label} its own switches.',
+                        style: context.text.bodySmall,
+                      ),
+                    ),
+                    if (account.customTools)
+                      TextButton(
+                        onPressed: () => ref.read(accountsProvider.notifier).setCustomTools(account.id, false),
+                        child: const Text('Match all'),
+                      ),
+                  ],
+                ),
+              )
+            else if (several)
+              Padding(
+                padding: const EdgeInsets.only(top: Space.m),
+                child: Text(
+                  'Changes here apply to every account. Pick an account above to change it alone.',
+                  style: context.text.bodySmall,
+                ),
+              ),
+            if (account != null && account.readOnly && !s.readOnlyMode)
+              Padding(
+                padding: const EdgeInsets.only(top: Space.s),
+                child: Text(
+                  '${account.label} is read-only for the assistant, so only tools that read are offered there.',
+                  style: context.text.bodySmall?.copyWith(color: AppColors.accent),
+                ),
+              ),
             if (s.readOnlyMode)
               Container(
                 margin: const EdgeInsets.only(top: Space.m),
@@ -231,9 +395,7 @@ class _ToolListState extends ConsumerState<_ToolList> {
                             )) {
                           return;
                         }
-                        await ref
-                            .read(settingsProvider.notifier)
-                            .setToolsEnabled([for (final t in tools) t.name], true, destructive: danger);
+                        await switches.setAll(tools, true);
                       },
                     ),
                   ),
@@ -242,9 +404,7 @@ class _ToolListState extends ConsumerState<_ToolList> {
                     child: OutlinedButton.icon(
                       icon: const Icon(Icons.remove_done_rounded, size: 18),
                       label: const Text('Disable all'),
-                      onPressed: () => ref
-                          .read(settingsProvider.notifier)
-                          .setToolsEnabled([for (final t in tools) t.name], false, destructive: danger),
+                      onPressed: () => switches.setAll(tools, false),
                     ),
                   ),
                 ],
@@ -288,7 +448,7 @@ class _ToolListState extends ConsumerState<_ToolList> {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(Space.xs, Space.xxl, Space.xs, Space.s),
                   child: Text(
-                    '${category.label.toUpperCase()} · ${tools.where((t) => t.category == category && t.isOn(s)).length}/${tools.where((t) => t.category == category).length}',
+                    '${category.label.toUpperCase()} · ${tools.where((t) => t.category == category && switches.on(t)).length}/${tools.where((t) => t.category == category).length}',
                     style: context.text.labelSmall?.copyWith(color: danger ? AppColors.danger : null),
                   ),
                 ),
@@ -307,7 +467,7 @@ class _ToolListState extends ConsumerState<_ToolList> {
                           if (i > 0) const Divider(indent: 56),
                           _ToolRow(
                             tool: t,
-                            enabled: s.toolChosen(t.name, destructive: t.destructive),
+                            enabled: switches.chosen(t),
                             blocked: s.readOnlyMode && t.modifiesData,
                             needs: toolPrerequisiteProblems(t, s, telegram: telegram, connected: connected, decisionsReady: ref.watch(decisionsReadyProvider)).firstOrNull,
                           ),
@@ -389,7 +549,18 @@ class _ToolRow extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return InkWell(
-      onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ToolDetailScreen(tool: tool))),
+      onTap: () {
+        // The detail page edits the same account's switches as this list.
+        final scope = ref.read(toolScopeProvider);
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => ProviderScope(
+              overrides: [toolScopeProvider.overrideWithValue(scope)],
+              child: ToolDetailScreen(tool: tool),
+            ),
+          ),
+        );
+      },
       child: Padding(
         padding: const EdgeInsets.fromLTRB(Space.l, Space.m, Space.s, Space.m),
         child: Row(
@@ -439,8 +610,7 @@ class _ToolRow extends ConsumerWidget {
             Switch(
               value: enabled,
               activeThumbColor: tool.destructive ? AppColors.danger : null,
-              onChanged: (v) =>
-                  ref.read(settingsProvider.notifier).setToolEnabled(tool.name, v, destructive: tool.destructive),
+              onChanged: ToolSwitches.of(ref).editable(tool) ? (v) => ToolSwitches.of(ref).set(tool, v) : null,
             ),
           ],
         ),
@@ -473,7 +643,8 @@ class ToolDetailScreen extends ConsumerWidget {
     final integrations = ref.watch(integrationsProvider);
     final telegram = ref.watch(authStateProvider).value is td.AuthorizationStateReady;
     final sees = ref.watch(modelCatalogProvider).byId(s.model)?.vision ?? true;
-    final enabled = s.toolChosen(tool.name, destructive: tool.destructive);
+    final switches = ToolSwitches.of(ref);
+    final enabled = switches.chosen(tool);
     final readOnly = s.readOnlyMode && tool.modifiesData;
     final needs = toolPrerequisiteProblems(
       tool,
@@ -604,8 +775,7 @@ class ToolDetailScreen extends ConsumerWidget {
                   ),
                   value: enabled,
                   activeThumbColor: tool.destructive ? AppColors.danger : null,
-                  onChanged: (v) =>
-                      ref.read(settingsProvider.notifier).setToolEnabled(tool.name, v, destructive: tool.destructive),
+                  onChanged: switches.editable(tool) ? (v) => switches.set(tool, v) : null,
                 ),
                 if (needs.isNotEmpty) ...[
                   const Divider(indent: Space.l, endIndent: Space.l),

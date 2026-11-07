@@ -19,6 +19,7 @@ import '../features/brief/widget_customizer_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../features/chat/presentation/chat_screen.dart';
 import '../features/settings/data/settings.dart';
+import '../infrastructure/telegram/accounts.dart';
 import '../infrastructure/telegram/telegram_client.dart';
 import 'theme.dart';
 import '../features/telegram/presentation/link_opener.dart';
@@ -132,6 +133,12 @@ class _AppGateState extends ConsumerState<AppGate> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     ref.listenManual(settingsProvider, (_, _) => _syncOnline());
+    // Only the account on screen appears online; the one switched away
+    // from goes offline, as it would in the background.
+    ref.listenManual(telegramClientProvider, (previous, _) {
+      previous?.setOnline(false);
+      _syncOnline();
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) => _syncOnline());
     // Loads the briefs, which also refreshes the home-screen widget.
     ref.read(briefStoreProvider);
@@ -164,8 +171,12 @@ class _AppGateState extends ConsumerState<AppGate> with WidgetsBindingObserver {
     final skipped = ref.watch(settingsProvider.select((s) => s.telegramSkipped));
     final loaded = ref.watch(settingsProvider.select((s) => s.loaded));
 
+    // While another account is being added (its sign-in page is open on
+    // top), the app underneath stays as it was.
+    final adding = ref.watch(accountsProvider.select((s) => s.addingId != null));
+
     final Widget screen;
-    if (auth is td.AuthorizationStateReady) {
+    if (auth is td.AuthorizationStateReady || adding) {
       screen = const ChatScreen(key: ValueKey('chat'));
     } else if (skipped && loaded) {
       // Using the app without Telegram: it can be connected later from

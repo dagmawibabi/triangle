@@ -17,6 +17,7 @@ import 'package:mime/mime.dart' show lookupMimeType;
 import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../../infrastructure/telegram/accounts.dart';
 import '../../../infrastructure/telegram/telegram_client.dart';
 import '../../../infrastructure/telegram/telegram_exception.dart';
 import '../../ai/data/ai.dart';
@@ -45,6 +46,7 @@ import 'file_loader.dart' show formatDuration;
 import 'message_content.dart';
 import 'rich_message.dart';
 import 'telegram_store.dart';
+import 'account_tools.dart' show accountsParameter;
 import '../../../infrastructure/telegram/td_compat.dart';
 import '../../../core/files/generated_files.dart';
 
@@ -1256,6 +1258,7 @@ final _tools = <TelegramTool>[
               'Send a phone notification when it fires. false runs it quietly in the background; results '
               'still land in its conversation. Default true.',
         },
+        'accounts': accountsParameter('the watch (whose messages it hears and which its runs may use; a folder watch covers its folder\'s account)'),
       },
       ['name', 'trigger', 'mode'],
     ),
@@ -1295,6 +1298,7 @@ final _tools = <TelegramTool>[
           'type': 'boolean',
           'description': 'false: run quietly, no notifications.',
         },
+        'accounts': accountsParameter('the watch'),
       },
       ['watch_id'],
     ),
@@ -2124,6 +2128,7 @@ class TelegramToolRunner {
       text: g.text.isNotEmpty ? g.text : (g.detail ?? ''),
       sender: sender,
       kind: g.kind,
+      accountId: _client.accountId,
     );
     return (json, snapshot);
   }
@@ -4722,10 +4727,12 @@ class TelegramToolRunner {
   }
 }
 
-final toolRunnerProvider = Provider<TelegramToolRunner>(
-  (ref) => TelegramToolRunner(
-    ref.watch(telegramClientProvider),
-    ref.watch(telegramStoreProvider),
+/// Each account's tool runner: the assistant's Telegram tools act on the
+/// account whose runner they run in.
+final toolRunnerFamily = Provider.family<TelegramToolRunner, String>(
+  (ref, accountId) => TelegramToolRunner(
+    ref.watch(telegramClientFamily(accountId)),
+    ref.watch(telegramStoreFamily(accountId)),
     ref.watch(settingsProvider),
     web: ref.watch(webFetcherProvider),
     browser: ref.watch(aiProvider).browser.session,
@@ -4734,4 +4741,9 @@ final toolRunnerProvider = Provider<TelegramToolRunner>(
     composio: ref.read(integrationsProvider.notifier).client,
     e2b: ref.read(e2bSessionProvider),
   ),
+);
+
+/// The active account's tool runner.
+final toolRunnerProvider = Provider<TelegramToolRunner>(
+  (ref) => ref.watch(toolRunnerFamily(ref.watch(activeAccountIdProvider))),
 );

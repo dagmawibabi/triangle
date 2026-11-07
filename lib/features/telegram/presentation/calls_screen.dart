@@ -10,6 +10,8 @@ import 'chat_actions.dart';
 import 'chat_profile_screen.dart';
 import 'chat_view_screen.dart';
 import 'tg_avatar.dart';
+import '../../../infrastructure/telegram/accounts.dart';
+import '../../account/account_switcher.dart';
 
 /// The account's call history, as Telegram keeps it: every voice and video
 /// call, newest first, with a Missed tab.
@@ -27,6 +29,7 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
     child: Scaffold(
       appBar: AppBar(
         title: const Text('Calls'),
+        actions: const [AccountSwitcherButton()],
         bottom: const TabBar(
           tabs: [
             Tab(text: 'All'),
@@ -34,13 +37,24 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
           ],
         ),
       ),
-      body: const TabBarView(children: [_CallList(onlyMissed: false), _CallList(onlyMissed: true)]),
+      // Keyed by account: switching starts the lists over for that account.
+      body: Consumer(
+        builder: (context, ref, _) {
+          final account = ref.watch(activeAccountIdProvider);
+          return TabBarView(
+            children: [
+              _CallList(key: ValueKey('$account-all'), onlyMissed: false),
+              _CallList(key: ValueKey('$account-missed'), onlyMissed: true),
+            ],
+          );
+        },
+      ),
     ),
   );
 }
 
 class _CallList extends ConsumerStatefulWidget {
-  const _CallList({required this.onlyMissed});
+  const _CallList({super.key, required this.onlyMissed});
   final bool onlyMissed;
 
   @override

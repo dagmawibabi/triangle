@@ -288,10 +288,14 @@ class PostSnapshot {
     required this.text,
     this.sender,
     this.kind = 'text',
+    this.accountId,
   });
 
   final int chatId;
   final int messageId;
+
+  /// The Telegram account it was read in, when known: it opens there.
+  final String? accountId;
   final String chatTitle;
   final DateTime date;
   final String text;
@@ -308,6 +312,7 @@ class PostSnapshot {
     'text': text,
     'sender': sender,
     'kind': kind,
+    'account': ?accountId,
   };
 
   factory PostSnapshot.fromJson(Map<String, dynamic> j) => PostSnapshot(
@@ -318,6 +323,7 @@ class PostSnapshot {
     text: j['text'] ?? '',
     sender: j['sender'],
     kind: j['kind'] ?? 'text',
+    accountId: j['account'],
   );
 }
 

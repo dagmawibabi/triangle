@@ -11,10 +11,14 @@ import '../data/telegram_store.dart';
 /// A chat's or person's profile picture: the real photo once downloaded,
 /// TDLib's blurry preview meanwhile, initials when there is no photo.
 class TgAvatar extends ConsumerStatefulWidget {
-  const TgAvatar({super.key, this.chatId, this.userId, required this.title, this.size = 40});
+  const TgAvatar({super.key, this.chatId, this.userId, required this.title, this.size = 40, this.accountId});
 
   final int? chatId;
   final int? userId;
+
+  /// The account whose copy of the photo to show; the active one when null.
+  /// TDLib's file ids belong to one account, so the right store matters.
+  final String? accountId;
   final String title;
   final double size;
 
@@ -25,6 +29,7 @@ class TgAvatar extends ConsumerStatefulWidget {
 class _TgAvatarState extends ConsumerState<TgAvatar> {
   String? _path;
   int? _requested;
+  TelegramStore? _from;
 
   static const _palette = [
     Color(0xFF8AB4FF),
@@ -50,13 +55,21 @@ class _TgAvatarState extends ConsumerState<TgAvatar> {
       return;
     }
     store.photoPath(file).then((p) {
-      if (mounted && p != null) setState(() => _path = p);
+      if (mounted && p != null && identical(_from, store)) setState(() => _path = p);
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final store = ref.watch(telegramStoreProvider);
+    final store = widget.accountId == null
+        ? ref.watch(telegramStoreProvider)
+        : ref.watch(accountStoreProvider(widget.accountId!));
+    // Another account's store: its file ids mean other files.
+    if (!identical(store, _from)) {
+      _from = store;
+      _path = null;
+      _requested = null;
+    }
     final file = _file(store);
     _ensure(store, file);
     final size = widget.size;

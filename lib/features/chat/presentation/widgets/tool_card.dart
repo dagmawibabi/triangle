@@ -12,7 +12,6 @@ import 'package:image_picker/image_picker.dart';
 
 import '../../../../app/theme.dart';
 import '../../../telegram/data/telegram_store.dart';
-import '../../../../infrastructure/telegram/telegram_client.dart';
 import '../../../telegram/presentation/message_tile.dart';
 import '../../../telegram/data/telegram_tools.dart';
 import '../../../integrations/app_toolkits.dart';
@@ -24,6 +23,9 @@ import 'json_tree.dart';
 import 'rich_results.dart';
 import 'tool_controls.dart';
 import 'tool_result_view.dart';
+import '../../../../infrastructure/telegram/accounts.dart';
+import '../../../account/account_switcher.dart';
+import '../../../telegram/data/account_tools.dart';
 
 IconData toolIcon(String name) => switch (name) {
   'jev_box' => Icons.crop_free_rounded,
@@ -336,13 +338,23 @@ String _summary(ToolPart part) {
   return '';
 }
 
+/// The store of the account [part] acts in, so a card names chats as that
+/// account knows them.
+TelegramStore _storeOfPart(WidgetRef ref, ToolPart part) {
+  final accounts = ref.watch(accountsProvider);
+  final id = accountOfCall(accounts, part.name, part.args);
+  return id == null || accounts.byId(id)?.signedIn != true
+      ? ref.watch(telegramStoreProvider)
+      : ref.watch(accountStoreProvider(id));
+}
+
 class ToolCallCard extends ConsumerWidget {
   const ToolCallCard({super.key, required this.part});
   final ToolPart part;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final store = ref.watch(telegramStoreProvider);
+    final store = _storeOfPart(ref, part);
     if (part.status == ToolStatus.awaitingApproval)
       return ApprovalCard(part: part);
     final tool = toolNamed(part.name);
@@ -540,7 +552,7 @@ class _ApprovalCardState extends ConsumerState<ApprovalCard> {
     final from = widget.part.args['from_chat_id'];
     final ids = widget.part.args['message_ids'] as List? ?? const [];
     if (from is! num) return;
-    final client = ref.read(telegramClientProvider);
+    final client = ref.read(telegramClientFamily(accountForCall(ref.read(accountsProvider), widget.part.args)));
     final messages = <td.Message>[];
     for (final id in ids) {
       if (id is! num) continue;
@@ -622,9 +634,14 @@ class _ApprovalCardState extends ConsumerState<ApprovalCard> {
   @override
   Widget build(BuildContext context) {
     final part = widget.part;
-    final runner = ref.watch(toolRunnerProvider);
-    final store = ref.watch(telegramStoreProvider);
     final args = part.args;
+    // The account the call acts in: what the card describes, and who it
+    // comes from when several accounts are signed in.
+    final accounts = ref.watch(accountsProvider);
+    final accountId = accountForCall(accounts, args);
+    final account = accounts.forAi.length > 1 ? accounts.byId(accountId) : null;
+    final runner = ref.watch(toolRunnerFamily(accountId));
+    final store = ref.watch(accountStoreProvider(accountId));
     final controller = ref.read(chatControllerProvider.notifier);
     final fromId = args['from_chat_id'];
     final ids = (args['message_ids'] as List? ?? const []);
@@ -672,6 +689,18 @@ class _ApprovalCardState extends ConsumerState<ApprovalCard> {
             ],
           ),
           const SizedBox(height: Space.m),
+          if (account != null) ...[
+            Text('As', style: context.text.labelSmall),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                AccountAvatar(account: account, size: 20),
+                const SizedBox(width: Space.s),
+                Expanded(child: Text(account.label, style: context.text.bodyMedium)),
+              ],
+            ),
+            const SizedBox(height: Space.m),
+          ],
           if (_simple)
             Container(
               width: double.infinity,
@@ -1123,7 +1152,7 @@ class _ToolDetailsState extends ConsumerState<_ToolDetails> {
   @override
   Widget build(BuildContext context) {
     final part = widget.part;
-    final store = ref.watch(telegramStoreProvider);
+    final store = _storeOfPart(ref, part);
     // The part changes as the tool runs; the controller says when.
     ref.watch(chatControllerProvider.select((s) => s.revision));
     final controller = ref.read(chatControllerProvider.notifier);

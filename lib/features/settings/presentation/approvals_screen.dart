@@ -5,6 +5,10 @@ import '../../../app/theme.dart';
 import '../../telegram/data/telegram_tools.dart';
 import '../../auth/data/auth_controller.dart';
 import '../data/settings.dart';
+import '../../../infrastructure/telegram/accounts.dart';
+import '../../account/account_switcher.dart';
+import '../../account/accounts_settings.dart';
+import '../../telegram/data/account_tools.dart';
 
 /// When the assistant must wait for a tap before acting, and which of its
 /// tools that covers.
@@ -15,6 +19,7 @@ class ApprovalsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final s = ref.watch(settingsProvider);
     final ctl = ref.read(settingsProvider.notifier);
+    final accounts = ref.watch(accountsProvider);
     // Telegram's tools only matter once it is connected.
     final telegram = ref.watch(telegramConnectedProvider);
     bool shown(TelegramTool t) => telegram || !t.needsTelegram;
@@ -70,6 +75,52 @@ class ApprovalsScreen extends ConsumerWidget {
               onChanged: ctl.setReadOnlyMode,
             ),
           ),
+          // Accounts with their own rules: these win for actions in them.
+          if (accounts.hasSeveral) ...[
+            const SizedBox(height: Space.l),
+            Text('BY ACCOUNT', style: context.text.labelSmall),
+            const SizedBox(height: Space.s),
+            Container(
+              margin: const EdgeInsets.only(bottom: Space.s),
+              decoration: BoxDecoration(color: AppColors.surface2, borderRadius: BorderRadius.circular(Radii.l)),
+              child: SwitchListTile(
+                secondary: lead(const Icon(Icons.alt_route_rounded)),
+                title: const Text('Use another account when a tool is off'),
+                subtitle: Text(
+                  s.accountFallback
+                      ? 'If a tool is off (or read-only) in the account you\'re working in, the assistant may do it through another account.'
+                      : 'A tool you turned off in one account stays off: the assistant won\'t do it through another account unless you name that account.',
+                  style: context.text.bodySmall,
+                ),
+                value: s.accountFallback,
+                onChanged: ctl.setAccountFallback,
+              ),
+            ),
+            Container(
+              decoration: BoxDecoration(color: AppColors.surface2, borderRadius: BorderRadius.circular(Radii.l)),
+              child: Column(
+                children: [
+                  for (final a in accounts.signedIn)
+                    ListTile(
+                      leading: AccountAvatar(account: a, size: 32),
+                      title: Text(a.label),
+                      subtitle: Text(
+                        s.readOnlyMode || a.readOnly
+                            ? 'Read-only'
+                            : a.approvalMode == null
+                            ? 'Same as above'
+                            : '${approvalModeFor(s, a).label} · its own',
+                        style: context.text.bodySmall,
+                      ),
+                      trailing: Icon(Icons.chevron_right_rounded, color: AppColors.text3),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(builder: (_) => AccountDetailScreen(accountId: a.id)),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: Space.xl),
           _Section(
             title: 'ALWAYS ASK',

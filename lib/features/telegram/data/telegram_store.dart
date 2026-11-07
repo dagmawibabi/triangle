@@ -1,9 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter_riverpod/legacy.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:handy_tdlib/api.dart' as td;
 
+import '../../../infrastructure/telegram/accounts.dart';
 import '../../../infrastructure/telegram/telegram_client.dart';
 import '../../../infrastructure/telegram/telegram_exception.dart';
 import '../../../infrastructure/telegram/td_compat.dart';
@@ -496,9 +497,31 @@ class TelegramStore extends ChangeNotifier {
   }
 }
 
-final telegramStoreProvider = ChangeNotifierProvider<TelegramStore>((ref) {
-  return TelegramStore(ref.watch(telegramClientProvider));
+/// Each account's store, alive as long as its client, so every account's
+/// chat list stays current whichever one is on screen. Read through
+/// [accountStoreProvider] or [telegramStoreProvider] to hear its changes.
+final telegramStoreFamily = Provider.family<TelegramStore, String>((ref, id) {
+  final store = TelegramStore(ref.watch(telegramClientFamily(id)));
+  ref.onDispose(store.dispose);
+  return store;
 });
+
+TelegramStore _listened(Ref ref, TelegramStore store) {
+  void changed() => ref.notifyListeners();
+  store.addListener(changed);
+  ref.onDispose(() => store.removeListener(changed));
+  return store;
+}
+
+/// One account's store; widgets watching it rebuild when it changes.
+final accountStoreProvider = Provider.family<TelegramStore, String>(
+  (ref, id) => _listened(ref, ref.watch(telegramStoreFamily(id))),
+);
+
+/// The active account's store. Switching accounts swaps it.
+final telegramStoreProvider = Provider<TelegramStore>(
+  (ref) => _listened(ref, ref.watch(telegramStoreFamily(ref.watch(activeAccountIdProvider)))),
+);
 
 /// A chat folder: its id, name and Telegram's icon name.
 class FolderInfo {

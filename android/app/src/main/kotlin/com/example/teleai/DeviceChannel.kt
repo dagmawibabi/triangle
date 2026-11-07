@@ -42,6 +42,10 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileOutputStream
 import java.net.Inet4Address
+import java.net.Inet6Address
+import android.bluetooth.BluetoothManager
+import android.location.LocationManager
+import android.nfc.NfcAdapter
 
 /// The phone itself, for the assistant's device tools (lib/features/device):
 /// text messages, call log and contacts, installed apps, specs, battery and
@@ -247,7 +251,27 @@ object DeviceChannel {
                 result.success(mapOf("set" to true))
             }
             "openSettings" -> {
-                val action = when (call.argument<String>("page")) {
+                val page = call.argument<String>("page")
+                // Android 10+ lets apps show the system's own switches in a
+                // panel over the app (apps can no longer flip them).
+                val panel = if (Build.VERSION.SDK_INT >= 29) when (page) {
+                    "panel_internet" -> Settings.Panel.ACTION_INTERNET_CONNECTIVITY
+                    "panel_wifi" -> Settings.Panel.ACTION_WIFI
+                    "panel_nfc" -> Settings.Panel.ACTION_NFC
+                    else -> null
+                } else null
+                if (panel != null) {
+                    start(context, Intent(panel))
+                    result.success(true)
+                    return
+                }
+                val action = when (page) {
+                    "panel_internet" -> Settings.ACTION_WIRELESS_SETTINGS
+                    "panel_wifi" -> Settings.ACTION_WIFI_SETTINGS
+                    "panel_nfc" -> Settings.ACTION_NFC_SETTINGS
+                    "vpn" -> Settings.ACTION_VPN_SETTINGS
+                    "data_usage" -> if (Build.VERSION.SDK_INT >= 28) Settings.ACTION_DATA_USAGE_SETTINGS else Settings.ACTION_WIRELESS_SETTINGS
+                    "network" -> Settings.ACTION_WIRELESS_SETTINGS
                     "wifi" -> Settings.ACTION_WIFI_SETTINGS
                     "bluetooth" -> Settings.ACTION_BLUETOOTH_SETTINGS
                     "mobile_data" -> Settings.ACTION_DATA_ROAMING_SETTINGS
@@ -372,8 +396,19 @@ object DeviceChannel {
             "dns" to link?.dnsServers?.map { it.hostAddress },
             "interface" to link?.interfaceName,
             "private_dns" to if (Build.VERSION.SDK_INT >= 28) link?.privateDnsServerName else null,
+            "private_dns_active" to if (Build.VERSION.SDK_INT >= 28) link?.isPrivateDnsActive else null,
             "airplane_mode" to (Settings.Global.getInt(context.contentResolver, Settings.Global.AIRPLANE_MODE_ON, 0) != 0),
+            "ipv6" to link?.linkAddresses?.firstOrNull { it.address is Inet6Address && !it.address.isLinkLocalAddress }?.address?.hostAddress,
+            "gateway" to link?.routes?.firstOrNull { it.isDefaultRoute && it.gateway != null }?.gateway?.hostAddress,
+            "domains" to link?.domains,
+            "mtu" to if (Build.VERSION.SDK_INT >= 29) link?.mtu?.takeIf { it > 0 } else null,
+            "not_vpn_restricted" to (caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED) == true),
+            "captive_portal" to (caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL) == true),
         )
+        // What each radio is set to, for the sheet's switches. Each read is
+        // allowed without extra permissions on current Android; any that
+        // isn't on this phone is left out.
+        out["toggles"] = toggles(context)
         if (transport == "wifi") {
             val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
             @Suppress("DEPRECATION") val info = wm.connectionInfo
@@ -387,6 +422,27 @@ object DeviceChannel {
                 "frequency_mhz" to info?.frequency,
                 "band" to info?.frequency?.let { if (it > 5900) "6 GHz" else if (it > 4900) "5 GHz" else "2.4 GHz" },
                 "name_hidden" to (ssid == null || ssid == "<unknown ssid>"),
+                "channel" to info?.frequency?.let { f ->
+                    when {
+                        f == 2484 -> 14
+                        f in 2412..2472 -> (f - 2407) / 5
+                        f in 5000..5895 -> (f - 5000) / 5
+                        f in 5925..7125 -> (f - 5950) / 5
+                        else -> null
+                    }
+                },
+                "standard" to if (Build.VERSION.SDK_INT >= 30) when (info?.wifiStandard) {
+                    4 -> "Wi-Fi 4 (802.11n)"
+                    5 -> "Wi-Fi 5 (802.11ac)"
+                    6 -> "Wi-Fi 6 (802.11ax)"
+                    7 -> "WiGig (802.11ad)"
+                    8 -> "Wi-Fi 7 (802.11be)"
+                    1 -> "802.11a/b/g"
+                    else -> null
+                } else null,
+                "max_link_mbps" to if (Build.VERSION.SDK_INT >= 30) info?.maxSupportedRxLinkSpeedMbps?.takeIf { it > 0 } else null,
+                "tx_mbps" to if (Build.VERSION.SDK_INT >= 29) info?.txLinkSpeedMbps?.takeIf { it > 0 } else null,
+                "rx_mbps" to if (Build.VERSION.SDK_INT >= 29) info?.rxLinkSpeedMbps?.takeIf { it > 0 } else null,
             )
         }
         val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
@@ -394,6 +450,45 @@ object DeviceChannel {
         out["sim_country"] = tm.simCountryIso.ifEmpty { null }
         out["roaming"] = try {
             tm.isNetworkRoaming
+        } catch (e: Exception) {
+            null
+        }
+        // 0 (none) to 4 (great), the same bars the status bar shows.
+        out["cell_signal_level"] = if (Build.VERSION.SDK_INT >= 28) try {
+            tm.signalStrength?.level
+        } catch (e: Exception) {
+            null
+        } else null
+        out["operator_country"] = tm.networkCountryIso.ifEmpty { null }
+        return out
+    }
+
+    private fun toggles(context: Context): Map<String, Any?> {
+        val out = mutableMapOf<String, Any?>()
+        out["airplane"] = Settings.Global.getInt(context.contentResolver, Settings.Global.AIRPLANE_MODE_ON, 0) != 0
+        out["wifi"] = try {
+            (context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager).isWifiEnabled
+        } catch (e: Exception) {
+            null
+        }
+        out["mobile_data"] = if (Build.VERSION.SDK_INT >= 26) try {
+            (context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager).isDataEnabled
+        } catch (e: Exception) {
+            null
+        } else null
+        out["bluetooth"] = try {
+            (context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter?.isEnabled
+        } catch (e: Exception) {
+            null
+        }
+        out["nfc"] = try {
+            NfcAdapter.getDefaultAdapter(context)?.isEnabled
+        } catch (e: Exception) {
+            null
+        }
+        out["location"] = try {
+            val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            if (Build.VERSION.SDK_INT >= 28) lm.isLocationEnabled else lm.isProviderEnabled(LocationManager.GPS_PROVIDER)
         } catch (e: Exception) {
             null
         }

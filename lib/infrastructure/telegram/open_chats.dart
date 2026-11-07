@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:handy_tdlib/api.dart' as td;
 
+import 'accounts.dart';
 import 'telegram_client.dart';
 
 /// Shares TDLib's open-chat lifecycle between screens and background watches.
@@ -46,6 +47,13 @@ class OpenChats {
   }
 }
 
+/// Each account's open chats: a chat is opened in the account that wants
+/// its live updates.
+final openChatsFamily = Provider.family<OpenChats, String>((ref, accountId) {
+  return OpenChats(ref.watch(telegramClientFamily(accountId)));
+});
+
+/// The active account's open chats.
 final openChatsProvider = Provider<OpenChats>((ref) {
-  return OpenChats(ref.watch(telegramClientProvider));
+  return ref.watch(openChatsFamily(ref.watch(activeAccountIdProvider)));
 });

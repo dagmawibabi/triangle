@@ -58,7 +58,18 @@ class BriefPrefs {
     this.length = BriefLength.extensive,
     this.language = '',
     this.instructions = '',
+    this.accountIds,
+    this.excludedFolders = const {},
   });
+
+  /// Folders never read or mentioned, as "<account id>:<folder id>" (a
+  /// folder id means a folder of one account) to the folder's name. Their
+  /// chats are looked up each time a brief is written, so chats added to
+  /// the folder later are left out too.
+  final Map<String, String> excludedFolders;
+
+  /// The Telegram accounts briefs cover. Null: every account.
+  final List<String>? accountIds;
 
   final BriefScope scope;
 
@@ -109,6 +120,9 @@ class BriefPrefs {
     BriefLength? length,
     String? language,
     String? instructions,
+    List<String>? accountIds,
+    bool allAccounts = false,
+    Map<String, String>? excludedFolders,
   }) => BriefPrefs(
     scope: scope ?? this.scope,
     chosen: chosen ?? this.chosen,
@@ -126,6 +140,8 @@ class BriefPrefs {
     length: length ?? this.length,
     language: language ?? this.language,
     instructions: instructions ?? this.instructions,
+    accountIds: allAccounts ? null : (accountIds ?? this.accountIds),
+    excludedFolders: excludedFolders ?? this.excludedFolders,
   );
 
   Map<String, dynamic> toJson() => {
@@ -145,6 +161,8 @@ class BriefPrefs {
     'length': length.name,
     'language': language,
     'instructions': instructions,
+    'accounts': ?accountIds,
+    if (excludedFolders.isNotEmpty) 'excluded_folders': excludedFolders,
   };
 
   factory BriefPrefs.fromJson(Map<String, dynamic> j) {
@@ -173,6 +191,10 @@ class BriefPrefs {
       length: BriefLength.values.asNameMap()[j['length']] ?? d.length,
       language: j['language'] ?? d.language,
       instructions: j['instructions'] ?? d.instructions,
+      accountIds: (j['accounts'] as List?)?.map((e) => '$e').toList(),
+      excludedFolders: {
+        for (final e in ((j['excluded_folders'] as Map?) ?? const {}).entries) '${e.key}': '${e.value}',
+      },
     );
   }
 
@@ -228,6 +250,12 @@ class BriefPrefsController extends Notifier<BriefPrefs> {
       chatTitles: {...p.chatTitles}..remove(chatId),
     ),
   );
+
+  /// Leaves folder [folderId] of [accountId] out of briefs.
+  Future<void> excludeFolder(String accountId, int folderId, String title) =>
+      update((p) => p.copyWith(excludedFolders: {...p.excludedFolders, '$accountId:$folderId': title}));
+
+  Future<void> dropFolder(String key) => update((p) => p.copyWith(excludedFolders: {...p.excludedFolders}..remove(key)));
 
   Future<void> reset() => update((_) => const BriefPrefs());
 }

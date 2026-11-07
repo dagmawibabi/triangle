@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../app/theme.dart';
+import '../../../infrastructure/telegram/accounts.dart';
 import '../../../infrastructure/telegram/telegram_client.dart';
 import '../../ai/data/ai.dart';
 import '../../ai/data/decision_settings.dart';
@@ -345,13 +346,23 @@ class _SystemCheckScreenState extends ConsumerState<SystemCheckScreen> {
       g.results.add(const CheckResult(CheckStatus.ok, 'Running in the background'));
     }
     final store = ref.read(telegramStoreProvider);
-    final telegram = ref.read(telegramClientProvider).authState is td.AuthorizationStateReady;
+    final accounts = ref.read(accountsProvider);
+    final telegram = ref.read(telegramClientProvider).authState is td.AuthorizationStateReady || accounts.signedIn.isNotEmpty;
     final connected = ref.read(integrationsProvider).connected;
     for (final w in active) {
+      // The accounts it covers, as stores; a folder watch has one.
+      final covered = [
+        for (final a in accounts.signedIn)
+          if (w.covers(a.id)) ref.read(telegramStoreFamily(a.id)),
+      ];
       if (w.scope.needsTelegram && !telegram) {
         g.results.add(CheckResult(CheckStatus.warn, '${w.name} needs Telegram', 'It can\'t hear messages until Telegram is connected.', page));
+      } else if (w.scope.needsTelegram && accounts.hasSeveral && covered.isEmpty) {
+        g.results.add(CheckResult(CheckStatus.warn, '${w.name} covers no signed-in account', 'Edit it to pick the accounts it should hear.', page));
       } else if (w.scope == WatchScope.chats && telegram && store.chats.isNotEmpty) {
-        final missing = w.chatIds.where((id) => store.chat(id) == null).length;
+        // Missing only when no account it covers has the chat.
+        final stores = covered.isEmpty ? [store] : covered;
+        final missing = w.chatIds.where((id) => stores.every((s) => s.chat(id) == null)).length;
         if (missing > 0) g.results.add(CheckResult(CheckStatus.warn, '${w.name} watches $missing chat${missing == 1 ? '' : 's'} you left or that were deleted', 'Edit it to pick chats again.', page));
       } else if (w.scope == WatchScope.app && w.app != null && w.app != 'any' && !connected.contains(w.app)) {
         g.results.add(CheckResult(CheckStatus.warn, '${w.name}: ${w.app} isn\'t connected', 'It finds nothing until the app is connected.', () => const AppsWebScreen()));

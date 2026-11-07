@@ -8,6 +8,7 @@ import '../../../../app/theme.dart';
 import '../../../device/device.dart';
 import '../../domain/chat_models.dart';
 import 'message_preview.dart';
+import 'network_sheet.dart';
 
 /// Cards for what the phone reports: its specs with RAM, storage and
 /// battery gauges, the network, installed apps (tap to open), text messages,
@@ -64,10 +65,13 @@ Future<void> _device(BuildContext context, String method, Map<String, dynamic> a
 }
 
 class _Card extends StatelessWidget {
-  const _Card({required this.icon, required this.title, required this.children});
+  const _Card({required this.icon, required this.title, required this.children, this.onTap});
   final IconData icon;
   final String title;
   final List<Widget> children;
+
+  /// Opens the full details, with a chevron in the header saying so.
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -80,21 +84,25 @@ class _Card extends StatelessWidget {
     clipBehavior: Clip.antiAlias,
     child: Material(
       type: MaterialType.transparency,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(Space.m, Space.m, Space.m, Space.xs),
-            child: Row(
-              children: [
-                Icon(icon, size: 18, color: AppColors.text2),
-                const SizedBox(width: Space.s),
-                Expanded(child: Text(title, style: context.text.labelMedium?.copyWith(color: AppColors.text2))),
-              ],
+      child: InkWell(
+        onTap: onTap,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(Space.m, Space.m, Space.m, Space.xs),
+              child: Row(
+                children: [
+                  Icon(icon, size: 18, color: AppColors.text2),
+                  const SizedBox(width: Space.s),
+                  Expanded(child: Text(title, style: context.text.labelMedium?.copyWith(color: AppColors.text2))),
+                  if (onTap != null) Icon(Icons.chevron_right_rounded, size: 20, color: AppColors.text3),
+                ],
+              ),
             ),
-          ),
-          ...children,
-        ],
+            ...children,
+          ],
+        ),
       ),
     ),
   );
@@ -285,6 +293,8 @@ class _NetworkCard extends StatelessWidget {
         _ => Icons.lan_outlined,
       },
       title: 'Network',
+      // The full details and the radios' switches.
+      onTap: Device.supported ? () => showNetworkSheet(context, net) : null,
       children: [
         ListTile(
           title: Text(

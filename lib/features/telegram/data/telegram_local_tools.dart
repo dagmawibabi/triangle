@@ -22,6 +22,7 @@ final _localPhoneTools = <TelegramTool>[
       'at': {'type': 'string', 'description': 'Fire once at this local time, ISO "2026-10-23T18:30".'},
       'cron': {'type': 'string', 'description': 'Repeat on this cron schedule (local time).'},
       'prompt': {'type': 'string', 'description': 'Makes it a job: what you do when it fires.'},
+      'accounts': accountsParameter('a job (the accounts you may use when it runs)'),
     }, ['text']),
   ),
   TelegramTool(
@@ -50,6 +51,7 @@ final _localPhoneTools = <TelegramTool>[
       'cron': {'type': 'string'},
       'prompt': {'type': 'string'},
       'enabled': {'type': 'boolean'},
+      'accounts': accountsParameter('a job'),
     }, ['reminder_id']),
   ),
   TelegramTool(

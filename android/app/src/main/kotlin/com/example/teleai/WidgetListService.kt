@@ -28,12 +28,17 @@ class WidgetListService : RemoteViewsService() {
         private var images = true
         private var links = true
 
+        /// The brief: every row shown whole, whatever "lines per item" says,
+        /// since the list scrolls to the end.
+        private var full = false
+
         override fun onCreate() {}
 
         override fun onDataSetChanged() {
             val payload = BriefWidget.payload(context, widgetId)
             images = payload?.optBoolean("images", true) ?: true
             links = payload?.optBoolean("links", true) ?: true
+            full = payload?.optBoolean("full", false) ?: false
             val items = payload?.optJSONArray("items") ?: JSONArray()
             rows = (0 until items.length()).mapNotNull { i ->
                 val o = items.optJSONObject(i) ?: return@mapNotNull null
@@ -70,7 +75,7 @@ class WidgetListService : RemoteViewsService() {
             text(R.id.item_title, row.title, look.title, look.bodySize + 0.5f)
             text(R.id.item_text, row.text, look.body, look.bodySize)
             text(R.id.item_subtitle, row.subtitle, look.body, 11f)
-            views.setInt(R.id.item_text, "setMaxLines", look.maxLines)
+            views.setInt(R.id.item_text, "setMaxLines", if (full) Int.MAX_VALUE else look.maxLines)
             val bitmap = if (look.images && images && row.image != null) bitmap(row.image) else null
             if (bitmap != null) {
                 views.setImageViewBitmap(R.id.item_image, bitmap)

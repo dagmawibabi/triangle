@@ -145,6 +145,7 @@ class AppSettings {
     this.disabledTools = const {},
     this.enabledDangerTools = const {},
     this.readOnlyMode = false,
+    this.accountFallback = false,
     this.autoPhotos = true,
     this.autoVoice = true,
     this.autoMusic = false,
@@ -462,6 +463,12 @@ class AppSettings {
   /// deletes, whatever the per-tool switches say.
   final bool readOnlyMode;
 
+  /// With several Telegram accounts: whether the assistant may do something
+  /// in another account when the tool it needs is off (or the account is
+  /// read-only) in the one it was working in. Off: a switch turned off in
+  /// one account can't be worked around through another.
+  final bool accountFallback;
+
   /// Inside the quiet hours right now.
   bool get isQuietNow {
     if (!quietHours) return false;
@@ -530,6 +537,7 @@ class AppSettings {
     Set<String>? disabledTools,
     Set<String>? enabledDangerTools,
     bool? readOnlyMode,
+    bool? accountFallback,
     bool? autoPhotos,
     bool? autoVoice,
     bool? autoMusic,
@@ -630,6 +638,7 @@ class AppSettings {
     disabledTools: disabledTools ?? this.disabledTools,
     enabledDangerTools: enabledDangerTools ?? this.enabledDangerTools,
     readOnlyMode: readOnlyMode ?? this.readOnlyMode,
+    accountFallback: accountFallback ?? this.accountFallback,
     autoPhotos: autoPhotos ?? this.autoPhotos,
     autoVoice: autoVoice ?? this.autoVoice,
     autoMusic: autoMusic ?? this.autoMusic,
@@ -787,6 +796,7 @@ class SettingsController extends Notifier<AppSettings> {
       disabledTools: (p.getStringList('disabled_tools') ?? const []).toSet(),
       enabledDangerTools: (p.getStringList('danger_tools') ?? const []).toSet(),
       readOnlyMode: p.getBool('read_only_mode') ?? d.readOnlyMode,
+      accountFallback: p.getBool('account_fallback') ?? d.accountFallback,
       autoPhotos: p.getBool('auto_photos') ?? d.autoPhotos,
       autoVoice: p.getBool('auto_voice') ?? d.autoVoice,
       autoMusic: p.getBool('auto_music') ?? d.autoMusic,
@@ -1288,6 +1298,11 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setReadOnlyMode(bool v) async {
     state = state.copyWith(readOnlyMode: v);
     await _write('read_only_mode', v);
+  }
+
+  Future<void> setAccountFallback(bool v) async {
+    state = state.copyWith(accountFallback: v);
+    await _write('account_fallback', v);
   }
 
   /// Turns a set of tools on or off at once.

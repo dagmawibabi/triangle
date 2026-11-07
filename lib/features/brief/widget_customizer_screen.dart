@@ -72,7 +72,7 @@ class _WidgetCustomizerScreenState extends ConsumerState<WidgetCustomizerScreen>
     final briefText = brief == null
         ? 'TL;DR: three people are waiting on you, the team moved Friday\'s meeting to 10:00, and a delivery arrives today.\n\n'
               '🔴 Liya asked whether you can review the budget by tonight. Dawit wants the slides.'
-        : BriefHomeWidget.forWidget(brief.text, look.content);
+        : BriefHomeWidget.forWidget(brief.text, look.content, null);
     final previewItems = previewed.isBrief
         ? [
             for (final p in briefText.split(RegExp(r'\n\s*\n')))
@@ -166,6 +166,7 @@ class _WidgetCustomizerScreenState extends ConsumerState<WidgetCustomizerScreen>
                       ? (brief == null ? 'Sat 24 Oct, 08:00' : DateFormat('EEE d MMM, HH:mm').format(brief.at))
                       : (previewed.updatedAt == null ? '' : DateFormat('EEE d MMM, HH:mm').format(previewed.updatedAt!)),
                   items: previewItems,
+                  full: previewed.isBrief,
                   empty: previewed.byAssistant ? 'The assistant fills this in on its next refresh.' : 'Nothing here yet.',
                 ),
               ),
@@ -246,7 +247,7 @@ class _WidgetCustomizerScreenState extends ConsumerState<WidgetCustomizerScreen>
               section('Text', [
                 slider('Text size', look.fontSize, 9, 20, 22, '${look.fontSize.toStringAsFixed(1)} sp', (v) => ctl.update((l) => l.copyWith(fontSize: (v * 2).round() / 2))),
                 slider('Title size', look.titleSize, 10, 24, 28, '${look.titleSize.toStringAsFixed(1)} sp', (v) => ctl.update((l) => l.copyWith(titleSize: (v * 2).round() / 2))),
-                slider('Lines per row', look.maxLines.toDouble(), 2, 30, 28, '${look.maxLines}', (v) => ctl.update((l) => l.copyWith(maxLines: v.round()))),
+                slider('Lines per row (custom widgets)', look.maxLines.toDouble(), 2, 30, 28, '${look.maxLines}', (v) => ctl.update((l) => l.copyWith(maxLines: v.round()))),
                 const SizedBox(height: Space.s),
               ]),
               section('Content', [
@@ -346,8 +347,19 @@ class _WidgetCustomizerScreenState extends ConsumerState<WidgetCustomizerScreen>
 
 /// A widget as the launcher draws it: a header and rows that scroll.
 class WidgetPreview extends StatelessWidget {
-  const WidgetPreview({super.key, required this.look, required this.title, required this.when, required this.items, required this.empty});
+  const WidgetPreview({
+    super.key,
+    required this.look,
+    required this.title,
+    required this.when,
+    required this.items,
+    required this.empty,
+    this.full = false,
+  });
   final WidgetLook look;
+
+  /// The brief: rows shown whole, as on the home screen.
+  final bool full;
   final String title;
   final String when;
   final List<WidgetItem> items;
@@ -390,7 +402,7 @@ class WidgetPreview extends StatelessWidget {
                 : ListView.builder(
                     padding: EdgeInsets.zero,
                     itemCount: items.length,
-                    itemBuilder: (context, i) => _PreviewRow(item: items[i], look: look),
+                    itemBuilder: (context, i) => _PreviewRow(item: items[i], look: look, full: full),
                   ),
           ),
           if (look.showFooter) ...[
@@ -404,9 +416,10 @@ class WidgetPreview extends StatelessWidget {
 }
 
 class _PreviewRow extends StatelessWidget {
-  const _PreviewRow({required this.item, required this.look});
+  const _PreviewRow({required this.item, required this.look, this.full = false});
   final WidgetItem item;
   final WidgetLook look;
+  final bool full;
 
   @override
   Widget build(BuildContext context) {
@@ -438,8 +451,8 @@ class _PreviewRow extends StatelessWidget {
           if (item.text.isNotEmpty)
             Text(
               item.text,
-              maxLines: look.maxLines,
-              overflow: TextOverflow.ellipsis,
+              maxLines: full ? null : look.maxLines,
+              overflow: full ? null : TextOverflow.ellipsis,
               style: TextStyle(color: body, fontSize: look.fontSize, height: 1.3),
             ),
           if (item.subtitle.isNotEmpty) Text(item.subtitle, maxLines: 1, style: TextStyle(color: body.withValues(alpha: 0.7), fontSize: 11)),

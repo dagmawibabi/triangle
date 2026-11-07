@@ -6,29 +6,40 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:handy_tdlib/api.dart' as td;
 import 'package:handy_tdlib/handy_tdlib.dart' show TdPlugin;
-import 'package:path_provider/path_provider.dart';
 
 import '../../core/config/app_config.dart';
+import 'accounts.dart';
 import 'rate_limiter.dart';
 import 'secure_store.dart';
-import 'td_library.dart';
-import 'td_receiver.dart';
+import 'td_hub.dart';
 import 'telegram_exception.dart';
 
-/// The one connection to Telegram, following telegrive's design.
+/// One account's connection to Telegram, following telegrive's design.
 ///
 /// Wraps TDLib's JSON interface: requests go out with an `@extra` tag and the
 /// matching reply completes the future returned by [send]; everything else is
 /// an update and goes to [updates]. Signing out closes the TDLib instance;
 /// when it reports `authorizationStateClosed` a fresh client is created on
-/// the same receiver, which lands back on the sign-in screen.
+/// the same receiver, which lands back on the sign-in screen — unless the
+/// account is being removed ([logOutForGood]).
+///
+/// Each account has its own TDLib instance, database folder and encryption
+/// key ([AccountPaths]); all of them share the process's one [TdHub].
 class TelegramClient {
-  TelegramClient(this._secureStore) {
-    _receiver = TdReceiver(onPayload: _handlePayload);
-  }
+  TelegramClient(this._secureStore, this._hub, {this.accountId = legacyAccountId});
 
   final SecureStore _secureStore;
-  late final TdReceiver _receiver;
+  final TdHub _hub;
+
+  /// The account this client belongs to (see [AccountPaths]).
+  final String accountId;
+  late final AccountPaths _paths = AccountPaths(accountId);
+  void Function()? _unlisten;
+
+  /// Whether a closed client is replaced by a fresh one (back to sign-in).
+  /// Off while the account is being removed for good.
+  bool _reopenOnClose = true;
+  Completer<void> _closed = Completer<void>();
 
   /// Paces requests that reach Telegram's servers; see [send]'s `limited`.
   final RateLimiter limiter = RateLimiter();
@@ -73,22 +84,15 @@ class TelegramClient {
       return;
     }
     try {
-      _root = Directory(
-        '${(await getApplicationSupportDirectory()).path}/tdlib',
-      );
+      _root = await _paths.root();
       await _root!.create(recursive: true);
       // A client this process opened and never closed: a hot restart, or
       // Android starting a new Flutter engine in the same process after the
       // app was backed out of. TDLib still has it open and holds the
       // database lock, so it is taken over rather than opened twice.
       final leftOpen = await _leftOpenClient();
-      await openTdLibrary();
-      TdPlugin.instance.tdExecute(
-        jsonEncode(
-          const td.SetLogVerbosityLevel(newVerbosityLevel: 1).toJson(),
-        ),
-      );
-      await _receiver.start();
+      await _hub.start();
+      _unlisten ??= _hub.listen(_handlePayload);
       if (leftOpen != null) {
         _adopt(leftOpen);
       } else {
@@ -250,7 +254,11 @@ class TelegramClient {
       case td.AuthorizationStateClosed():
         _waitForSignIn();
         _failPending();
-        if (!_disposed) _createClient();
+        if (!_closed.isCompleted) _closed.complete();
+        if (!_disposed && _reopenOnClose) {
+          _closed = Completer<void>();
+          _createClient();
+        }
       default:
         break;
     }
@@ -261,18 +269,18 @@ class TelegramClient {
   }
 
   Future<void> _configure() async {
-    final root = await getApplicationSupportDirectory();
-    final databaseDir = Directory('${root.path}/tdlib/db');
-    final filesDir = Directory('${root.path}/tdlib/files');
+    final root = await _paths.root();
+    final databaseDir = Directory('${root.path}/db');
+    final filesDir = Directory('${root.path}/files');
     await databaseDir.create(recursive: true);
     await filesDir.create(recursive: true);
 
     // Encrypted from the very first launch; TDLib only allows changing the
     // key after sign-in, so there is no "encrypt later".
-    var key = await _secureStore.readDatabaseKey();
+    var key = await _secureStore.readDatabaseKey(accountId);
     if (key == null || key.isEmpty) {
       key = SecureStore.generateDatabaseKey();
-      await _secureStore.writeDatabaseKey(key);
+      await _secureStore.writeDatabaseKey(key, accountId);
     }
 
     td.SetTdlibParameters parameters(String key) => td.SetTdlibParameters(
@@ -308,7 +316,7 @@ class TelegramClient {
       await databaseDir.delete(recursive: true);
       await databaseDir.create(recursive: true);
       final fresh = SecureStore.generateDatabaseKey();
-      await _secureStore.writeDatabaseKey(fresh);
+      await _secureStore.writeDatabaseKey(fresh, accountId);
       try {
         await send<td.Ok>(parameters(fresh));
       } on TelegramException catch (e) {
@@ -334,6 +342,20 @@ class TelegramClient {
   }
 
   Future<void> logOut() => _sendQuietly(const td.LogOut());
+
+  /// Signs out (TDLib destroys the account's local data) and does not open a
+  /// fresh client afterwards: the account is being removed. Completes once
+  /// TDLib has closed the instance, or after [timeout].
+  Future<void> logOutForGood({Duration timeout = const Duration(seconds: 20)}) async {
+    _reopenOnClose = false;
+    if (_clientId == null || _authState is td.AuthorizationStateClosed) return;
+    final closed = _closed.future;
+    // An account that never finished signing in has nothing on the server
+    // to sign out of; closing is enough.
+    final signedIn = _authState is td.AuthorizationStateReady;
+    await _sendQuietly(signedIn ? const td.LogOut() : const td.Close());
+    await closed.timeout(timeout, onTimeout: () {});
+  }
 
   /// Abandons a QR sign-in attempt and starts a fresh authorization flow.
   ///
@@ -371,8 +393,13 @@ class TelegramClient {
 
   Future<void> dispose() async {
     _disposed = true;
-    await _sendQuietly(const td.Close());
-    await _receiver.stop();
+    // All instances must be closed for the database to stay consistent
+    // (td_json_client.h); one already closed has nothing left to close.
+    if (_clientId != null && _authState is! td.AuthorizationStateClosed) {
+      await _sendQuietly(const td.Close());
+    }
+    _unlisten?.call();
+    _unlisten = null;
     _failPending();
     await _updates.close();
     await _authStates.close();
@@ -380,13 +407,13 @@ class TelegramClient {
   }
 }
 
+/// The active account's client. Everything that works with "the" Telegram
+/// account reads this, so switching accounts rebuilds it all.
 final telegramClientProvider = Provider<TelegramClient>((ref) {
-  final client = TelegramClient(ref.watch(secureStoreProvider));
-  ref.onDispose(client.dispose);
-  return client;
+  return ref.watch(telegramClientFamily(ref.watch(activeAccountIdProvider)));
 });
 
-/// The live TDLib authorization state.
+/// The live TDLib authorization state of the active account.
 final authStateProvider = StreamProvider<td.AuthorizationState>((ref) {
   return ref.watch(telegramClientProvider).authStates;
 });

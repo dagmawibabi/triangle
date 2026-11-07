@@ -96,7 +96,8 @@ class SettingsScreen extends ConsumerWidget {
       builder: (ctx) => AlertDialog(
         title: const Text('Sign out?'),
         content: const Text(
-          'This ends Triangle\'s Telegram session and removes your conversations from this device. '
+          'This ends Triangle\'s session for the Telegram account on screen; your other accounts stay signed in. '
+          'Signing out of your only account also removes your conversations from this device. '
           'Nothing in your Telegram account is deleted.',
         ),
         actions: [

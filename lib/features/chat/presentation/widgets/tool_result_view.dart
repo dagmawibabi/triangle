@@ -8,12 +8,12 @@ import 'package:gal/gal.dart';
 import 'package:intl/intl.dart';
 
 import '../../../../app/theme.dart';
-import '../../../telegram/presentation/chat_view_screen.dart';
 import '../../../telegram/presentation/tg_avatar.dart';
 import '../../domain/chat_models.dart';
 import 'message_preview.dart';
 import 'post_viewer.dart';
 import '../../../telegram/presentation/link_opener.dart';
+import '../../../account/account_router.dart';
 
 final _ref = RegExp(r'post:(-?\d+):(\d+)');
 
@@ -1093,13 +1093,8 @@ class _ChatRow extends StatelessWidget {
     ].whereType<Object>().join(' · ');
     return InkWell(
       borderRadius: BorderRadius.circular(Radii.m),
-      onTap: id == null
-          ? null
-          : () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => ChatViewScreen(chatId: id),
-              ),
-            ),
+      // Opens in the account that has the chat.
+      onTap: id == null ? null : () => openChatInAccount(context, id),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: Space.s),
         child: Row(

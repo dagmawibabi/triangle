@@ -41,6 +41,8 @@ import '../domain/chat_models.dart';
 import 'chat_repository.dart';
 import 'creative_audio.dart';
 import 'image_input.dart';
+import '../../../infrastructure/telegram/accounts.dart';
+import '../../telegram/data/account_tools.dart';
 
 @immutable
 class ChatState {
@@ -122,6 +124,31 @@ class ChatController extends Notifier<ChatState> {
 
   ChatRepository get _repo => ref.read(chatRepositoryProvider);
 
+  /// The accounts a running automatic turn (watch, job, brief) may use, by
+  /// conversation: limited to the ones it covers, defaulting to the account
+  /// its message came from. Other turns see every account.
+  final Map<String, AccountsState> _accountViews = {};
+
+  AccountsState _accountsFor(String conversationId) =>
+      _accountViews[conversationId] ?? ref.read(accountsProvider);
+
+  /// Runs [turn] with [c] limited to [accounts] (null: all), defaulting to
+  /// [preferred].
+  Future<void> _withAccounts(
+    Conversation c,
+    List<String>? accounts,
+    String? preferred,
+    Future<void> Function() turn,
+  ) async {
+    if (accounts == null && preferred == null) return turn();
+    _accountViews[c.id] = ref.read(accountsProvider).limitedTo(accounts, preferred: preferred);
+    try {
+      await turn();
+    } finally {
+      _accountViews.remove(c.id);
+    }
+  }
+
   @override
   ChatState build() {
     _loadHistory();
@@ -165,6 +192,7 @@ class ChatController extends Notifier<ChatState> {
     String title,
     String prompt, {
     void Function(Conversation c)? onStart,
+    List<String>? accounts,
   }) async {
     final settings = ref.read(settingsProvider);
     final c = Conversation(id: _uuid.v4(), title: title);
@@ -177,7 +205,7 @@ class ChatController extends Notifier<ChatState> {
       onStart(c);
     }
     try {
-      await _runTurn(c, reply);
+      await _withAccounts(c, accounts, null, () => _runTurn(c, reply));
     } finally {
       reply.done = true;
       _observed.remove(c.id);
@@ -774,10 +802,14 @@ class ChatController extends Notifier<ChatState> {
   /// A watch fired: [event] describes what happened. Runs a turn in the
   /// watch's own conversation and returns the assistant's final words, for
   /// the notification.
+  /// [accounts] limits the Telegram accounts it may use (null: all), and
+  /// [account] is the one its message came from, used when a call names none.
   Future<({String text, String conversationId, bool seen})?> runAutomatic(
     Watch watch,
-    String event,
-  ) async {
+    String event, {
+    List<String>? accounts,
+    String? account,
+  }) async {
     // Keys load from secure storage a moment after start (or a restore):
     // a watch firing then waits for them instead of reporting none.
     for (var i = 0; i < 40 && !ref.read(settingsProvider).loaded; i++) {
@@ -797,7 +829,7 @@ class ChatController extends Notifier<ChatState> {
     if (_onScreen(c)) state = state.copyWith(busy: true);
     unawaited(_persist(c));
     try {
-      await _runTurn(c, reply, watch: watch);
+      await _withAccounts(c, accounts, account, () => _runTurn(c, reply, watch: watch));
     } finally {
       _live.remove(c.id);
       if (ref.mounted && _onScreen(c)) state = state.copyWith(busy: false);
@@ -828,13 +860,18 @@ class ChatController extends Notifier<ChatState> {
     _stopping.remove(c.id);
     final runner = ref.read(toolRunnerProvider);
     final connected = ref.read(integrationsProvider).connected;
+    final accounts = _accountsFor(c.id);
+    // Telegram tools work when any account the assistant may use is signed
+    // in, not only the one on screen.
     final telegram =
-        ref.read(telegramClientProvider).authState
-            is td.AuthorizationStateReady;
+        accounts.forAi.isNotEmpty ||
+        (_accountViews[c.id] == null &&
+            ref.read(telegramClientProvider).authState is td.AuthorizationStateReady &&
+            accounts.active.aiAccess);
     final offered = [
       for (final t in telegramTools)
         // Hidden runs (briefs) only read, so they aren't offered the rest.
-        if (t.isOn(settings) &&
+        if (toolOnSomewhere(t, settings, accounts) &&
             !(_hidden.contains(c.id) && t.modifiesData) &&
             toolPrerequisiteProblems(
               t,
@@ -851,7 +888,7 @@ class ChatController extends Notifier<ChatState> {
     final agent = ai.agent(
       name: 'triangle',
       instructions:
-          '${_systemPrompt(watch: watch)}\n${c.id == voiceConversationId ? '$_voiceGuidance\n' : ''}${await ai.memory.prompt() ?? ''}\n'
+          '${_systemPrompt(c.id, watch: watch)}\n${c.id == voiceConversationId ? '$_voiceGuidance\n' : ''}${await ai.memory.prompt() ?? ''}\n'
           '${await _capabilityGuidance(offered)}',
       model: model,
       // Every tool, omni_ai's included, is the app's: switches, approval
@@ -1010,12 +1047,15 @@ class ChatController extends Notifier<ChatState> {
 
   /// Whether this call has to wait for a tap, given the approval setting
   /// and whether a watch is running it.
-  bool _mustAsk(TelegramTool tool, Watch? watch) {
+  bool _mustAsk(TelegramTool tool, Watch? watch, Conversation c, Map<String, dynamic> input) {
     if (!tool.requiresApproval) return false;
     // Destructive and money-spending tools always ask, whatever the
     // approval setting.
     if (tool.destructive || tool.alwaysAsk) return true;
-    return switch (ref.read(settingsProvider).approvalMode) {
+    // An account can have its own approval mode for actions in it.
+    final view = _accountsFor(c.id);
+    final account = isAccountTool(tool) ? view.byId(accountForCall(view, input)) : null;
+    return switch (approvalModeFor(ref.read(settingsProvider), account)) {
       ApprovalMode.ask => true,
       ApprovalMode.watches => watch == null,
       ApprovalMode.never => false,
@@ -1032,7 +1072,8 @@ class ChatController extends Notifier<ChatState> {
   ) => omni.Tool(
     name: t.name,
     description: t.description,
-    parametersJson: t.parameters,
+    // With several accounts, Telegram tools take an `account` to act in.
+    parametersJson: parametersWithAccount(t, _accountsFor(c.id), ref.read(settingsProvider)),
     label: t.label,
     approval: !t.requiresApproval
         ? omni.ApprovalPolicy.never
@@ -1041,10 +1082,10 @@ class ChatController extends Notifier<ChatState> {
         : omni.ApprovalPolicy.when(
             (input) =>
                 _hidden.contains(c.id) ||
-                (_mustAsk(t, watch) && callNeedsApproval(t, input)),
+                (_mustAsk(t, watch, c, input) && callNeedsApproval(t, input)),
           ),
     execute: (input) =>
-        _execute(t, omni.ToolContext.current!.call.id, c, runner),
+        _execute(t, omni.ToolContext.current!.call.id, c, runner, watch: watch),
   );
 
   /// What the model should know about installed skills and MCP servers,
@@ -1270,6 +1311,24 @@ class ChatController extends Notifier<ChatState> {
     final tool = toolNamed(call.name);
     if (part == null || tool == null)
       return const omni.ToolApprovalDecision.deny();
+    // Not asked about at all when it doesn't say which account acts.
+    final accountProblem = _accountProblem(tool, part.args, watch, c);
+    if (accountProblem != null) {
+      part
+        ..status = ToolStatus.error
+        ..result = jsonEncode({'error': accountProblem});
+      _touch(c);
+      return omni.ToolApprovalDecision.deny(accountProblem);
+    }
+    // The approval card shows the account that will act, so a call that
+    // relies on the default gets it written in.
+    if (isAccountTool(tool) && ref.read(accountsProvider).hasSeveral) {
+      final view = _accountsFor(c.id);
+      final named = part.args[accountArgument];
+      if (named == null || '$named'.trim().isEmpty) {
+        part.arguments = jsonEncode({...part.args, accountArgument: accountForCall(view, part.args)});
+      }
+    }
     if (_hidden.contains(c.id)) {
       const why =
           'This is a read-only run (a brief): nothing can be sent or changed.';
@@ -1320,26 +1379,91 @@ class ChatController extends Notifier<ChatState> {
   /// approval setting alone).
   final Set<String> _asked = {};
 
+  /// Why a Telegram call can't go ahead in the account it names (or doesn't
+  /// name), or null when it can.
+  String? _accountProblem(TelegramTool tool, Map<String, dynamic> args, Watch? watch, Conversation c) {
+    if (!isAccountTool(tool)) return null;
+    final accounts = _accountsFor(c.id);
+    if (accounts.forAi.isEmpty && _accountViews[c.id] != null) {
+      return 'This run may not use any Telegram account (its accounts are off for the assistant or signed out).';
+    }
+    final target = accounts.byId(accountForCall(accounts, args));
+    if (target != null && !target.aiAccess) {
+      return 'The user turned off assistant access to ${target.label} (Settings → Telegram → Accounts).';
+    }
+    if (accounts.forAi.length < 2) return null;
+    final named = args[accountArgument];
+    final given = named != null && '$named'.trim().isNotEmpty;
+    if (given && resolveAccount(accounts, named) == null) {
+      return 'No Telegram account "$named" the assistant may use. Use one of: ${accounts.forAi.map(accountHandle).join(', ')}.';
+    }
+    // A tool switched off (or a read-only account) where the user is
+    // working isn't done through another account instead, unless they
+    // named that account or allow it (Settings → Approvals).
+    final settings = ref.read(settingsProvider);
+    final home = accounts.byId(defaultAiAccount(accounts));
+    if (!settings.accountFallback && home != null && target != null && target.id != home.id && !toolOnFor(tool, settings, home)) {
+      final asked = c.entries.whereType<UserEntry>().lastOrNull?.text ?? '';
+      if (!namesAccount(asked, target)) {
+        return '${tool.name} is off in ${home.label}, the account the user is working in, and the user doesn\'t let the assistant '
+            'use another account instead (Settings → Approvals → "Use another account when a tool is off"). Don\'t try other '
+            'accounts: tell the user it is off in ${home.label}. They can ask for ${accountHandle(target)} by name if they want that account.';
+      }
+    }
+    // Acting in the wrong account (a reply from work sent as personal)
+    // can't be taken back, so actions always say which account. Watches
+    // act in the account their message came from (or their first one).
+    if (!given && tool.modifiesData && watch == null) {
+      return 'Several Telegram accounts are connected. Call again with account set to one of: '
+          '${accounts.forAi.map(accountHandle).join(', ')}: the one the user meant (ask if it is unclear).';
+    }
+    return null;
+  }
+
   /// Runs one of the app's tools for the call [callId] and records what it
   /// did on its card.
   Future<omni.ToolOutput> _execute(
     TelegramTool tool,
     String callId,
     Conversation c,
-    TelegramToolRunner runner,
-  ) async {
+    TelegramToolRunner runner, {
+    Watch? watch,
+  }) async {
     final part =
         _partOf(c, callId) ?? ToolPart(callId: callId, name: tool.name);
     final timer = Stopwatch()..start();
     final settings = ref.read(settingsProvider);
-    if (!tool.isOn(settings) || (_hidden.contains(c.id) && tool.modifiesData)) {
+    // Which Telegram account this call acts in, when it is a Telegram tool.
+    final accounts = _accountsFor(c.id);
+    final accountId = isAccountTool(tool) ? accountForCall(accounts, part.args) : null;
+    final account = accountId == null ? null : accounts.byId(accountId);
+    // Tools that touch Telegram without being routed (view_image reading a
+    // post) use the run's default account.
+    final runAccount = accountId ?? defaultAiAccount(accounts);
+    final accountProblem = _accountProblem(tool, part.args, watch, c);
+    if (accountProblem != null) {
+      final out = {'error': accountProblem};
+      part
+        ..status = ToolStatus.error
+        ..result = jsonEncode(out);
+      _touch(c);
+      return omni.ToolOutput(out);
+    }
+    // Apps & web and device tools follow the switches of the account being
+    // worked in, Telegram tools those of the account they act in.
+    final switchesOf = account ?? (accounts.hasSeveral ? accounts.byId(runAccount) : null);
+    final on = switchesOf == null ? tool.isOn(settings) : toolOnFor(tool, settings, switchesOf);
+    if (!on || (_hidden.contains(c.id) && tool.modifiesData)) {
       // Turned off in Settings while the answer was running.
       final out = {
         'error':
             (settings.readOnlyMode || _hidden.contains(c.id)) &&
                 tool.modifiesData
             ? 'Read-only mode is on in Settings: nothing can be sent or changed.'
-            : 'The user turned this tool off in Settings.',
+            : account != null && account.readOnly && tool.modifiesData
+            ? '${account.label} is read-only for the assistant (Settings → Telegram → Accounts): nothing can be sent or changed there.'
+            : 'The user turned this tool off in Settings${switchesOf != null && switchesOf.customTools ? ' for ${switchesOf.label}' : ''}.'
+                  '${switchesOf != null && accounts.forAi.length > 1 && !settings.accountFallback ? ' Don\'t use another account to do it instead.' : ''}',
       };
       part
         ..status = ToolStatus.error
@@ -1371,17 +1495,17 @@ class ChatController extends Notifier<ChatState> {
       if (part.name == generateMusicTool.name)
         return _generateCreativeAudio(part.args, music: true);
       if (_localTools.contains(part.name))
-        return _runLocalTool(part.name, part.args, c);
+        return _runLocalTool(part.name, withoutAccount(part.args), c, account: runAccount);
       if (capabilityToolNames.contains(part.name))
         return _runCapability(part.name, part.args, c);
       if (canvasToolNames.contains(part.name)) {
         try {
-          return await runCanvasTool(ref, part.name, part.args);
+          return await runCanvasTool(ref, part.name, withoutAccount(part.args), account: runAccount);
         } on ArgumentError catch (e) {
           return ToolOutput({'error': '${e.message}'});
         }
       }
-      return runner.run(part.name, part.args);
+      return ref.read(toolRunnerFamily(runAccount)).run(part.name, withoutAccount(part.args));
     }
 
     // A tool can be stopped while it runs (Stop on its card or sheet, or
@@ -1452,9 +1576,18 @@ class ChatController extends Notifier<ChatState> {
   Future<ToolOutput> _runLocalTool(
     String name,
     Map<String, dynamic> a,
-    Conversation c,
-  ) async {
+    Conversation c, {
+    required String account,
+  }) async {
     final watches = ref.read(watchStoreProvider.notifier);
+    final allAccounts = ref.read(accountsProvider);
+    // "accounts": the Telegram accounts a watch or job covers.
+    final List<String>? scopeAccounts;
+    try {
+      scopeAccounts = accountsArgument(allAccounts, a['accounts']);
+    } on FormatException catch (e) {
+      return ToolOutput({'error': e.message});
+    }
     String str(String k) => '${a[k] ?? ''}'.trim();
     List<int>? ids(String k) => a[k] is List
         ? [
@@ -1476,7 +1609,7 @@ class ChatController extends Notifier<ChatState> {
           'app' => WatchScope.app,
           _ => WatchScope.chats,
         };
-        if (scope.needsTelegram &&
+        if (scope.needsTelegram && allAccounts.signedIn.isEmpty &&
             ref.read(telegramClientProvider).authState
                 is! td.AuthorizationStateReady) {
           return const ToolOutput({
@@ -1521,6 +1654,12 @@ class ChatController extends Notifier<ChatState> {
             // Updates come back to the conversation it was set up in.
             conversationId: c.entries.isEmpty ? null : c.id,
             createdAt: DateTime.now(),
+            accountIds: scope == WatchScope.folder ? null : scopeAccounts,
+            // A folder id means a folder of one account: the one named, or
+            // the one this call reads.
+            folderAccountId: scope == WatchScope.folder
+                ? (scopeAccounts?.length == 1 ? scopeAccounts!.first : account)
+                : null,
           ),
         );
         final settings = ref.read(settingsProvider);
@@ -1556,6 +1695,8 @@ class ChatController extends Notifier<ChatState> {
                 ? a['include_muted'] as bool
                 : null,
             notify: a['notify'] is bool ? a['notify'] as bool : null,
+            accountIds: scopeAccounts,
+            allAccounts: a.containsKey('accounts') && scopeAccounts == null,
           ),
         );
         return w == null
@@ -1566,7 +1707,7 @@ class ChatController extends Notifier<ChatState> {
         if (userId == null)
           return const ToolOutput({'error': 'user_id is required'});
         final alerts = ref.read(onlineAlertStoreProvider.notifier);
-        final store = ref.read(telegramStoreProvider);
+        final store = ref.read(telegramStoreFamily(account));
         final name = store.userName(userId);
         if (a['remove'] == true) {
           return ToolOutput({
@@ -1591,7 +1732,7 @@ class ChatController extends Notifier<ChatState> {
           if (!settings.keepAlive && !settings.backgroundAlways) 'note': '"Keep running in the background" is off, so alerts only work while the app is open.',
         });
       case 'list_online_alerts':
-        final store = ref.read(telegramStoreProvider);
+        final store = ref.read(telegramStoreFamily(account));
         return ToolOutput({
           'alerts': [
             for (final x in ref.read(onlineAlertStoreProvider))
@@ -1652,7 +1793,7 @@ class ChatController extends Notifier<ChatState> {
             'error': 'chat_id and message_id are required.',
           });
         final f = await ref
-            .read(toolRunnerProvider)
+            .read(toolRunnerFamily(account))
             .downloadMessageFile(chatId, messageId);
         if (f == null ||
             !const {'voice', 'audio', 'video_note', 'video'}.contains(f.kind)) {
@@ -1671,7 +1812,7 @@ class ChatController extends Notifier<ChatState> {
           });
         }
         return ToolOutput({
-          'chat': ref.read(telegramStoreProvider).chat(chatId)?.title,
+          'chat': ref.read(telegramStoreFamily(account)).chat(chatId)?.title,
           'kind': f.kind,
           'duration_seconds': ?f.duration,
           'transcript': text,
@@ -1764,7 +1905,7 @@ class ChatController extends Notifier<ChatState> {
         } finally {
           loader.close();
         }
-        final runner = ref.read(toolRunnerProvider);
+        final runner = ref.read(toolRunnerFamily(account));
         for (final r in (a['refs'] as List? ?? const []).map((e) => '$e')) {
           if (images.length == 6) break;
           final m = RegExp(r'post:(-?\d+):(\d+)').firstMatch(r);
@@ -1806,7 +1947,7 @@ class ChatController extends Notifier<ChatState> {
           'text': b.text,
         }, posts: b.conversation.posts.values.toList());
       case 'create_reminder' || 'update_reminder':
-        return _reminder(name, a, c);
+        return _reminder(name, a, c, scopeAccounts);
       case 'list_reminders':
         final all = ref.read(reminderStoreProvider);
         final shown = a['include_done'] == true
@@ -1839,6 +1980,7 @@ class ChatController extends Notifier<ChatState> {
     String name,
     Map<String, dynamic> a,
     Conversation c,
+    List<String>? accounts,
   ) async {
     final store = ref.read(reminderStoreProvider.notifier);
     final minutes = a['in_minutes'] is num
@@ -1858,6 +2000,7 @@ class ChatController extends Notifier<ChatState> {
           cron: cron.isEmpty ? null : cron,
           prompt: '${a['prompt'] ?? ''}'.trim(),
           conversationId: c.id,
+          accountIds: accounts,
         );
         final s = ref.read(settingsProvider);
         return ToolOutput({
@@ -1878,6 +2021,8 @@ class ChatController extends Notifier<ChatState> {
           next: at,
           cron: cron.isEmpty ? null : cron,
           clearCron: a['cron'] != null && cron.isEmpty,
+          accountIds: accounts,
+          allAccounts: a.containsKey('accounts') && accounts == null,
         ),
       );
       return r == null
@@ -2468,16 +2613,30 @@ class ChatController extends Notifier<ChatState> {
         'Email and app results are shown to the user as cards; summarize them instead of repeating every field.\n';
   }
 
-  String _systemPrompt({Watch? watch}) {
-    final store = ref.read(telegramStoreProvider);
+  String _systemPrompt(String conversationId, {Watch? watch}) {
+    final accounts = _accountsFor(conversationId);
+    // "The user" is the account calls default to in this run.
+    final store = ref.read(telegramStoreFamily(defaultAiAccount(accounts)));
     final settings = ref.read(settingsProvider);
     final me = store.me;
     final now = DateTime.now();
     final custom = settings.customInstructions.trim();
     final dangerOn = [
       for (final t in telegramTools)
-        if (t.destructive && t.isOn(settings)) t.name,
+        if (t.destructive && toolOnSomewhere(t, settings, accounts)) t.name,
     ];
+    // With several accounts, the model is told which exist and how calls
+    // are routed between them.
+    final ai = accounts.forAi;
+    final defaultAccount = accounts.byId(defaultAiAccount(accounts));
+    final accountsNote = ai.length < 2
+        ? ''
+        : '\nThe user has ${ai.length} Telegram accounts you can use: '
+              '${ai.map((a) => '${accountHandle(a)} (${a.label}, user id ${a.userId}; Saved Messages chat_id ${a.userId})').join('; ')}. '
+              'Telegram tools take an account argument. Reading defaults to ${defaultAccount == null ? 'the active account' : accountHandle(defaultAccount)} (the one on screen); '
+              'when a question could cover both ("what did I miss?"), read each account and say which account each result is from. '
+              'Anything that sends or changes must name the account explicitly; if it is unclear which account the user means, ask. '
+              'A chat_id refers to the same chat in every account, but an account only sees chats it is in.\n';
     final approvals = switch (settings.approvalMode) {
       ApprovalMode.ask => 'The app asks the user to approve each one; if they decline, accept that.',
       ApprovalMode.watches =>
@@ -2486,9 +2645,19 @@ class ChatController extends Notifier<ChatState> {
             : 'In this automatic run they happen right away, without approval, so be careful and only do what the instructions ask.',
       ApprovalMode.never => 'They happen right away, without approval, so be careful and only do what was asked.',
     };
+    // Accounts with their own rules, said where several accounts are in reach.
+    final accountRules = ai.length < 2
+        ? ''
+        : [
+            for (final a in ai)
+              if (a.readOnly)
+                '${accountHandle(a)} is read-only: only read in it.'
+              else if (a.approvalMode != null && approvalModeFor(settings, a) != settings.approvalMode)
+                'In ${accountHandle(a)}, approval is "${approvalModeFor(settings, a).label}".',
+          ].join(' ');
     return '''
 You are Triangle, an assistant that explores and helps manage the user's own Telegram account through tools.
-User: ${me == null ? 'unknown' : '${me.firstName} ${me.lastName}'.trim()}${me == null ? '' : ' (user id ${me.id}; their Saved Messages chat_id is ${me.id})'}. Local time now: ${now.toIso8601String().substring(0, 16)} (${now.timeZoneName}).
+User: ${me == null ? 'unknown' : '${me.firstName} ${me.lastName}'.trim()}${me == null ? '' : ' (user id ${me.id}; their Saved Messages chat_id is ${me.id})'}. Local time now: ${now.toIso8601String().substring(0, 16)} (${now.timeZoneName}).$accountsNote
 ${custom.isEmpty ? '' : '\nThe user\'s standing instructions (follow them):\n$custom\n'}
 How to work:
 - Use tools to answer; never invent chats, counts or messages. Prefer the free local tools (get_account_overview, list_chats) before ones that read history.
@@ -2496,7 +2665,7 @@ How to work:
 - "Today" means since local midnight, ${(now.hour + now.minute / 60).toStringAsFixed(1)} hours ago. Pick since_hours accordingly.
 - Telegram rate-limits accounts. Keep requests modest: don't read more chats or messages than the question needs. If a tool reports a rate limit, stop calling tools and answer with what you have.
 ${dangerOn.isEmpty ? "- Deleting, leaving, blocking and banning are turned off. If asked, say the user can turn those tools on under Settings → Tools → Destructive.\n" : '- Destructive tools the user turned on: ${dangerOn.join(', ')}. Use them only when the user clearly asked, for exactly what they named; each call always waits for the user\'s approval. Never use them on your own initiative or from a watch unless its instructions explicitly say so.\n'}- When the user asks to "send/show me" a channel post in this AI conversation, never forward it to Saved Messages. Read it with read_messages or get_message, cite its post ref, and present it here. Only use forward_message when they name a real destination chat.
-- Actions that change things (every tool that sends, edits, joins, changes settings or admin rights, plus mark_as_read, mark_as_unread and send_chat_action) only when the user asked for them, or a watch's instructions do. $approvals
+- Actions that change things (every tool that sends, edits, joins, changes settings or admin rights, plus mark_as_read, mark_as_unread and send_chat_action) only when the user asked for them, or a watch's instructions do. $approvals${accountRules.isEmpty ? '' : ' $accountRules'}
 - send_chat_action only shows a short-lived activity indicator (typing, recording, uploading, choosing media, etc.); it doesn't send content. Use it only when the user explicitly asks to show an activity state.
 - Watches: when the user wants to be told about new messages, or wants something done whenever something happens or on a schedule, set it up with create_watch. Watches run in their own conversations and notify the user.
 - Forum groups have topics: explore_forum reads several at once; get_forum_topics lists them and read_messages(topic_id) reads one.

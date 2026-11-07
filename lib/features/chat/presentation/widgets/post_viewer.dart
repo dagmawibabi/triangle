@@ -25,6 +25,8 @@ import '../../../telegram/presentation/message_tile.dart';
 import '../../domain/chat_models.dart';
 import '../../../telegram/presentation/formatted_text.dart';
 import '../../../../infrastructure/telegram/td_compat.dart';
+import '../../../account/account_router.dart';
+import '../../../../infrastructure/telegram/accounts.dart';
 
 IconData kindIcon(String kind) => switch (kind) {
   'photo' => Icons.image_outlined,
@@ -62,7 +64,14 @@ class PostChip extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TgAvatar(chatId: post.chatId, title: post.chatTitle, size: 26),
+              Consumer(
+                builder: (context, ref, _) => TgAvatar(
+                  chatId: post.chatId,
+                  title: post.chatTitle,
+                  size: 26,
+                  accountId: signedInAccount(ref.watch(accountsProvider), post.accountId),
+                ),
+              ),
               const SizedBox(width: Space.s),
               Flexible(
                 child: Column(
@@ -182,6 +191,9 @@ class _PostViewState extends ConsumerState<PostView> {
   List<td.MessageViewer> _viewers = const [];
   StreamSubscription<td.TdObject>? _live;
 
+  /// The account the post was found in; everything here reads from it.
+  String? _account;
+
   @override
   void initState() {
     super.initState();
@@ -195,14 +207,19 @@ class _PostViewState extends ConsumerState<PostView> {
   }
 
   Future<void> _load() async {
-    final client = ref.read(telegramClientProvider);
     final p = widget.post;
     try {
-      final m = await client.send<td.Message>(
-        td.GetMessage(chatId: p.chatId, messageId: p.messageId),
-        limited: true,
+      // The account it came from, else whichever account has it.
+      final found = await findPost(
+        ProviderScope.containerOf(context, listen: false),
+        p.chatId,
+        p.messageId,
+        hint: p.accountId,
       );
       if (!mounted) return;
+      setState(() => _account = found.account);
+      final m = found.message;
+      if (m == null) throw found.error ?? const TelegramException(404, 'Not found');
       setState(() {
         _message = m;
         _loading = false;
@@ -216,7 +233,7 @@ class _PostViewState extends ConsumerState<PostView> {
       }
       unawaited(_loadExtras(m));
       final link = await ref
-          .read(toolRunnerProvider)
+          .read(toolRunnerFamily(found.account))
           .messageLink(p.chatId, p.messageId);
       if (mounted) setState(() => _link = link);
     } catch (e) {
@@ -235,7 +252,7 @@ class _PostViewState extends ConsumerState<PostView> {
   /// small groups for viewers, private chats for the read date. Each is
   /// one paced request and quietly skipped when not allowed.
   Future<void> _loadExtras(td.Message m) async {
-    final client = ref.read(telegramClientProvider);
+    final client = ref.read(telegramClientFamily(_account!));
     // The cached copy's views and reactions (Stars too) may be stale:
     // viewing it (from a source TDLib doesn't mark read) fetches them, and
     // they arrive as an update.
@@ -305,7 +322,7 @@ class _PostViewState extends ConsumerState<PostView> {
     }
     try {
       final f = await ref
-          .read(telegramClientProvider)
+          .read(_account == null ? telegramClientProvider : telegramClientFamily(_account!))
           .send<td.File>(
             td.DownloadFile(
               fileId: file.id,
@@ -323,7 +340,11 @@ class _PostViewState extends ConsumerState<PostView> {
 
   @override
   Widget build(BuildContext context) {
-    final store = ref.watch(telegramStoreProvider);
+    final accounts = ref.watch(accountsProvider);
+    final account = signedInAccount(accounts, _account);
+    final store = account == null ? ref.watch(telegramStoreProvider) : ref.watch(accountStoreProvider(account));
+    // Another account than the one on screen: said under the title.
+    final fromOther = account != null && account != accounts.activeId ? accounts.byId(account) : null;
     final p = widget.post;
     final m = _message;
     final gist = m == null ? null : gistOf(m.content);
@@ -360,14 +381,17 @@ class _PostViewState extends ConsumerState<PostView> {
                   borderRadius: BorderRadius.circular(Radii.m),
                   onTap: chat == null
                       ? null
-                      : () => Navigator.of(
-                          context,
-                        ).push(MaterialPageRoute<void>(builder: (_) => ChatProfileScreen(chatId: p.chatId))),
+                      : () {
+                          // The chat's page belongs to its account.
+                          final nav = Navigator.of(context);
+                          if (account != null) switchToOpen(context, ProviderScope.containerOf(context, listen: false), account);
+                          nav.push(MaterialPageRoute<void>(builder: (_) => ChatProfileScreen(chatId: p.chatId)));
+                        },
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: Space.xs, horizontal: Space.xs),
                     child: Row(
                       children: [
-                        TgAvatar(chatId: p.chatId, title: p.chatTitle, size: 40),
+                        TgAvatar(chatId: p.chatId, title: p.chatTitle, size: 40, accountId: account),
                         const SizedBox(width: Space.m),
                         Expanded(
                           child: Column(
@@ -386,6 +410,7 @@ class _PostViewState extends ConsumerState<PostView> {
                                     'EEE d MMM, HH:mm',
                                   ).format(m == null ? p.date : DateTime.fromMillisecondsSinceEpoch(m.date * 1000)),
                                   if ((m?.editDate ?? 0) > 0) 'edited',
+                                  if (fromOther != null) 'in ${fromOther.label}',
                                 ].join(' · '),
                                 style: context.text.bodySmall,
                               ),
@@ -508,6 +533,7 @@ class _PostViewState extends ConsumerState<PostView> {
           const _SectionTitle('Who reacted'),
           for (final r in _reactors.take(30))
             _PersonRow(
+              account: account,
               sender: r.senderId,
               trailing:
                   '${_reactionLabel(r.type)}  ${DateFormat('d MMM, HH:mm').format(DateTime.fromMillisecondsSinceEpoch(r.date * 1000))}',
@@ -518,6 +544,7 @@ class _PostViewState extends ConsumerState<PostView> {
           const _SectionTitle('Seen by'),
           for (final v in _viewers.take(30))
             _PersonRow(
+              account: account,
               sender: td.MessageSenderUser(userId: v.userId),
               trailing: DateFormat('d MMM, HH:mm').format(DateTime.fromMillisecondsSinceEpoch(v.viewDate * 1000)),
             ),
@@ -798,21 +825,24 @@ class _Detail extends StatelessWidget {
 }
 
 class _PersonRow extends ConsumerWidget {
-  const _PersonRow({required this.sender, required this.trailing});
+  const _PersonRow({required this.sender, required this.trailing, this.account});
   final td.MessageSender sender;
   final String trailing;
 
+  /// The account the post was read in: names come from there.
+  final String? account;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final store = ref.watch(telegramStoreProvider);
+    final store = account == null ? ref.watch(telegramStoreProvider) : ref.watch(accountStoreProvider(account!));
     final name = store.senderName(sender);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
           switch (sender) {
-            td.MessageSenderUser(:final userId) => TgAvatar(userId: userId, title: name, size: 28),
-            td.MessageSenderChat(:final chatId) => TgAvatar(chatId: chatId, title: name, size: 28),
+            td.MessageSenderUser(:final userId) => TgAvatar(userId: userId, title: name, size: 28, accountId: account),
+            td.MessageSenderChat(:final chatId) => TgAvatar(chatId: chatId, title: name, size: 28, accountId: account),
           },
           const SizedBox(width: Space.s),
           Expanded(child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis)),

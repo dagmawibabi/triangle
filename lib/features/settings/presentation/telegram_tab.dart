@@ -15,6 +15,8 @@ import '../../telegram/presentation/scheduled_screen.dart';
 import '../../telegram/presentation/tg_avatar.dart';
 import '../data/settings.dart';
 import 'tools_screen.dart';
+import '../../account/accounts_settings.dart';
+import '../../../infrastructure/telegram/accounts.dart';
 
 /// Settings → Apps & web → Telegram: the account (connect it like any other
 /// app, or sign out), and how Triangle behaves in it.
@@ -134,16 +136,20 @@ class TelegramTab extends ConsumerWidget {
                     child: OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(foregroundColor: AppColors.danger),
                       onPressed: () async {
+                        final several = ref.read(accountsProvider).hasSeveral;
                         if (!await confirmAction(
                           context,
-                          title: 'Sign out of Telegram?',
-                          message: 'This ends Triangle\'s Telegram session and removes your conversations from this device. '
-                              'Nothing in your Telegram account is deleted. You can keep using Triangle without it.',
+                          title: several ? 'Sign out of ${me?.firstName ?? 'this account'}?' : 'Sign out of Telegram?',
+                          message: several
+                              ? 'This ends Triangle\'s session for this account and deletes its data from this phone. '
+                                    'Your other accounts stay signed in. Nothing in your Telegram account is deleted.'
+                              : 'This ends Triangle\'s Telegram session and removes your conversations from this device. '
+                                    'Nothing in your Telegram account is deleted. You can keep using Triangle without it.',
                           action: 'Sign out',
                         )) {
                           return;
                         }
-                        await ctl.setTelegramSkipped(true);
+                        if (!several) await ctl.setTelegramSkipped(true);
                         await ref.read(authControllerProvider.notifier).signOut();
                       },
                       icon: const Icon(Icons.logout_rounded, size: 18),
@@ -161,6 +167,7 @@ class TelegramTab extends ConsumerWidget {
                   style: context.text.bodySmall,
                 ),
               ),
+            if (ready) const AccountsSection(),
             section('How Triangle behaves', [
               SwitchListTile(
                 secondary: lead(Icon(Icons.circle, size: 14, color: AppColors.success)),

@@ -225,6 +225,7 @@ extension TelegramSnapshots on TelegramToolRunner {
       text: g.text.isNotEmpty ? g.text : (g.detail ?? ''),
       sender: channel ? null : (m.isOutgoing ? 'You' : _store.senderName(m.senderId)),
       kind: g.kind,
+      accountId: _client.accountId,
     );
   }
 }

@@ -9,11 +9,14 @@ import '../settings/data/settings.dart';
 import '../telegram/data/telegram_store.dart';
 import '../telegram/presentation/chat_actions.dart' show confirmAction;
 import '../telegram/presentation/tg_avatar.dart';
+import '../account/account_switcher.dart';
+import '../../infrastructure/telegram/accounts.dart';
 import 'brief_prefs.dart';
 import 'brief_schedule.dart';
 import 'brief_store.dart';
 import 'brief_widget.dart';
 import 'widget_customizer_screen.dart';
+import '../telegram/presentation/chat_list_screen.dart' show folderIcon;
 
 /// Settings → Brief controls: when briefs are written, which chats and what
 /// they cover, and how they read (tone, length, language, instructions).
@@ -28,6 +31,13 @@ class BriefSettingsScreen extends ConsumerWidget {
     final store = ref.watch(telegramStoreProvider);
     final connected = ref.watch(integrationsProvider).connected;
     String title(int id) => store.chat(id)?.title ?? p.chatTitles[id] ?? 'Chat $id';
+    final accounts = ref.watch(accountsProvider);
+    // "Work", or "Work · Dagi" when several accounts are signed in.
+    String folderLabel(String key, String name) {
+      if (!accounts.hasSeveral) return name;
+      final owner = accounts.byId(key.split(':').first);
+      return owner == null ? name : '$name · ${owner.label}';
+    }
 
 
     Future<void> addChat({required bool excluded}) async {
@@ -109,6 +119,22 @@ class BriefSettingsScreen extends ConsumerWidget {
                   ),
                 ],
               ),
+              if (ref.watch(accountsProvider).hasSeveral) ...[
+                const _Header('Accounts'),
+                _Card(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(Space.l),
+                      child: AccountScopePicker(
+                        title: 'TELEGRAM ACCOUNTS TO COVER',
+                        value: p.accountIds,
+                        onChanged: (v) => ctl.update((p) => p.copyWith(accountIds: v, allAccounts: v == null)),
+                        note: 'Briefs read these accounts and say which account each item is from.',
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               const _Header('Chats'),
               if (!ref.watch(telegramConnectedProvider))
                 _Card(
@@ -154,6 +180,41 @@ class BriefSettingsScreen extends ConsumerWidget {
                     child: Text('NEVER READ OR MENTION', style: context.text.labelSmall),
                   ),
                   chatChips(p.excluded, excluded: true),
+                  // Whole folders, their chats looked up each time.
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(Space.l, Space.s, Space.l, Space.s),
+                    child: Text('NEVER READ THESE FOLDERS', style: context.text.labelSmall),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(Space.l, 0, Space.l, Space.m),
+                    child: Wrap(
+                      spacing: Space.s,
+                      runSpacing: Space.s,
+                      children: [
+                        for (final e in p.excludedFolders.entries)
+                          InputChip(
+                            avatar: Icon(Icons.folder_off_outlined, size: 18, color: AppColors.text2),
+                            label: Text(folderLabel(e.key, e.value), overflow: TextOverflow.ellipsis),
+                            onDeleted: () => ctl.dropFolder(e.key),
+                          ),
+                        ActionChip(
+                          avatar: Icon(Icons.create_new_folder_outlined, size: 18, color: AppColors.text2),
+                          label: const Text('Leave out a folder'),
+                          onPressed: () async {
+                            final picked = await showModalBottomSheet<(String, int, String)>(
+                              context: context,
+                              isScrollControlled: true,
+                              useSafeArea: true,
+                              showDragHandle: true,
+                              backgroundColor: AppColors.surface,
+                              builder: (_) => _FolderPicker(skip: p.excludedFolders.keys.toSet()),
+                            );
+                            if (picked != null) await ctl.excludeFolder(picked.$1, picked.$2, picked.$3);
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
               const _Header('What to cover'),
@@ -426,6 +487,61 @@ class _ChatPickerState extends ConsumerState<_ChatPicker> {
               },
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+
+/// Every signed-in account's chat folders, to leave one out of briefs.
+/// Resolves to (account id, folder id, folder name).
+class _FolderPicker extends ConsumerWidget {
+  const _FolderPicker({required this.skip});
+
+  /// Folders already left out ("<account>:<folder>").
+  final Set<String> skip;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final accounts = ref.watch(accountsProvider);
+    final owners = accounts.signedIn.isEmpty ? [accounts.active] : accounts.signedIn;
+    final groups = [
+      for (final a in owners)
+        (a, [
+          for (final f in ref.watch(accountStoreProvider(a.id)).folders)
+            if (!skip.contains('${a.id}:${f.id}')) f,
+        ]),
+    ];
+    final none = groups.every((g) => g.$2.isEmpty);
+    return SafeArea(
+      child: ListView(
+        shrinkWrap: true,
+        padding: const EdgeInsets.fromLTRB(0, 0, 0, Space.l),
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(Space.l, 0, Space.l, Space.s),
+            child: Text('Leave out a folder', style: context.text.titleMedium),
+          ),
+          if (none)
+            Padding(
+              padding: const EdgeInsets.all(Space.l),
+              child: Text('No folders to leave out. Make folders in Telegram (or Settings → Telegram → Folders).', style: context.text.bodySmall),
+            ),
+          for (final (a, folders) in groups)
+            if (folders.isNotEmpty) ...[
+              if (accounts.hasSeveral)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(Space.l, Space.m, Space.l, Space.xs),
+                  child: Text(a.label.toUpperCase(), style: context.text.labelSmall),
+                ),
+              for (final f in folders)
+                ListTile(
+                  leading: Icon(folderIcon(f.icon), color: AppColors.text2),
+                  title: Text(f.title),
+                  onTap: () => Navigator.pop(context, (a.id, f.id, f.title)),
+                ),
+            ],
         ],
       ),
     );

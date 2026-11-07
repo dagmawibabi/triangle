@@ -5,6 +5,8 @@ import '../../../../app/theme.dart';
 import '../../../device/device.dart';
 import '../../../telegram/data/telegram_tools.dart';
 import '../../domain/chat_models.dart';
+import '../../../../infrastructure/telegram/accounts.dart';
+import '../../../telegram/data/account_tools.dart';
 
 /// Tools whose sheet gets hands-on controls: what the assistant did, you can
 /// change yourself (flip the flashlight, drag the volume, mute the chat).
@@ -52,7 +54,11 @@ class _ToolControlsState extends ConsumerState<ToolControls> {
   /// Runs the tool with [args] on top of the original call's; true when it worked.
   Future<bool> _run(Map<String, dynamic> args, {bool quiet = false, String? done}) async {
     setState(() => _busy = true);
-    final out = await ref.read(toolRunnerProvider).run(widget.part.name, {..._args, ...args});
+    // A Telegram control acts in the account the call did.
+    final account = accountOfCall(ref.read(accountsProvider), widget.part.name, _args);
+    final out = await ref
+        .read(account == null ? toolRunnerProvider : toolRunnerFamily(account))
+        .run(widget.part.name, withoutAccount({..._args, ...args}));
     if (!mounted) return false;
     setState(() {
       _busy = false;

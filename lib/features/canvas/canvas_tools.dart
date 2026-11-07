@@ -8,7 +8,8 @@ import 'canvas_store.dart';
 final _ref = RegExp(r'post:(-?\d+):(\d+)');
 
 /// Runs one of the Content Canvas tools.
-Future<ToolOutput> runCanvasTool(Ref ref, String name, Map<String, dynamic> a) async {
+/// [account] is the Telegram account posts are read from (the run's).
+Future<ToolOutput> runCanvasTool(Ref ref, String name, Map<String, dynamic> a, {String? account}) async {
   final store = ref.read(canvasProvider.notifier);
   final s = await store.ready();
   String str(String k) => '${a[k] ?? ''}'.trim();
@@ -114,7 +115,7 @@ Future<ToolOutput> runCanvasTool(Ref ref, String name, Map<String, dynamic> a) a
             if (id is num) (chat.toInt(), id.toInt()),
       };
       if (keys.isEmpty) throw ArgumentError('Pass refs, or chat_id with message_ids.');
-      final runner = ref.read(toolRunnerProvider);
+      final runner = ref.read(account == null ? toolRunnerProvider : toolRunnerFamily(account));
       final posts = <PostSnapshot>[];
       final missing = <String>[];
       for (final (chat, id) in keys.take(100)) {
