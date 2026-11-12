@@ -138,11 +138,17 @@ final _webTools = <TelegramTool>[
         'page\'s text and its usable elements, numbered (links, buttons, text fields, selects). Then use browser_type '
         'to fill fields, browser_click to press buttons, browser_read to read again. Use it for sites that are apps '
         '(JavaScript-heavy web apps, forms, anything fetch_url shows empty), and to follow a link (open its href; '
-        'no approval needed). The user can watch it live in the app\'s Browser screen.',
+        'no approval needed). The user can watch it live in the app\'s Browser screen. The browser shows sites\' '
+        'mobile layout by default; desktop: true switches to their PC (desktop) layout, like Chrome\'s "Desktop site", '
+        'and it stays that way until desktop: false. Returns which view it used.',
     parameters: _obj(
       {
-        'url': {'type': 'string'},
+        'url': {'type': 'string', 'description': 'The page to open.'},
         'max_chars': {'type': 'integer', 'description': 'Default 6000.'},
+        'desktop': {
+          'type': 'boolean',
+          'description': 'true for the site\'s desktop (PC) layout, false for its mobile layout; leave out to keep the current view.',
+        },
       },
       ['url'],
     ),
@@ -244,7 +250,7 @@ extension _WebTools on TelegramToolRunner {
         'submit_form' => _submitForm(args),
         'download_file' => _download(args),
         'browser_open' => _browse(
-          () => _browser.open(
+          () => _openInMode(
             '${WebFetcher.normalize('${args['url'] ?? ''}')}',
             maxChars: TelegramToolRunner._int(
               args,
@@ -252,6 +258,7 @@ extension _WebTools on TelegramToolRunner {
               fallback: 6000,
               max: 20000,
             ),
+            desktop: args['desktop'] is bool ? args['desktop'] as bool : null,
           ),
         ),
         'browser_read' => _browse(
@@ -279,11 +286,12 @@ extension _WebTools on TelegramToolRunner {
           ),
         ),
         'browser_submit' => _browse(
-          () =>
-              _browser.type(_element(args), '', clear: false, pressEnter: true),
+          () => _refit(
+            () => _browser.type(_element(args), '', clear: false, pressEnter: true),
+          ),
         ),
-        'browser_click' => _browse(() => _browser.click(_element(args))),
-        'browser_back' => _browse(_browser.back),
+        'browser_click' => _browse(() => _refit(() => _browser.click(_element(args)))),
+        'browser_back' => _browse(() => _refit(_browser.back)),
         'browser_run_js' => _browse(
           () async => {
             'result': await _browser.evaluate('${args['script'] ?? ''}'),
@@ -327,6 +335,32 @@ extension _WebTools on TelegramToolRunner {
         'element is required: a number from browser_open or browser_read.',
       );
     return i;
+  }
+
+  /// Opens [url] in the browser's current view (desktop or mobile), after
+  /// switching view when [desktop] says so.
+  Future<Map<String, dynamic>> _openInMode(String url, {required int maxChars, bool? desktop}) async {
+    if (desktop != null) await BrowserMode.setDesktop(desktop);
+    final on = await BrowserMode.desktop;
+    // The page view only exists once something has loaded; make it first,
+    // so the very first page already goes out with the right user agent.
+    if (_browser.controller == null && on) await _browser.open('about:blank', maxChars: 100);
+    await BrowserMode.apply(_browser);
+    var page = await _browser.open(url, maxChars: maxChars);
+    if (on) {
+      await BrowserMode.fit(_browser);
+      page = await _browser.read(maxChars: maxChars);
+    }
+    return {...page, 'view': on ? 'desktop' : 'mobile'};
+  }
+
+  /// After a click, submit or back in desktop view: lays the new page out
+  /// at desktop width and reads it again, so its numbers match that layout.
+  Future<Map<String, dynamic>> _refit(Future<Map<String, dynamic>> Function() action) async {
+    final r = await action();
+    if (!await BrowserMode.desktop) return r;
+    await BrowserMode.fit(_browser);
+    return {...r, ...await _browser.read(), 'view': 'desktop'};
   }
 
   Future<ToolOutput> _browse(

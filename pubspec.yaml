@@ -71,6 +71,8 @@ dependencies:
   open_filex: ^5.0.0
   flutter_inappwebview: ^6.2.0-beta.3
   webview_flutter: ^4.10.0
+  # The browser's desktop view sets Android's wide viewport (browser_mode.dart).
+  webview_flutter_android: ^4.14.1
   pdf: 3.11.3
   # Every AI call (the chat agent and its tools, images, voices,
   # dictation, model lists) and the Composio, E2B, Cloudflare, Exa,

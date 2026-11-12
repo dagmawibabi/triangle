@@ -1,12 +1,16 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui show ImageByteFormat, instantiateImageCodec;
 import 'dart:ui' show Size;
 
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter/services.dart' show MissingPluginException;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
+
+import 'browser_mode.dart';
 
 /// A second browser engine (flutter_inappwebview) next to the assistant's
 /// main browser, for what that one can't do: screenshots of a page (the
@@ -25,7 +29,16 @@ class InAppEngine {
   String? _error;
 
   static bool get supported => Platform.isAndroid || Platform.isIOS;
-  static const _viewport = Size(412, 915);
+  static const _mobileViewport = Size(412, 915);
+  static const _desktopViewport = Size(1280, 800);
+  static const _mobileAgent =
+      'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36';
+  static const _desktopAgent =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+
+  /// Follows the browser's "Desktop site" setting ([BrowserMode]).
+  bool _desktop = false;
+  Size get _viewport => _desktop ? _desktopViewport : _mobileViewport;
 
   Future<InAppWebViewController> _ensure() async {
     if (!supported) throw UnsupportedError('This works on Android and iOS only.');
@@ -36,9 +49,7 @@ class InAppEngine {
       initialSize: _viewport,
       initialSettings: InAppWebViewSettings(
         javaScriptEnabled: true,
-        userAgent:
-            'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) '
-            'Chrome/130.0.0.0 Mobile Safari/537.36',
+        userAgent: _desktop ? _desktopAgent : _mobileAgent,
         mediaPlaybackRequiresUserGesture: true,
         useWideViewPort: true,
       ),
@@ -74,6 +85,7 @@ class InAppEngine {
 
   /// Loads [url] and waits for the page and its scripts to settle.
   Future<void> open(String url, {Duration settle = const Duration(milliseconds: 1500)}) async {
+    await _followMode();
     final c = await _ensure();
     _console.clear();
     _load = Completer<void>();
@@ -84,9 +96,74 @@ class InAppEngine {
 
   Future<String?> get url async => (await _c?.getUrl())?.toString();
 
+  /// Matches the browser's desktop or mobile view: a new user agent and
+  /// width, so the next page loads in that layout.
+  Future<void> _followMode() async {
+    final desktop = await BrowserMode.desktop;
+    if (desktop == _desktop) return;
+    _desktop = desktop;
+    final c = _c;
+    if (c == null) return;
+    await c.setSettings(settings: InAppWebViewSettings(userAgent: desktop ? _desktopAgent : _mobileAgent));
+    await _view?.setSize(_viewport);
+  }
+
   /// A PNG of the page: what fits the phone's screen, or the whole page
   /// (up to [maxHeight] points tall). Saved with the app's files.
+  ///
+  /// The hidden page joins the app's screen when it is made. Made while
+  /// Triangle had no screen (started in the background), or after that
+  /// screen was replaced, it draws nothing and the picture comes out empty
+  /// (black). Then it is made again on the current screen, the page is
+  /// loaded again, and the picture retaken.
   Future<File> screenshot({bool fullPage = false, int maxHeight = 6000}) async {
+    var bytes = await _capture(fullPage: fullPage, maxHeight: maxHeight);
+    if (await _blank(bytes)) {
+      final current = await url;
+      await dispose();
+      if (current != null && current.startsWith('http')) {
+        await open(current, settle: const Duration(milliseconds: 2500));
+      } else {
+        await _ensure();
+      }
+      bytes = await _capture(fullPage: fullPage, maxHeight: maxHeight);
+      if (await _blank(bytes)) {
+        throw StateError(
+          'The page drew nothing, so the screenshot would be black. Page screenshots need Triangle open on the screen: '
+          'open the app and try again.',
+        );
+      }
+    }
+    final dir = Directory('${(await getApplicationSupportDirectory()).path}/screenshots');
+    if (!await dir.exists()) await dir.create(recursive: true);
+    final host = Uri.tryParse(await url ?? '')?.host.replaceAll('.', '_') ?? 'page';
+    return File('${dir.path}/${host}_${DateTime.now().millisecondsSinceEpoch}.png').writeAsBytes(bytes);
+  }
+
+  /// Whether a PNG is empty: every sampled pixel see-through, or all one
+  /// near-black colour. A real page always has something on it.
+  static Future<bool> _blank(Uint8List png) async {
+    try {
+      final codec = await ui.instantiateImageCodec(png, targetWidth: 64);
+      final frame = await codec.getNextFrame();
+      final data = await frame.image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      frame.image.dispose();
+      if (data == null) return false;
+      final px = data.buffer.asUint8List();
+      var solid = 0;
+      var light = 0;
+      for (var i = 0; i + 3 < px.length; i += 4 * 7) {
+        if (px[i + 3] > 16) solid++;
+        if (px[i] > 24 || px[i + 1] > 24 || px[i + 2] > 24) light++;
+      }
+      return solid == 0 || light == 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<Uint8List> _capture({required bool fullPage, required int maxHeight}) async {
+    await _followMode();
     final c = await _ensure();
     if (fullPage) {
       final h = await c.evaluateJavascript(
@@ -101,10 +178,7 @@ class InAppEngine {
         screenshotConfiguration: ScreenshotConfiguration(compressFormat: CompressFormat.PNG),
       );
       if (bytes == null || bytes.isEmpty) throw StateError('The page gave an empty screenshot.');
-      final dir = Directory('${(await getApplicationSupportDirectory()).path}/screenshots');
-      if (!await dir.exists()) await dir.create(recursive: true);
-      final host = Uri.tryParse(await url ?? '')?.host.replaceAll('.', '_') ?? 'page';
-      return await File('${dir.path}/${host}_${DateTime.now().millisecondsSinceEpoch}.png').writeAsBytes(bytes);
+      return bytes;
     } finally {
       if (fullPage) await _view!.setSize(_viewport);
     }

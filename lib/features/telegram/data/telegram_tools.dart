@@ -40,6 +40,7 @@ import 'package:omni_ai/omni_ai.dart'
 import '../../integrations/e2b_session.dart';
 import '../../integrations/integrations_store.dart';
 import '../../settings/data/settings.dart';
+import '../../web/browser_mode.dart';
 import '../../web/inapp_engine.dart';
 import '../../web/web_fetch.dart';
 import 'file_loader.dart' show formatDuration;

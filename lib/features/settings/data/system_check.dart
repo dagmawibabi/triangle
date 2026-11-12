@@ -606,6 +606,14 @@ class SystemChecker {
       ApprovalMode.watches => CheckResult(CheckStatus.info, 'Watches and routines act on their own', 'The chat still asks before it sends or changes anything.', approvals),
       ApprovalMode.never => CheckResult(CheckStatus.warn, 'Nothing asks first', 'The assistant sends, replies and changes things right away, everywhere.', approvals),
     });
+    if (!s.holdAfterUntrusted && s.approvalMode != ApprovalMode.ask) {
+      g.results.add(CheckResult(
+        CheckStatus.warn,
+        'The anti-manipulation hold is off',
+        'Text in messages, emails or web pages could steer a watch or routine into acting without asking you.',
+        approvals,
+      ));
+    }
     final filters = read(contentFiltersProvider);
     final blocked = read(blockedSendersProvider).length;
     final hidden = [

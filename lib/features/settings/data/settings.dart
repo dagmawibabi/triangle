@@ -165,6 +165,7 @@ class AppSettings {
     this.autoMusic = false,
     this.customInstructions = '',
     this.approvalMode = ApprovalMode.ask,
+    this.holdAfterUntrusted = true,
     this.proactive = true,
     this.watchResponseDelaySeconds = 12,
     this.notifications = true,
@@ -251,6 +252,12 @@ class AppSettings {
   /// The user's own standing instructions, added to every conversation.
   final String customInstructions;
   final ApprovalMode approvalMode;
+
+  /// The anti-manipulation hold: once a turn has read text other people
+  /// wrote (a watch's messages, a web page, another app's screen), actions
+  /// that would otherwise run on their own wait for approval, in case that
+  /// text tried to steer the assistant. On unless the person turns it off.
+  final bool holdAfterUntrusted;
 
   /// Watches and routines may run. Off pauses all of them.
   final bool proactive;
@@ -613,6 +620,7 @@ class AppSettings {
     bool? autoMusic,
     String? customInstructions,
     ApprovalMode? approvalMode,
+    bool? holdAfterUntrusted,
     bool? proactive,
     int? watchResponseDelaySeconds,
     bool? notifications,
@@ -724,6 +732,7 @@ class AppSettings {
     autoMusic: autoMusic ?? this.autoMusic,
     customInstructions: customInstructions ?? this.customInstructions,
     approvalMode: approvalMode ?? this.approvalMode,
+    holdAfterUntrusted: holdAfterUntrusted ?? this.holdAfterUntrusted,
     proactive: proactive ?? this.proactive,
     watchResponseDelaySeconds:
         watchResponseDelaySeconds ?? this.watchResponseDelaySeconds,
@@ -929,6 +938,7 @@ class SettingsController extends Notifier<AppSettings> {
       approvalMode:
           ApprovalMode.values.asNameMap()[p.getString('approval_mode')] ??
           d.approvalMode,
+      holdAfterUntrusted: p.getBool('hold_after_untrusted') ?? d.holdAfterUntrusted,
       proactive: p.getBool('proactive') ?? d.proactive,
       watchResponseDelaySeconds:
           p.getInt('watch_response_delay_seconds') ??
@@ -1267,6 +1277,14 @@ class SettingsController extends Notifier<AppSettings> {
     if (v != state.approvalMode) _audit('Approval setting changed to "${v.name}"', 'Was "${state.approvalMode.name}".');
     state = state.copyWith(approvalMode: v);
     await _write('approval_mode', v.name);
+  }
+
+  Future<void> setHoldAfterUntrusted(bool v) async {
+    if (v != state.holdAfterUntrusted) {
+      _audit(v ? 'Anti-manipulation hold turned on' : 'Anti-manipulation hold turned off', '');
+    }
+    state = state.copyWith(holdAfterUntrusted: v);
+    await _write('hold_after_untrusted', v);
   }
 
   Future<void> setProactive(bool v) async {

@@ -1258,6 +1258,8 @@ class ChatController extends Notifier<ChatState> {
   /// it at any chat.
   bool _heldByTaint(TelegramTool tool, Conversation c, Map<String, dynamic> input) {
     if (!tool.modifiesData || !_tainted.contains(c.id)) return false;
+    // The person turned the hold off in Settings → Approvals.
+    if (!ref.read(settingsProvider).holdAfterUntrusted) return false;
     if (taintSafeTools.contains(tool.name)) return false;
     final chats = chatsOfCall(input);
     final source = _sourceChats[c.id];
