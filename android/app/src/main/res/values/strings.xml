@@ -2,5 +2,5 @@
 <resources>
     <string name="brief_widget_description">Your brief, or a widget you or the assistant made</string>
     <string name="brief_widget_label">Triangle</string>
-    <string name="screen_control_description">Lets Triangle's assistant read what's on your screen and tap, type and scroll in other apps when you ask it to. Each action asks you first unless you change that in Approvals. It never reads or types passwords, never acts in Triangle itself, Android's permission screens, or apps you put off limits, and every action is in Triangle's activity log.</string>
+    <string name="screen_control_description">"Lets Triangle's assistant read what's on your screen and tap, type and scroll in other apps when you ask it to. Each action asks you first unless you change that in Approvals. It never reads or types passwords, never acts in Triangle itself, Android's permission screens, or apps you put off limits, and every action is in Triangle's activity log."</string>
 </resources>
