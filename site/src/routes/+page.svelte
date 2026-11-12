@@ -15,7 +15,17 @@
 	// Always the newest release, as long as the file keeps this name.
 	const companion = `${releases}/latest/download/Companion.rar`;
 
-	const apps = ['Telegram', 'Gmail', 'Calendar', 'Slack', 'Notion', 'Drive', 'GitHub', 'Linear', 'Todoist'];
+	const apps = [
+		'Telegram',
+		'Gmail',
+		'Calendar',
+		'Slack',
+		'Notion',
+		'Drive',
+		'GitHub',
+		'Linear',
+		'Todoist'
+	];
 
 	const tabs = [
 		{
@@ -47,13 +57,26 @@
 		{
 			name: 'Keep watch',
 			title: 'It tells you when something happens.',
-			text: 'Set a watch on a person or a group, schedule a routine, or wake up to a brief of what you missed.',
+			text: 'Set a watch on a person or a group, build a routine that runs on a schedule, or wake up to a brief of what you missed.',
 			prompt: 'Tell me when the final designs land in the launch group.',
 			tools: ['Creating a watch', 'Following the launch group'],
 			answer: 'Watching.',
 			details: [
 				'When the designs arrive, you’ll get a summary and the original message.',
 				'You can pause or change this watch anytime.'
+			]
+		},
+		{
+			name: 'Track money',
+			title: 'Your spending, from your bank texts.',
+			text: 'It reads the texts your bank sends, keeps your accounts and budgets up to date, and answers questions about where the money went. The record stays on your phone.',
+			prompt: 'How much did I spend on food this month?',
+			tools: ['Reading your bank texts', 'Adding up your money'],
+			answer: '4,280 birr on food so far.',
+			details: [
+				'That’s 18% more than last month, mostly from eating out.',
+				'You have 1,720 birr left in your food budget.',
+				'Your biggest day was Saturday, at 960 birr.'
 			]
 		},
 		{
@@ -214,6 +237,16 @@
 			question: 'Can Triangle use my computer?',
 			answer:
 				'Yes, on Windows, with Triangle Companion running on your PC and your phone connected over Tailscale or home Wi-Fi. Each ability has its own switch on the PC: shared folders, seeing the screen, mouse and keyboard, the clipboard, commands, and apps and system. Changes can be set to ask for your OK on the PC first.'
+		},
+		{
+			question: 'Does it read my bank texts?',
+			answer:
+				'Only if you allow it. The money tools read the texts your bank sends to keep track of your accounts, spending and budgets. That record is kept on your phone, and you can add, fix or delete anything yourself.'
+		},
+		{
+			question: 'Can I hide people, channels or words in Telegram?',
+			answer:
+				'Yes. Settings → Block & mute hides messages from people you blocked, posts forwarded from channels and groups you block, and anything with a word you muted, in chats, groups, channels and comments. Each can leave a “tap to view” notice or disappear completely.'
 		},
 		{
 			question: 'How do I install it?',
@@ -392,7 +425,13 @@
 			<h2 id="features-heading">One conversation that can do the work.</h2>
 		</div>
 		<div class="features-layout">
-			<div class="tab-list" role="tablist" aria-label="What Triangle does" aria-orientation="vertical" data-reveal>
+			<div
+				class="tab-list"
+				role="tablist"
+				aria-label="What Triangle does"
+				aria-orientation="vertical"
+				data-reveal
+			>
 				{#each tabs as tab, index}
 					<button
 						type="button"
@@ -430,8 +469,12 @@
 					<div class="demo-body">
 						<p class="sr-only">{example.prompt}</p>
 						<div class="demo-user" aria-hidden="true">
-							{typed === Infinity ? example.prompt : example.prompt.slice(0, typed)}{#if typed !== Infinity && typed < example.prompt.length}<i
-									class="caret"
+							{typed === Infinity
+								? example.prompt
+								: example.prompt.slice(
+										0,
+										typed
+									)}{#if typed !== Infinity && typed < example.prompt.length}<i class="caret"
 								></i>{/if}
 						</div>
 						<ul class="demo-tools">
@@ -460,7 +503,12 @@
 				<article data-shot={index} class:active={activeShot === index}>
 					<h3>{shot.title}</h3>
 					<p>{shot.text}</p>
-					<button class="shots-inline" type="button" onclick={() => showShot(shot)} aria-label={`Enlarge: ${shot.title}`}>
+					<button
+						class="shots-inline"
+						type="button"
+						onclick={() => showShot(shot)}
+						aria-label={`Enlarge: ${shot.title}`}
+					>
 						<Phone screen={shot.screen} alt={shot.alt} />
 					</button>
 				</article>
@@ -474,7 +522,11 @@
 				aria-label={`Enlarge: ${shots[activeShot].title}`}
 			>
 				{#each shots as shot, index}
-					<span class="shot-layer" class:active={activeShot === index} class:past={activeShot > index}>
+					<span
+						class="shot-layer"
+						class:active={activeShot === index}
+						class:past={activeShot > index}
+					>
 						<Phone screen={shot.screen} alt={activeShot === index ? shot.alt : ''} />
 					</span>
 				{/each}
@@ -496,8 +548,13 @@
 					<svg viewBox="0 0 200 180" class="voice-tri">
 						<defs>
 							<clipPath id="voice-clip"><path d="M100 8 192 170H8Z" /></clipPath>
-							<filter id="voice-blur" filterUnits="userSpaceOnUse" x="-60" y="-20" width="320" height="240"
-								><feGaussianBlur stdDeviation="9" /></filter
+							<filter
+								id="voice-blur"
+								filterUnits="userSpaceOnUse"
+								x="-60"
+								y="-20"
+								width="320"
+								height="240"><feGaussianBlur stdDeviation="9" /></filter
 							>
 							<linearGradient id="voice-sky" x1="0" y1="0" x2="0" y2="1">
 								<stop offset="0" stop-color="#000" />
@@ -542,7 +599,9 @@
 			<article class="cell span-4 cell-browser wipe" data-reveal>
 				<div class="art" aria-hidden="true">
 					<div class="browser-win">
-						<div class="browser-bar"><Tri size={9} turn={270} /><span>wikipedia.org/wiki/Moon</span></div>
+						<div class="browser-bar">
+							<Tri size={9} turn={270} /><span>wikipedia.org/wiki/Moon</span>
+						</div>
 						<div class="browser-page">
 							<i style="--w: 62%"></i>
 							<i style="--w: 92%"></i>
@@ -570,13 +629,23 @@
 				</div>
 				<div class="copy">
 					<h3>Make things</h3>
-					<p>Images, speech, sound effects, music and video from a description.</p>
+					<p>
+						Images, speech, music and video from a description. Resize, crop or cut out a picture.
+					</p>
 				</div>
 			</article>
 			<article class="cell span-3 cell-pc wipe" data-reveal>
 				<div class="art" aria-hidden="true">
 					<svg viewBox="0 0 240 150" class="pc-screen">
-						<rect x=".5" y=".5" width="239" height="149" fill="none" stroke="currentColor" opacity=".4" />
+						<rect
+							x=".5"
+							y=".5"
+							width="239"
+							height="149"
+							fill="none"
+							stroke="currentColor"
+							opacity=".4"
+						/>
 						<path d="M0 18H240" stroke="currentColor" opacity=".4" />
 						<path class="pc-trail" d="M120 40 180 124H60Z" pathLength="1" />
 						<circle class="pc-click" cx="120" cy="40" r="4" />
@@ -605,7 +674,10 @@
 				</div>
 				<div class="copy">
 					<h3>A whole Telegram client</h3>
-					<p>Chats, channels, folders, files, stickers and voice notes, with your own account.</p>
+					<p>
+						Chats, channels, folders, files, stickers and voice notes, with several accounts at once
+						and search that remembers what you looked for.
+					</p>
 				</div>
 			</article>
 			<article class="cell span-2 cell-brief wipe" data-reveal>
@@ -631,8 +703,8 @@
 					</svg>
 				</div>
 				<div class="copy">
-					<h3>Reminders and routines</h3>
-					<p>“Every weekday at 9, catch me up.” One-off or repeating.</p>
+					<h3>Routines</h3>
+					<p>“Every weekday at 9, catch me up on my channels.” Jobs it runs on a schedule.</p>
 				</div>
 			</article>
 			<article class="cell span-2 cell-memory wipe" data-reveal>
@@ -668,7 +740,7 @@
 				</div>
 				<div class="copy">
 					<h3>Your phone</h3>
-					<p>Find a text, set a timer, check your battery or call someone.</p>
+					<p>Find a text, read notifications, check screen time and data use, or call someone.</p>
 				</div>
 			</article>
 			<article class="cell span-2 cell-code wipe" data-reveal>
@@ -690,7 +762,10 @@
 				</div>
 				<div class="copy">
 					<h3>Things to watch, read and hear</h3>
-					<p>Search YouTube, X, books, films, shows and music, with results you can open right there.</p>
+					<p>
+						YouTube, X, Reddit, Hacker News, research papers, books, audiobooks, podcasts, radio,
+						films and music, with results you can open right there.
+					</p>
 				</div>
 			</article>
 			<article class="cell span-3 cell-widgets wipe" data-reveal>
@@ -700,6 +775,57 @@
 				<div class="copy">
 					<h3>Home-screen widgets</h3>
 					<p>Ask for a widget in your own words, and it builds one for your home screen.</p>
+				</div>
+			</article>
+			<article class="cell span-2 cell-money wipe" data-reveal>
+				<div class="art" aria-hidden="true">
+					<ul class="ledger">
+						<li><span>Salary</span><b>+24,000</b></li>
+						<li><span>Groceries</span><b>−840</b></li>
+						<li><span>Taxi</span><b>−210</b></li>
+						<li class="ledger-budget"><span>Food budget</span><i style="--w: 62%"></i></li>
+					</ul>
+				</div>
+				<div class="copy">
+					<h3>Money</h3>
+					<p>
+						Accounts, budgets and spending from your bank texts, plus prices, markets and
+						currencies.
+					</p>
+				</div>
+			</article>
+			<article class="cell span-2 cell-mute wipe" data-reveal>
+				<div class="art" aria-hidden="true">
+					<ul class="muted-msgs">
+						<li><i></i><span style="--w: 70%"></span></li>
+						<li class="muted">
+							<em>Message from someone you blocked</em><small>Tap to view</small>
+						</li>
+						<li><i></i><span style="--w: 52%"></span></li>
+					</ul>
+				</div>
+				<div class="copy">
+					<h3>Block and mute</h3>
+					<p>
+						Hide people, channels and words in chats, groups and comments, behind a notice or
+						without a trace.
+					</p>
+				</div>
+			</article>
+			<article class="cell span-2 cell-everyday wipe" data-reveal>
+				<div class="art" aria-hidden="true">
+					<ul class="topics">
+						<li>Scores</li>
+						<li>Recipes</li>
+						<li>Weather</li>
+						<li>Verse of the day</li>
+						<li>Ethiopian date</li>
+						<li>QR codes</li>
+					</ul>
+				</div>
+				<div class="copy">
+					<h3>Everyday answers</h3>
+					<p>Words and translation, sports, recipes, the Bible, holidays, flights and QR codes.</p>
 				</div>
 			</article>
 		</div>
@@ -719,7 +845,9 @@
 					switch it on.
 				</p>
 				<div class="companion-actions">
-					<a class="button" data-magnetic href={companion}><span>Download Companion</span><Tri turn={180} /></a>
+					<a class="button" data-magnetic href={companion}
+						><span>Download Companion</span><Tri turn={180} /></a
+					>
 					<a class="link" href="/tools#pc"><span>See its tools</span></a>
 				</div>
 			</div>
@@ -727,7 +855,12 @@
 		<div class="guide">
 			<div class="guide-side" data-reveal>
 				<h3>Set it up and connect.</h3>
-				<div class="modes" role="group" aria-label="How to connect" style={`--mode: ${guideMode === 'wifi' ? 0 : 1}`}>
+				<div
+					class="modes"
+					role="group"
+					aria-label="How to connect"
+					style={`--mode: ${guideMode === 'wifi' ? 0 : 1}`}
+				>
 					{#each Object.entries(guides) as [mode, guide]}
 						<button
 							type="button"
@@ -774,7 +907,10 @@
 			<div>
 				<h4>If it won’t connect</h4>
 				<ul>
-					<li><b>No PC found:</b> check the companion is running, the phone is on the same network, and your Wi-Fi is set to Private in Windows</li>
+					<li>
+						<b>No PC found:</b> check the companion is running, the phone is on the same network, and
+						your Wi-Fi is set to Private in Windows
+					</li>
 					<li><b>The PC refused:</b> See the screen is off, or the companion is paused</li>
 					<li><b>Touches do nothing:</b> switch on Control mouse &amp; keyboard</li>
 				</ul>
@@ -787,20 +923,38 @@
 			<div data-reveal="type"><h2 id="control-heading">Nothing goes out until you say so.</h2></div>
 			<ul class="principles" data-reveal>
 				{#each principles as item}
-					<li><h3>{item.title}</h3><p>{item.text}</p></li>
+					<li>
+						<h3>{item.title}</h3>
+						<p>{item.text}</p>
+					</li>
 				{/each}
 			</ul>
 		</div>
-		<div class="approval" class:approved={approval === 'approved'} class:dismissed={approval === 'dismissed'} data-reveal>
+		<div
+			class="approval"
+			class:approved={approval === 'approved'}
+			class:dismissed={approval === 'dismissed'}
+			data-reveal
+		>
 			<p class="approval-top">Telegram, to Launch team</p>
 			<h3>Send this reply?</h3>
 			<blockquote>The designs look great. Let’s ship on Friday. Thanks, everyone!</blockquote>
 			<div class="approval-actions" aria-live="polite">
 				{#if approval === 'pending'}
-					<button type="button" class="button" data-magnetic onclick={() => (approval = 'approved')}>
+					<button
+						type="button"
+						class="button"
+						data-magnetic
+						onclick={() => (approval = 'approved')}
+					>
 						<span>Approve</span>
 					</button>
-					<button type="button" class="button ghost" data-magnetic onclick={() => (approval = 'dismissed')}>
+					<button
+						type="button"
+						class="button ghost"
+						data-magnetic
+						onclick={() => (approval = 'dismissed')}
+					>
 						<span>Decline</span>
 					</button>
 				{:else}
@@ -808,9 +962,15 @@
 						<svg viewBox="0 0 40 40" width="26" height="26" fill="none" aria-hidden="true">
 							<path d="M20 5 37 34H3Z" pathLength="1" />
 						</svg>
-						<span>{approval === 'approved' ? 'Approved. In the app, this would send now.' : 'Declined. Nothing was sent.'}</span>
+						<span
+							>{approval === 'approved'
+								? 'Approved. In the app, this would send now.'
+								: 'Declined. Nothing was sent.'}</span
+						>
 					</div>
-					<button class="link" type="button" onclick={() => (approval = 'pending')}><span>Try again</span></button>
+					<button class="link" type="button" onclick={() => (approval = 'pending')}
+						><span>Try again</span></button
+					>
 				{/if}
 			</div>
 			<p class="approval-note">This is a demo, so nothing is really sent.</p>
@@ -870,7 +1030,9 @@
 					<span>Download Companion</span><Tri turn={180} />
 				</a>
 			</div>
-			<a class="link download-source" href={github} target="_blank" rel="noreferrer"><span>Read the source</span></a>
+			<a class="link download-source" href={github} target="_blank" rel="noreferrer"
+				><span>Read the source</span></a
+			>
 		</div>
 	</section>
 </main>
@@ -878,8 +1040,15 @@
 <dialog bind:this={screenshotDialog} class="shot-dialog" aria-labelledby="dialog-title">
 	<div class="dialog-bar">
 		<h2 id="dialog-title">{dialogShot.title}</h2>
-		<button type="button" class="link" onclick={() => screenshotDialog.close()}><span>Close</span></button>
+		<button type="button" class="link" onclick={() => screenshotDialog.close()}
+			><span>Close</span></button
+		>
 	</div>
-	<img src={`/screenshots/${dialogShot.screen}.png`} alt={dialogShot.alt} width="780" height="1640" />
+	<img
+		src={`/screenshots/${dialogShot.screen}.png`}
+		alt={dialogShot.alt}
+		width="780"
+		height="1640"
+	/>
 	<p>Screenshots use fictional conversations.</p>
 </dialog>

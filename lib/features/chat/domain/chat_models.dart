@@ -241,13 +241,19 @@ class UserEntry extends ChatEntry {
 }
 
 class AssistantEntry extends ChatEntry {
-  AssistantEntry({required super.id, super.at, List<ModelStep>? steps, this.model = '', this.error, this.done = false})
+  AssistantEntry({required super.id, super.at, List<ModelStep>? steps, this.model = '', this.error, this.done = false, this.notice})
     : steps = steps ?? [];
 
   final List<ModelStep> steps;
-  final String model;
+
+  /// The model that answered (the fallback, when the chosen one failed).
+  String model;
   String? error;
   bool done;
+
+  /// A note shown under the answer: it came from a fallback model, or a
+  /// spending limit stopped it.
+  String? notice;
 
   /// Everything this answer used, across its model calls.
   StepUsage? get usage {
@@ -265,6 +271,7 @@ class AssistantEntry extends ChatEntry {
     'at': at.toIso8601String(),
     'model': model,
     'error': error,
+    'notice': ?notice,
     'steps': [for (final s in steps) s.toJson()],
   };
 
@@ -273,6 +280,7 @@ class AssistantEntry extends ChatEntry {
     at: DateTime.tryParse(j['at'] ?? ''),
     model: j['model'] ?? '',
     error: j['error'],
+    notice: j['notice'] as String?,
     done: true,
     steps: [for (final s in (j['steps'] as List? ?? const [])) ModelStep.fromJson(Map<String, dynamic>.from(s))],
   );

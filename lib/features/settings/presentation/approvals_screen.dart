@@ -9,6 +9,7 @@ import '../../../infrastructure/telegram/accounts.dart';
 import '../../account/account_switcher.dart';
 import '../../account/accounts_settings.dart';
 import '../../telegram/data/account_tools.dart';
+import '../../assistant/approval_rules.dart';
 
 /// When the assistant must wait for a tap before acting, and which of its
 /// tools that covers.
@@ -75,6 +76,10 @@ class ApprovalsScreen extends ConsumerWidget {
               onChanged: ctl.setReadOnlyMode,
             ),
           ),
+          const SizedBox(height: Space.l),
+          Text('ALWAYS ALLOWED', style: context.text.labelSmall),
+          const SizedBox(height: Space.s),
+          _RulesList(rules: ref.watch(approvalRulesProvider)),
           // Accounts with their own rules: these win for actions in them.
           if (accounts.hasSeveral) ...[
             const SizedBox(height: Space.l),
@@ -247,5 +252,45 @@ class _Section extends StatelessWidget {
         ),
       ],
     ),
+  );
+}
+
+/// The standing approvals made from approval cards ("Always allow…").
+class _RulesList extends ConsumerWidget {
+  const _RulesList({required this.rules});
+  final List<ApprovalRule> rules;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => Container(
+    decoration: BoxDecoration(color: AppColors.surface2, borderRadius: BorderRadius.circular(Radii.l)),
+    child: rules.isEmpty
+        ? Padding(
+            padding: const EdgeInsets.all(Space.l),
+            child: Text(
+              'No rules yet. On an approval card, tap "Always allow…" to let that action run without asking, '
+              'in one chat or anywhere. Deleting, leaving, blocking and spending always ask.',
+              style: context.text.bodySmall,
+            ),
+          )
+        : Column(
+            children: [
+              for (final r in rules)
+                ListTile(
+                  leading: lead(Icon(r.anywhere ? Icons.public_rounded : Icons.chat_bubble_outline_rounded)),
+                  title: Text(r.toolLabel),
+                  subtitle: Text(
+                    r.anywhere
+                        ? 'Anywhere · still asks right after reading messages from others'
+                        : 'Only in ${r.chatTitle?.trim().isNotEmpty == true ? r.chatTitle : 'chat ${r.chatId}'}',
+                    style: context.text.bodySmall,
+                  ),
+                  trailing: IconButton(
+                    tooltip: 'Remove rule',
+                    icon: const Icon(Icons.close_rounded),
+                    onPressed: () => ref.read(approvalRulesProvider.notifier).remove(r.id),
+                  ),
+                ),
+            ],
+          ),
   );
 }

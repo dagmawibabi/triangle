@@ -72,7 +72,11 @@ class AudioMiniBar extends ConsumerWidget {
                           ),
                         ),
                         LinearProgressIndicator(
-                          value: a.duration.inMilliseconds == 0
+                          value: t.live && a.playing
+                              ? null
+                              : t.live
+                              ? 0
+                              : a.duration.inMilliseconds == 0
                               ? 0
                               : (a.position.inMilliseconds / a.duration.inMilliseconds).clamp(0, 1).toDouble(),
                           minHeight: 2,
@@ -119,6 +123,8 @@ class _AudioSheet extends ConsumerWidget {
                 dimension: 200,
                 child: t.cover != null
                     ? Image.memory(base64Decode(t.cover!.data), fit: BoxFit.cover)
+                    : t.artUrl != null
+                    ? Image.network(t.artUrl!, fit: BoxFit.cover, errorBuilder: (_, _, _) => const ColoredBox(color: Color(0xFF151A26)))
                     : Container(
                         decoration: const BoxDecoration(
                           gradient: LinearGradient(
@@ -127,7 +133,7 @@ class _AudioSheet extends ConsumerWidget {
                             colors: [Color(0xFF2A3550), Color(0xFF151A26)],
                           ),
                         ),
-                        child: Icon(t.voice ? Icons.mic_rounded : Icons.music_note_rounded, size: 72, color: AppColors.accent),
+                        child: Icon(t.live ? Icons.radio_rounded : (t.voice ? Icons.mic_rounded : Icons.music_note_rounded), size: 72, color: AppColors.accent),
                       ),
               ),
             ),
@@ -136,6 +142,20 @@ class _AudioSheet extends ConsumerWidget {
             const SizedBox(height: 2),
             Text(t.subtitle, style: context.text.bodyMedium?.copyWith(color: AppColors.text2), textAlign: TextAlign.center),
             const SizedBox(height: Space.l),
+            if (t.live)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                decoration: BoxDecoration(color: AppColors.danger.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(99)),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.circle, size: 8, color: AppColors.danger),
+                    const SizedBox(width: 6),
+                    Text('LIVE · ${formatDuration(pos.inSeconds)}', style: TextStyle(color: AppColors.danger, fontWeight: FontWeight.w700, fontSize: 12)),
+                  ],
+                ),
+              )
+            else ...[
             Slider(
               value: pos.inMilliseconds.toDouble().clamp(0, total.inMilliseconds.toDouble().clamp(1, double.infinity)),
               max: total.inMilliseconds.toDouble().clamp(1, double.infinity),
@@ -151,12 +171,13 @@ class _AudioSheet extends ConsumerWidget {
                 ],
               ),
             ),
+            ],
             const SizedBox(height: Space.s),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 IconButton(iconSize: 30, icon: const Icon(Icons.skip_previous_rounded), onPressed: a.previous),
-                IconButton(iconSize: 28, icon: const Icon(Icons.replay_10_rounded), onPressed: () => a.skip(-10)),
+                IconButton(iconSize: 28, icon: const Icon(Icons.replay_10_rounded), onPressed: t.live ? null : () => a.skip(-10)),
                 const SizedBox(width: Space.s),
                 Material(
                   color: AppColors.text,
@@ -176,7 +197,7 @@ class _AudioSheet extends ConsumerWidget {
                   ),
                 ),
                 const SizedBox(width: Space.s),
-                IconButton(iconSize: 28, icon: const Icon(Icons.forward_10_rounded), onPressed: () => a.skip(10)),
+                IconButton(iconSize: 28, icon: const Icon(Icons.forward_10_rounded), onPressed: t.live ? null : () => a.skip(10)),
                 IconButton(
                   iconSize: 30,
                   icon: const Icon(Icons.skip_next_rounded),
@@ -185,6 +206,7 @@ class _AudioSheet extends ConsumerWidget {
               ],
             ),
             const SizedBox(height: Space.l),
+            if (!t.live)
             Wrap(
               spacing: 6,
               children: [
@@ -195,7 +217,7 @@ class _AudioSheet extends ConsumerWidget {
             if (a.queue.length > 1) ...[
               const SizedBox(height: Space.s),
               Text(
-                '${a.queue.indexWhere((x) => x.key == t.key) + 1} of ${a.queue.length} in this chat',
+                '${a.queue.indexWhere((x) => x.key == t.key) + 1} of ${a.queue.length}${t.url != null ? '' : ' in this chat'}',
                 style: context.text.labelSmall,
               ),
             ],

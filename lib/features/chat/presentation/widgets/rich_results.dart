@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:audioplayers/audioplayers.dart';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
@@ -12,11 +14,34 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../../../app/theme.dart';
+import '../../../../core/widgets/net_image.dart';
 import '../../../telegram/data/telegram_tools.dart';
 import '../../domain/chat_models.dart';
 import 'app_result_cards.dart';
 import 'cloud_result_cards.dart';
+import 'workspace_result_cards.dart';
+import 'utility_result_cards.dart';
+import 'youtube_result_cards.dart';
+import 'verify_result_cards.dart';
+import 'retro_result_cards.dart';
 import 'device_result_cards.dart';
+import 'markets_result_cards.dart';
+import 'news_result_cards.dart';
+import 'bible_result_cards.dart';
+import 'finance_result_cards.dart';
+import 'call_history_result_cards.dart';
+import 'library_result_cards.dart';
+import 'explore_result_cards.dart';
+import 'pokemon_result_cards.dart';
+import 'papers_result_cards.dart';
+import 'screen_time_result_cards.dart';
+import 'safety_result_cards.dart';
+import 'screen_result_cards.dart';
+import 'image_result_cards.dart';
+import 'reference_result_cards.dart';
+import 'world_result_cards.dart';
+import 'food_result_cards.dart';
+import 'sports_result_cards.dart';
 
 /// Cards for results that are things you'd want to look at: books, YouTube
 /// videos and channels, posts and profiles on X, GitHub repos, releases,
@@ -26,7 +51,7 @@ import 'device_result_cards.dart';
 Widget? richResultFor(ToolPart part) {
   // A failed sandbox run still has output worth showing (the traceback,
   // stderr), so its card stays; other failures show just the error.
-  final failedRun = part.status == ToolStatus.error && part.name.startsWith('e2b_run');
+  final failedRun = part.status == ToolStatus.error && (part.name.startsWith('e2b_run') || part.name == 'run_code');
   if ((part.status != ToolStatus.done && !failedRun) || part.result == null) return null;
   final Map<String, dynamic> j;
   try {
@@ -38,6 +63,8 @@ Widget? richResultFor(ToolPart part) {
     for (final x in (v as List? ?? const []))
       if (x is Map) Map<String, dynamic>.from(x),
   ];
+  // Screen time, image tools and the free lookups.
+  if (safetyResultFor(part, j) ?? screenResultFor(part, j) ?? screenTimeResultFor(part, j) ?? imageResultFor(part, j) ?? referenceResultFor(part, j) ?? worldResultFor(part, j) ?? foodResultFor(part, j) ?? sportsResultFor(part, j) case final w?) return w;
   return switch (part.name) {
     'search_books' => _Carousel(
       height: 236,
@@ -67,7 +94,7 @@ Widget? richResultFor(ToolPart part) {
       subtitle: '${j['size_kb'] ?? '?'} KB · free, legal copy',
       path: '${j['file_path'] ?? ''}',
     ),
-    'youtube_search' => Column(
+    'youtube_search' when j['type'] == null || j['type'] == 'video' => Column(
       children: [for (final v in list(j['results'])) _VideoRow(video: v)],
     ),
     'youtube_video' => _VideoHero(video: j),
@@ -145,7 +172,7 @@ Widget? richResultFor(ToolPart part) {
     'browser_click' when (j['page'] as Map?)?['url'] is String => _PageCard(
       page: Map<String, dynamic>.from(j['page'] as Map),
     ),
-    _ => appResultFor(part, j) ?? cloudResultFor(part, j) ?? deviceResultFor(part, j),
+    _ => marketsResultFor(part, j) ?? newsResultFor(part, j) ?? bibleResultFor(part, j) ?? financeResultFor(part, j) ?? callHistoryResultFor(part, j) ?? libraryResultFor(part, j) ?? exploreResultFor(part, j) ?? pokemonResultFor(part, j) ?? papersResultFor(part, j) ?? appResultFor(part, j) ?? cloudResultFor(part, j) ?? deviceResultFor(part, j) ?? workspaceResultFor(part, j) ?? utilityResultFor(part, j) ?? youtubeResultFor(part, j) ?? verifyResultFor(part, j) ?? retroResultFor(part, j),
   };
 }
 
@@ -180,33 +207,14 @@ class _Net extends StatelessWidget {
   final IconData placeholder;
 
   @override
-  Widget build(BuildContext context) {
-    final box = Container(
-      width: width,
-      height: height,
-      color: AppColors.surface3,
-      alignment: Alignment.center,
-      child: Icon(placeholder, color: AppColors.text3, size: 22),
-    );
-    final u = url;
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(radius ?? 0),
-      child: u == null || u.isEmpty
-          ? box
-          : Image.network(
-              u,
-              width: width,
-              height: height,
-              fit: fit,
-              cacheWidth: width == null
-                  ? null
-                  : (width! * MediaQuery.devicePixelRatioOf(context)).round(),
-              errorBuilder: (_, _, _) => box,
-              loadingBuilder: (_, child, progress) =>
-                  progress == null ? child : box,
-            ),
-    );
-  }
+  Widget build(BuildContext context) => NetImage(
+    url,
+    width: width,
+    height: height,
+    fit: fit,
+    radius: radius ?? 0,
+    placeholder: placeholder,
+  );
 }
 
 class _Shell extends StatelessWidget {
@@ -230,7 +238,8 @@ class _Shell extends StatelessWidget {
         onTap: onTap,
         child: Container(
           padding: padding,
-          decoration: BoxDecoration(
+          // Over the content: an edge-to-edge picture can't hide it.
+          foregroundDecoration: BoxDecoration(
             borderRadius: BorderRadius.circular(Radii.l),
             border: Border.all(color: AppColors.line),
           ),
@@ -2458,67 +2467,252 @@ class _CodeCard extends StatelessWidget {
 
 // ---- web pages -----------------------------------------------------------------
 
+/// Details of a fetched page for its card and sheet.
+class _PageInfo {
+  _PageInfo(this.p)
+    : url = '${p['url']}',
+      host = (Uri.tryParse('${p['url']}')?.host ?? '${p['url']}').replaceFirst(RegExp(r'^www\.'), '');
+  final Map<String, dynamic> p;
+  final String url;
+  final String host;
+
+  String get title => '${p['title'] ?? ''}'.trim().isEmpty ? host : '${p['title']}'.trim();
+  String get site => '${p['site_name'] ?? ''}'.trim().isEmpty ? host : '${p['site_name']}'.trim();
+  String? get image => p['image'] as String?;
+  String get icon => '${p['icon'] ?? ''}'.isNotEmpty ? '${p['icon']}' : 'https://www.google.com/s2/favicons?domain=$host&sz=128';
+  String get summary => '${p['description'] ?? p['text'] ?? ''}'.replaceAll(RegExp(r'\s+'), ' ').trim();
+  int get links => (p['links'] as List?)?.length ?? 0;
+
+  /// About 1,100 characters a minute of reading.
+  int? get minutes {
+    final n = (p['length'] as num?)?.toInt() ?? '${p['text'] ?? ''}'.length;
+    return n < 600 ? null : (n / 1100).ceil();
+  }
+
+  String? get date {
+    final d = DateTime.tryParse('${p['published'] ?? ''}');
+    return d == null ? null : DateFormat(d.year == DateTime.now().year ? 'd MMM' : 'd MMM y').format(d.toLocal());
+  }
+
+  Color? get tint {
+    final s = '${p['theme_color'] ?? ''}'.replaceAll('#', '');
+    final v = int.tryParse(s.length == 6 ? 'FF$s' : '', radix: 16);
+    return v == null ? null : Color(v);
+  }
+}
+
+/// A link preview: the page's share image (or its icon on its colour), the
+/// site and date, title, description, reading time, and ways in.
 class _PageCard extends StatelessWidget {
   const _PageCard({required this.page});
   final Map<String, dynamic> page;
 
   @override
   Widget build(BuildContext context) {
-    final url = '${page['url']}';
-    final host = Uri.tryParse(url)?.host ?? url;
-    final text = '${page['text'] ?? page['description'] ?? ''}'
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
-    return _Shell(
-      onTap: () =>
-          _sheet(context, (scroll) => _PageSheet(page: page, scroll: scroll)),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _Net(
-            'https://www.google.com/s2/favicons?domain=$host&sz=64',
-            width: 28,
-            height: 28,
-            radius: 6,
-            placeholder: Icons.language_rounded,
-          ),
-          const SizedBox(width: Space.m),
-          Expanded(
+    final i = _PageInfo(page);
+    final tint = i.tint ?? AppColors.surface3;
+    void read() => _sheet(context, (scroll) => _PageSheet(page: page, scroll: scroll));
+    return Padding(
+      padding: const EdgeInsets.only(bottom: Space.s),
+      child: Material(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(Radii.xl),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: read,
+          child: Container(
+            // Drawn over the preview, so the picture can't cover the edge.
+            foregroundDecoration: BoxDecoration(borderRadius: BorderRadius.circular(Radii.xl), border: Border.all(color: AppColors.line)),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  '${page['title'] ?? host}'.isEmpty
-                      ? host
-                      : '${page['title'] ?? host}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
+                AspectRatio(
+                  aspectRatio: 1.91,
+                  child: i.image != null
+                      ? NetImage(
+                          i.image,
+                          fit: BoxFit.cover,
+                          // The image didn't load: a live look at the page instead.
+                          errorWidget: _LivePreview(url: i.url, fallback: _TintHeader(info: i, tint: tint)),
+                        )
+                      : _LivePreview(url: i.url, fallback: _TintHeader(info: i, tint: tint)),
                 ),
-                Text(host, style: context.text.bodySmall),
-                if (text.isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    text,
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      color: AppColors.text2,
-                    ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(Space.m + 2, Space.m, Space.m + 2, Space.xs),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          NetImage(i.icon, width: 16, height: 16, radius: 4, placeholder: Icons.language_rounded),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(i.site, maxLines: 1, overflow: TextOverflow.ellipsis, style: context.text.labelMedium?.copyWith(color: AppColors.text2, fontWeight: FontWeight.w600)),
+                          ),
+                          if (i.date != null) Text('  ·  ${i.date}', style: context.text.labelMedium?.copyWith(color: AppColors.text3)),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(i.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: context.text.titleSmall?.copyWith(fontWeight: FontWeight.w700, height: 1.3)),
+                      if (i.summary.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(i.summary, maxLines: 3, overflow: TextOverflow.ellipsis, style: context.text.bodySmall?.copyWith(color: AppColors.text2, height: 1.4)),
+                      ],
+                    ],
                   ),
-                ],
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(Space.m, 0, Space.xs, Space.xs),
+                  child: Row(
+                    children: [
+                      if (i.minutes != null) _Meta(Icons.schedule_rounded, '${i.minutes} min read'),
+                      if (i.links > 0) _Meta(Icons.link_rounded, '${i.links} links'),
+                      if (page['author'] != null && i.minutes == null) Flexible(child: _Meta(Icons.person_outline_rounded, '${page['author']}')),
+                      const Spacer(),
+                      TextButton.icon(
+                        style: TextButton.styleFrom(visualDensity: VisualDensity.compact, foregroundColor: AppColors.text),
+                        onPressed: read,
+                        icon: const Icon(Icons.chrome_reader_mode_outlined, size: 17),
+                        label: const Text('Read'),
+                      ),
+                      IconButton(
+                        tooltip: 'Open in browser',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () => _open(i.url),
+                        icon: Icon(Icons.open_in_new_rounded, size: 18, color: AppColors.text2),
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
-          Icon(Icons.chevron_right_rounded, color: AppColors.text3),
-        ],
+        ),
       ),
     );
   }
 }
 
-/// The page, live, with its text below: what the assistant read.
+/// The page itself, small and still: rendered on the phone (no outside
+/// screenshot service sees the link), a skeleton until it has drawn, and
+/// [fallback] where web views aren't available.
+class _LivePreview extends StatefulWidget {
+  const _LivePreview({required this.url, required this.fallback});
+  final String url;
+  final Widget fallback;
+
+  @override
+  State<_LivePreview> createState() => _LivePreviewState();
+}
+
+class _LivePreviewState extends State<_LivePreview> {
+  static final bool _supported = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+  WebViewController? _web;
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final uri = Uri.tryParse(widget.url);
+    if (!_supported || uri == null || !uri.hasScheme) return;
+    _web = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          // Stay on the page: a preview never follows redirects to apps or
+          // pop-ups.
+          onNavigationRequest: (r) => r.isMainFrame && r.url.startsWith('http') ? NavigationDecision.navigate : NavigationDecision.prevent,
+          onPageFinished: (_) => Future.delayed(const Duration(milliseconds: 350), () {
+            if (mounted) setState(() => _ready = true);
+          }),
+          onWebResourceError: (e) {
+            if (e.isForMainFrame ?? true) setState(() => _web = null);
+          },
+        ),
+      )
+      ..loadRequest(uri);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final web = _web;
+    if (web == null) return widget.fallback;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // A wider page than the card, scaled down: closer to how the site looks.
+        IgnorePointer(
+          child: LayoutBuilder(
+            builder: (context, c) => FittedBox(
+              fit: BoxFit.cover,
+              alignment: Alignment.topCenter,
+              child: SizedBox(width: c.maxWidth * 1.6, height: c.maxHeight * 1.6, child: WebViewWidget(controller: web)),
+            ),
+          ),
+        ),
+        // Fades the page into the card below it.
+        IgnorePointer(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Colors.transparent, AppColors.surface.withValues(alpha: 0.55)],
+                stops: const [0.6, 1],
+              ),
+            ),
+          ),
+        ),
+        AnimatedOpacity(opacity: _ready ? 0 : 1, duration: const Duration(milliseconds: 300), child: IgnorePointer(ignoring: _ready, child: const Skeleton())),
+      ],
+    );
+  }
+}
+
+class _TintHeader extends StatelessWidget {
+  const _TintHeader({required this.info, required this.tint});
+  final _PageInfo info;
+  final Color tint;
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [tint.withValues(alpha: 0.55), Color.lerp(tint, AppColors.surface, 0.75)!],
+      ),
+    ),
+    child: Center(
+      child: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.18), blurRadius: 10)]),
+        child: NetImage(info.icon, width: 30, height: 30, radius: 6, placeholder: Icons.language_rounded),
+      ),
+    ),
+  );
+}
+
+class _Meta extends StatelessWidget {
+  const _Meta(this.icon, this.text);
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(right: Space.m),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 14, color: AppColors.text3),
+        const SizedBox(width: 4),
+        Flexible(child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis, style: context.text.labelSmall?.copyWith(color: AppColors.text3))),
+      ],
+    ),
+  );
+}
+
+/// The page, live or as clean text, with what the assistant read.
 class _PageSheet extends StatefulWidget {
   const _PageSheet({required this.page, required this.scroll});
   final Map<String, dynamic> page;
@@ -2529,114 +2723,127 @@ class _PageSheet extends StatefulWidget {
 }
 
 class _PageSheetState extends State<_PageSheet> {
-  late final String _url = '${widget.page['url']}';
-  late final WebViewController _web = WebViewController()
+  late final _PageInfo _i = _PageInfo(widget.page);
+  WebViewController? _web;
+  late bool _reader = '${widget.page['text'] ?? ''}'.trim().length > 200;
+  bool _loading = true;
+
+  WebViewController get _webView => _web ??= WebViewController()
     ..setJavaScriptMode(JavaScriptMode.unrestricted)
-    ..loadRequest(Uri.parse(_url));
-  bool _text = false;
+    ..setNavigationDelegate(NavigationDelegate(onPageFinished: (_) {
+      if (mounted) setState(() => _loading = false);
+    }))
+    ..loadRequest(Uri.parse(_i.url));
 
   @override
   Widget build(BuildContext context) {
     final p = widget.page;
     final links = [
       for (final l in (p['links'] as List? ?? const []))
-        if (l is Map) l,
+        if (l is Map && '${l['url'] ?? ''}'.startsWith('http')) l,
     ];
+    final paragraphs = '${p['text'] ?? p['description'] ?? ''}'.split(RegExp(r'\n\s*\n|\n')).map((x) => x.trim()).where((x) => x.isNotEmpty).toList();
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(Space.l, 0, Space.s, Space.s),
-          child: Row(
+          padding: const EdgeInsets.fromLTRB(Space.l, 0, Space.l, Space.m),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '${p['title'] ?? ''}'.isEmpty ? _url : '${p['title']}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: context.text.titleMedium,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  NetImage(_i.image ?? _i.icon, width: 56, height: 56, radius: Radii.m, placeholder: Icons.language_rounded),
+                  const SizedBox(width: Space.m),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(_i.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: context.text.titleMedium?.copyWith(fontWeight: FontWeight.w700, height: 1.25)),
+                        const SizedBox(height: 3),
+                        Text(
+                          [_i.site, p['author'], _i.date, if (_i.minutes != null) '${_i.minutes} min read'].whereType<Object>().where((x) => '$x'.isNotEmpty).join(' · '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: context.text.bodySmall?.copyWith(color: AppColors.text3),
+                        ),
+                      ],
                     ),
-                    Text(
-                      _url,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: context.text.bodySmall,
-                    ),
-                  ],
-                ),
-              ),
-              SegmentedButton<bool>(
-                showSelectedIcon: false,
-                segments: const [
-                  ButtonSegment(
-                    value: false,
-                    icon: Icon(Icons.public_rounded, size: 18),
-                    tooltip: 'Page',
-                  ),
-                  ButtonSegment(
-                    value: true,
-                    icon: Icon(Icons.notes_rounded, size: 18),
-                    tooltip: 'Text',
                   ),
                 ],
-                selected: {_text},
-                onSelectionChanged: (s) => setState(() => _text = s.first),
               ),
-              IconButton(
-                tooltip: 'Open in browser',
-                icon: const Icon(Icons.open_in_new_rounded),
-                onPressed: () => _open(_url),
+              const SizedBox(height: Space.m),
+              Row(
+                children: [
+                  Expanded(
+                    child: SegmentedButton<bool>(
+                      showSelectedIcon: false,
+                      style: const ButtonStyle(visualDensity: VisualDensity.compact),
+                      segments: const [
+                        ButtonSegment(value: true, icon: Icon(Icons.chrome_reader_mode_outlined, size: 17), label: Text('Reader')),
+                        ButtonSegment(value: false, icon: Icon(Icons.public_rounded, size: 17), label: Text('Page')),
+                      ],
+                      selected: {_reader},
+                      onSelectionChanged: (s) => setState(() => _reader = s.first),
+                    ),
+                  ),
+                  const SizedBox(width: Space.xs),
+                  IconButton(tooltip: 'Copy link', onPressed: () => _copy(context, _i.url), icon: const Icon(Icons.link_rounded)),
+                  IconButton(tooltip: 'Open in browser', onPressed: () => _open(_i.url), icon: const Icon(Icons.open_in_new_rounded)),
+                ],
               ),
             ],
           ),
         ),
+        Divider(height: 1, color: AppColors.line),
         Expanded(
-          child: _text
+          child: _reader
               ? ListView(
                   controller: widget.scroll,
-                  padding: const EdgeInsets.fromLTRB(
-                    Space.l,
-                    0,
-                    Space.l,
-                    Space.x4,
-                  ),
+                  padding: const EdgeInsets.fromLTRB(Space.xl, Space.l, Space.xl, Space.x4),
                   children: [
-                    SelectableText(
-                      '${p['text'] ?? p['description'] ?? 'No text was read from this page.'}',
-                      style: const TextStyle(height: 1.45),
-                    ),
+                    if (paragraphs.isEmpty) Text('No text was read from this page. Switch to Page to see it.', style: context.text.bodyMedium?.copyWith(color: AppColors.text3)),
+                    for (final para in paragraphs)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: Space.m),
+                        child: SelectableText(para, style: context.text.bodyLarge?.copyWith(height: 1.6, fontSize: 15.5)),
+                      ),
+                    if (p['more_text'] != null) Text('The assistant read the start of the page; the rest is on the page itself.', style: context.text.bodySmall?.copyWith(color: AppColors.text3)),
                     if (links.isNotEmpty) ...[
-                      const Divider(height: Space.xl),
-                      Text('Links', style: context.text.titleSmall),
+                      const SizedBox(height: Space.l),
+                      Text('LINKS ON THIS PAGE', style: context.text.labelSmall?.copyWith(color: AppColors.text3, letterSpacing: 0.8, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: Space.s),
                       for (final l in links.take(40))
-                        ListTile(
-                          dense: true,
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(
-                            '${l['text'] ?? ''}'.isEmpty
-                                ? '${l['url']}'
-                                : '${l['text']}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          subtitle: Text(
-                            '${l['url']}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: context.text.bodySmall,
-                          ),
+                        InkWell(
+                          borderRadius: BorderRadius.circular(Radii.m),
                           onTap: () => _open('${l['url']}'),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            child: Row(
+                              children: [
+                                NetImage('https://www.google.com/s2/favicons?domain=${Uri.tryParse('${l['url']}')?.host ?? ''}&sz=64', width: 18, height: 18, radius: 4, placeholder: Icons.link_rounded),
+                                const SizedBox(width: Space.m),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text('${l['text'] ?? ''}'.trim().isEmpty ? '${l['url']}' : '${l['text']}'.trim(), maxLines: 1, overflow: TextOverflow.ellipsis, style: context.text.bodyMedium),
+                                      Text('${Uri.tryParse('${l['url']}')?.host ?? ''}${Uri.tryParse('${l['url']}')?.path ?? ''}', maxLines: 1, overflow: TextOverflow.ellipsis, style: context.text.bodySmall?.copyWith(color: AppColors.text3)),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                     ],
                   ],
                 )
-              : ClipRRect(
-                  borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(Radii.l),
-                  ),
-                  child: WebViewWidget(controller: _web),
+              : Stack(
+                  children: [
+                    WebViewWidget(controller: _webView),
+                    if (_loading) const LinearProgressIndicator(minHeight: 2),
+                  ],
                 ),
         ),
       ],

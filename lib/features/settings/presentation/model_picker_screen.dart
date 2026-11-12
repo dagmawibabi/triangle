@@ -365,14 +365,20 @@ class _ModelPickerScreenState extends ConsumerState<ModelPickerScreen> {
                   ),
                 ),
               // A router whose list failed says why, rather than looking empty.
-              if ((missingKey || _router == null ? null : cat.providerErrors[_router!.providerId]) case final error?)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(Space.l, Space.m, Space.l, 0),
-                  child: Text(
-                    'Couldn\'t list ${_router!.title} models: $error',
-                    style: context.text.bodySmall?.copyWith(color: AppColors.danger),
+              for (final r in _router == null ? AiRouter.values : [_router!])
+                if (!missingKey && counts[r] == 0 && cat.providerErrors[r.providerId] != null && switch (r) {
+                  AiRouter.openRouter => settings.hasOpenRouterKey,
+                  AiRouter.gemini => settings.hasGeminiKey,
+                  AiRouter.vercel => settings.hasVercelKey,
+                  AiRouter.lmStudio => settings.hasLmStudio,
+                })
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(Space.l, Space.m, Space.l, 0),
+                    child: Text(
+                      'Couldn\'t list ${r.title} models: ${cat.providerErrors[r.providerId]}',
+                      style: context.text.bodySmall?.copyWith(color: AppColors.danger),
+                    ),
                   ),
-                ),
               if (_tools || widget.kind != ModelType.text)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(

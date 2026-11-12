@@ -4,8 +4,21 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../ai/data/ai.dart' show canonicalModelId;
+import '../../assistant/activity_log.dart';
 
 /// How much a reasoning model may think before answering.
+/// How the ongoing "Triangle is running" notification shows. Android only
+/// keeps an app reliably alive in the background behind such a notice.
+enum BackgroundNotice {
+  shown('Shown', 'A quiet notification while Triangle runs in the background'),
+  minimised('Minimised', 'Silent, folded at the bottom of the shade, no status bar icon'),
+  off('Off', 'No notification. Android may stop Triangle in the background, pausing watches and routines');
+
+  const BackgroundNotice(this.label, this.description);
+  final String label;
+  final String description;
+}
+
 enum Thinking {
   auto('Auto'),
   off('Off'),
@@ -130,6 +143,7 @@ class AppSettings {
     this.addisKey = '',
     this.elevenKey = '',
     this.model = defaultModel,
+    this.fallbackModel = '',
     this.imageModel = defaultImageModel,
     this.thinking = Thinking.auto,
     this.voiceEngine = VoiceEngine.device,
@@ -159,10 +173,12 @@ class AppSettings {
     this.aiReadOnReply = false,
     this.aiReadOnView = false,
     this.backgroundAlways = false,
+    this.backgroundNotice = BackgroundNotice.shown,
     this.startOnBoot = false,
     this.drawerChats = true,
     this.drawerFolders = true,
     this.drawerTools = true,
+    this.drawerHidden = const {},
     this.drawerChatsOpen = true,
     this.drawerFoldersOpen = true,
     this.drawerToolsOpen = true,
@@ -196,6 +212,7 @@ class AppSettings {
     this.showToolCalls = true,
     this.leadingIcons = true,
     this.openLastChat = false,
+    this.startPage = 'assistant',
     this.use24h = true,
     this.groupAvatars = true,
     this.compactList = false,
@@ -209,6 +226,12 @@ class AppSettings {
     this.chatFontSize = 15.5,
     this.codeTheme = CodeThemeChoice.midnight,
     this.exaKey = '',
+    this.coingeckoKey = '',
+    this.redditClientId = '',
+    this.nasaKey = '',
+    this.youtubeKey = '',
+    this.verifyEtKey = '',
+    this.scholarxivKey = '',
     this.composioKey = '',
     this.composioUserId = '',
     this.cloudflareToken = '',
@@ -253,6 +276,9 @@ class AppSettings {
   /// Keeps the app running in the background from the moment it opens, watches or not.
   final bool backgroundAlways;
 
+  /// How the ongoing notification that keeps the app running shows.
+  final BackgroundNotice backgroundNotice;
+
   /// Starts the app in the background when the phone restarts (read natively by BootReceiver).
   final bool startOnBoot;
 
@@ -264,6 +290,12 @@ class AppSettings {
 
   /// The drawer shows Files, Brief, Canvas, Search and Browser.
   final bool drawerTools;
+
+  /// Drawer items turned off one by one under Appearance, by key
+  /// ("chats.dms", "chats.calls", "tools.files", …): see [DrawerItems].
+  final Set<String> drawerHidden;
+
+  bool drawerShows(String key) => !drawerHidden.contains(key);
 
   /// Whether the drawer's Chats section is expanded.
   final bool drawerChatsOpen;
@@ -345,6 +377,10 @@ class AppSettings {
   /// Opening the app shows the last chat instead of a new one.
   final bool openLastChat;
 
+  /// The page the app opens on (a StartPage name): the AI chat, a chat
+  /// list, or a tool.
+  final String startPage;
+
   /// Message times as 14:05 rather than 2:05 PM.
   final bool use24h;
 
@@ -370,6 +406,29 @@ class AppSettings {
   final double chatFontSize;
   final CodeThemeChoice codeTheme;
   final String exaKey;
+
+  /// CoinGecko demo/pro API key (optional: crypto tools work without one,
+  /// at lower rate limits).
+  final String coingeckoKey;
+
+  /// A Reddit "installed app" client id (reddit.com/prefs/apps): the Reddit
+  /// tools then use Reddit's official API instead of its public pages.
+  final String redditClientId;
+
+  /// A NASA API key (api.nasa.gov); DEMO_KEY works without one, slowly.
+  final String nasaKey;
+
+  /// A YouTube Data API v3 key: official search, stats, comments, trending
+  /// and live; without it the YouTube tools read YouTube's pages.
+  final String youtubeKey;
+
+  /// A Verify.ET API key: payment verification across Ethiopian banks and
+  /// wallets through verify.et. Without it, receipts are checked directly.
+  final String verifyEtKey;
+
+  /// A ScholarXIV Papers API key (sxv_…): paper search, and on the Go plan
+  /// federated search, paper details, authors and venues.
+  final String scholarxivKey;
 
   /// Composio project API key (ak_…): connects Gmail, Slack, Notion and more.
   final String composioKey;
@@ -432,6 +491,10 @@ class AppSettings {
 
   /// A gateway id like `openai/gpt-5`, or `or:` + an OpenRouter id.
   final String model;
+
+  /// Used when [model] fails (an outage, a rate limit, a refused key).
+  /// Empty: a free model from a service with a key, when there is one.
+  final String fallbackModel;
   final String imageModel;
   final Thinking thinking;
 
@@ -508,6 +571,12 @@ class AppSettings {
   bool get hasAddisKey => addisKey.trim().isNotEmpty;
   bool get hasElevenKey => elevenKey.trim().isNotEmpty;
   bool get hasExaKey => exaKey.trim().isNotEmpty;
+  bool get hasCoingeckoKey => coingeckoKey.trim().isNotEmpty;
+  bool get hasRedditClientId => redditClientId.trim().isNotEmpty;
+  bool get hasNasaKey => nasaKey.trim().isNotEmpty;
+  bool get hasYoutubeKey => youtubeKey.trim().isNotEmpty;
+  bool get hasVerifyEtKey => verifyEtKey.trim().isNotEmpty;
+  bool get hasScholarxivKey => scholarxivKey.trim().isNotEmpty;
   bool get hasComposioKey => composioKey.trim().isNotEmpty;
   bool get hasCloudflare => cloudflareToken.trim().isNotEmpty;
   bool get hasR2Keys => r2AccessKeyId.trim().isNotEmpty && r2SecretKey.trim().isNotEmpty;
@@ -522,6 +591,7 @@ class AppSettings {
     String? addisKey,
     String? elevenKey,
     String? model,
+    String? fallbackModel,
     String? imageModel,
     Thinking? thinking,
     VoiceEngine? voiceEngine,
@@ -551,10 +621,12 @@ class AppSettings {
     bool? aiReadOnReply,
     bool? aiReadOnView,
     bool? backgroundAlways,
+    BackgroundNotice? backgroundNotice,
     bool? startOnBoot,
     bool? drawerChats,
     bool? drawerFolders,
     bool? drawerTools,
+    Set<String>? drawerHidden,
     bool? drawerChatsOpen,
     bool? drawerFoldersOpen,
     bool? drawerToolsOpen,
@@ -588,6 +660,7 @@ class AppSettings {
     bool? showToolCalls,
     bool? leadingIcons,
     bool? openLastChat,
+    String? startPage,
     bool? use24h,
     bool? groupAvatars,
     bool? compactList,
@@ -601,6 +674,12 @@ class AppSettings {
     double? chatFontSize,
     CodeThemeChoice? codeTheme,
     String? exaKey,
+    String? coingeckoKey,
+    String? redditClientId,
+    String? nasaKey,
+    String? youtubeKey,
+    String? verifyEtKey,
+    String? scholarxivKey,
     String? composioKey,
     String? composioUserId,
     String? cloudflareToken,
@@ -623,6 +702,7 @@ class AppSettings {
     addisKey: addisKey ?? this.addisKey,
     elevenKey: elevenKey ?? this.elevenKey,
     model: model ?? this.model,
+    fallbackModel: fallbackModel ?? this.fallbackModel,
     imageModel: imageModel ?? this.imageModel,
     thinking: thinking ?? this.thinking,
     voiceEngine: voiceEngine ?? this.voiceEngine,
@@ -653,10 +733,12 @@ class AppSettings {
     aiReadOnReply: aiReadOnReply ?? this.aiReadOnReply,
     aiReadOnView: aiReadOnView ?? this.aiReadOnView,
     backgroundAlways: backgroundAlways ?? this.backgroundAlways,
+    backgroundNotice: backgroundNotice ?? this.backgroundNotice,
     startOnBoot: startOnBoot ?? this.startOnBoot,
     drawerChats: drawerChats ?? this.drawerChats,
     drawerFolders: drawerFolders ?? this.drawerFolders,
     drawerTools: drawerTools ?? this.drawerTools,
+    drawerHidden: drawerHidden ?? this.drawerHidden,
     drawerChatsOpen: drawerChatsOpen ?? this.drawerChatsOpen,
     drawerFoldersOpen: drawerFoldersOpen ?? this.drawerFoldersOpen,
     drawerToolsOpen: drawerToolsOpen ?? this.drawerToolsOpen,
@@ -690,6 +772,7 @@ class AppSettings {
     showToolCalls: showToolCalls ?? this.showToolCalls,
     leadingIcons: leadingIcons ?? this.leadingIcons,
     openLastChat: openLastChat ?? this.openLastChat,
+    startPage: startPage ?? this.startPage,
     use24h: use24h ?? this.use24h,
     groupAvatars: groupAvatars ?? this.groupAvatars,
     compactList: compactList ?? this.compactList,
@@ -703,6 +786,12 @@ class AppSettings {
     chatFontSize: chatFontSize ?? this.chatFontSize,
     codeTheme: codeTheme ?? this.codeTheme,
     exaKey: exaKey ?? this.exaKey,
+    coingeckoKey: coingeckoKey ?? this.coingeckoKey,
+    redditClientId: redditClientId ?? this.redditClientId,
+    nasaKey: nasaKey ?? this.nasaKey,
+    youtubeKey: youtubeKey ?? this.youtubeKey,
+    verifyEtKey: verifyEtKey ?? this.verifyEtKey,
+    scholarxivKey: scholarxivKey ?? this.scholarxivKey,
     composioKey: composioKey ?? this.composioKey,
     composioUserId: composioUserId ?? this.composioUserId,
     cloudflareToken: cloudflareToken ?? this.cloudflareToken,
@@ -729,6 +818,12 @@ class SettingsController extends Notifier<AppSettings> {
   static const _addisKey = 'addis_key';
   static const _elevenKey = 'elevenlabs_key';
   static const _exaKey = 'exa_key';
+  static const _coingeckoKey = 'coingecko_key';
+  static const _redditClientId = 'reddit_client_id';
+  static const _nasaKey = 'nasa_key';
+  static const _youtubeKey = 'youtube_key';
+  static const _verifyEtKey = 'verify_et_key';
+  static const _scholarxivKey = 'scholarxiv_key';
   static const _composioKey = 'composio_key';
   static const _cloudflareToken = 'cloudflare_token';
   static const _r2AccessKeyId = 'r2_access_key_id';
@@ -750,6 +845,28 @@ class SettingsController extends Notifier<AppSettings> {
     }
   }
 
+  /// Reads the AI keys again when none are set. A start in the background
+  /// (after a reboot, before the phone is first unlocked) can find the
+  /// keystore locked, which leaves every key empty until the next start.
+  /// True when a key is there now.
+  Future<bool> reloadAiKeys() async {
+    if (state.hasAnyKey) return true;
+    final vercel = await _secret(_vercelKey);
+    final openRouter = await _secret(_openRouterKey);
+    final gemini = await _secret(_geminiKey);
+    if (vercel.isEmpty && openRouter.isEmpty && gemini.isEmpty) return state.hasAnyKey;
+    state = state.copyWith(
+      vercelKey: vercel,
+      openRouterKey: openRouter,
+      geminiKey: gemini,
+      addisKey: await _secret(_addisKey),
+      elevenKey: await _secret(_elevenKey),
+      exaKey: await _secret(_exaKey),
+      composioKey: await _secret(_composioKey),
+    );
+    return state.hasAnyKey;
+  }
+
   Future<void> _load() async {
     final p = await SharedPreferences.getInstance();
     const d = AppSettings();
@@ -761,6 +878,12 @@ class SettingsController extends Notifier<AppSettings> {
       addisKey: await _secret(_addisKey),
       elevenKey: await _secret(_elevenKey),
       exaKey: await _secret(_exaKey),
+      coingeckoKey: await _secret(_coingeckoKey),
+      redditClientId: await _secret(_redditClientId),
+      nasaKey: await _secret(_nasaKey),
+      youtubeKey: await _secret(_youtubeKey),
+      verifyEtKey: await _secret(_verifyEtKey),
+      scholarxivKey: await _secret(_scholarxivKey),
       composioKey: await _secret(_composioKey),
       composioUserId: p.getString('composio_user_id') ?? d.composioUserId,
       cloudflareToken: await _secret(_cloudflareToken),
@@ -776,6 +899,7 @@ class SettingsController extends Notifier<AppSettings> {
       telegramSkipped: p.getBool('telegram_skipped') ?? d.telegramSkipped,
       // Ids saved by earlier versions (`or:`, `g:`, bare) become omni_ai ids.
       model: canonicalModelId(p.getString('chat_model') ?? d.model),
+      fallbackModel: p.getString('fallback_model') ?? d.fallbackModel,
       imageModel: canonicalModelId(p.getString('image_model') ?? d.imageModel),
       thinking:
           Thinking.values.asNameMap()[p.getString('thinking')] ?? d.thinking,
@@ -815,10 +939,12 @@ class SettingsController extends Notifier<AppSettings> {
       aiReadOnReply: p.getBool('ai_read_on_reply') ?? d.aiReadOnReply,
       aiReadOnView: p.getBool('ai_read_on_view') ?? d.aiReadOnView,
       backgroundAlways: p.getBool('background_always') ?? d.backgroundAlways,
+      backgroundNotice: BackgroundNotice.values.asNameMap()[p.getString('background_notice')] ?? d.backgroundNotice,
       startOnBoot: p.getBool('start_on_boot') ?? d.startOnBoot,
       drawerChats: p.getBool('drawer_chats') ?? d.drawerChats,
       drawerFolders: p.getBool('drawer_folders') ?? d.drawerFolders,
       drawerTools: p.getBool('drawer_tools') ?? d.drawerTools,
+      drawerHidden: p.getStringList('drawer_hidden')?.toSet() ?? d.drawerHidden,
       drawerChatsOpen: p.getBool('drawer_chats_open') ?? d.drawerChatsOpen,
       drawerFoldersOpen:
           p.getBool('drawer_folders_open') ?? d.drawerFoldersOpen,
@@ -855,6 +981,7 @@ class SettingsController extends Notifier<AppSettings> {
       showToolCalls: p.getBool('show_tool_calls') ?? d.showToolCalls,
       leadingIcons: p.getBool('leading_icons') ?? d.leadingIcons,
       openLastChat: p.getBool('open_last_chat') ?? d.openLastChat,
+      startPage: p.getString('start_page') ?? d.startPage,
       use24h: p.getBool('use_24h') ?? d.use24h,
       groupAvatars: p.getBool('group_avatars') ?? d.groupAvatars,
       compactList: p.getBool('compact_list') ?? d.compactList,
@@ -894,17 +1021,17 @@ class SettingsController extends Notifier<AppSettings> {
 
   Future<void> setVercelKey(String key) async {
     state = state.copyWith(vercelKey: key.trim());
-    await _secure.write(key: _vercelKey, value: key.trim());
+    await _writeSecret(_vercelKey, key.trim());
   }
 
   Future<void> setOpenRouterKey(String key) async {
     state = state.copyWith(openRouterKey: key.trim());
-    await _secure.write(key: _openRouterKey, value: key.trim());
+    await _writeSecret(_openRouterKey, key.trim());
   }
 
   Future<void> setGeminiKey(String key) async {
     state = state.copyWith(geminiKey: key.trim());
-    await _secure.write(key: _geminiKey, value: key.trim());
+    await _writeSecret(_geminiKey, key.trim());
   }
 
   Future<void> setLmStudioUrl(String url) async {
@@ -914,33 +1041,63 @@ class SettingsController extends Notifier<AppSettings> {
 
   Future<void> setAddisKey(String key) async {
     state = state.copyWith(addisKey: key.trim());
-    await _secure.write(key: _addisKey, value: key.trim());
+    await _writeSecret(_addisKey, key.trim());
   }
 
   Future<void> setElevenKey(String key) async {
     state = state.copyWith(elevenKey: key.trim());
-    await _secure.write(key: _elevenKey, value: key.trim());
+    await _writeSecret(_elevenKey, key.trim());
   }
 
   Future<void> setExaKey(String key) async {
     state = state.copyWith(exaKey: key.trim());
-    await _secure.write(key: _exaKey, value: key.trim());
+    await _writeSecret(_exaKey, key.trim());
+  }
+
+  Future<void> setRedditClientId(String id) async {
+    state = state.copyWith(redditClientId: id.trim());
+    await _writeSecret(_redditClientId, id.trim());
+  }
+
+  Future<void> setVerifyEtKey(String key) async {
+    state = state.copyWith(verifyEtKey: key.trim());
+    await _writeSecret(_verifyEtKey, key.trim());
+  }
+
+  Future<void> setYoutubeKey(String key) async {
+    state = state.copyWith(youtubeKey: key.trim());
+    await _writeSecret(_youtubeKey, key.trim());
+  }
+
+  Future<void> setScholarxivKey(String key) async {
+    state = state.copyWith(scholarxivKey: key.trim());
+    await _writeSecret(_scholarxivKey, key.trim());
+  }
+
+  Future<void> setNasaKey(String key) async {
+    state = state.copyWith(nasaKey: key.trim());
+    await _writeSecret(_nasaKey, key.trim());
+  }
+
+  Future<void> setCoingeckoKey(String key) async {
+    state = state.copyWith(coingeckoKey: key.trim());
+    await _writeSecret(_coingeckoKey, key.trim());
   }
 
   Future<void> setComposioKey(String key) async {
     state = state.copyWith(composioKey: key.trim());
-    await _secure.write(key: _composioKey, value: key.trim());
+    await _writeSecret(_composioKey, key.trim());
   }
 
   Future<void> setCloudflareToken(String v) async {
     state = state.copyWith(cloudflareToken: v.trim());
-    await _secure.write(key: _cloudflareToken, value: v.trim());
+    await _writeSecret(_cloudflareToken, v.trim());
   }
 
   Future<void> setR2Keys({String? accessKeyId, String? secret}) async {
     state = state.copyWith(r2AccessKeyId: accessKeyId?.trim(), r2SecretKey: secret?.trim());
-    if (accessKeyId != null) await _secure.write(key: _r2AccessKeyId, value: accessKeyId.trim());
-    if (secret != null) await _secure.write(key: _r2SecretKey, value: secret.trim());
+    if (accessKeyId != null) await _writeSecret(_r2AccessKeyId, accessKeyId.trim());
+    if (secret != null) await _writeSecret(_r2SecretKey, secret.trim());
   }
 
   Future<void> setCloudflareAccountId(String v) =>
@@ -949,7 +1106,7 @@ class SettingsController extends Notifier<AppSettings> {
 
   Future<void> setE2bKey(String v) async {
     state = state.copyWith(e2bKey: v.trim());
-    await _secure.write(key: _e2bKey, value: v.trim());
+    await _writeSecret(_e2bKey, v.trim());
   }
 
   Future<void> setE2bTemplate(String v) => customize(
@@ -987,6 +1144,12 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setModel(String id) async {
     state = state.copyWith(model: id);
     await _write('chat_model', id);
+  }
+
+  /// [id] empty: pick a free model automatically.
+  Future<void> setFallbackModel(String id) async {
+    state = state.copyWith(fallbackModel: id);
+    await _write('fallback_model', id);
   }
 
   /// Switches the models that changed, e.g. to ones the person has a key
@@ -1088,7 +1251,20 @@ class SettingsController extends Notifier<AppSettings> {
     await _write('custom_instructions', v);
   }
 
+  /// Notes a settings change in the activity log.
+  void _audit(String title, [String detail = '']) =>
+      ref.read(activityLogProvider.notifier).recordEvent(kind: ActivityKind.settings, title: title, detail: detail);
+
+  /// Saves a key or token, and logs that it was set or removed (never its
+  /// value).
+  Future<void> _writeSecret(String name, String value) async {
+    await _secure.write(key: name, value: value);
+    final what = name.replaceAll(RegExp(r'^_+'), '').replaceAll('_', ' ');
+    _audit(value.isEmpty ? 'Removed the $what' : 'Saved a $what', 'The value itself is never logged.');
+  }
+
   Future<void> setApprovalMode(ApprovalMode v) async {
+    if (v != state.approvalMode) _audit('Approval setting changed to "${v.name}"', 'Was "${state.approvalMode.name}".');
     state = state.copyWith(approvalMode: v);
     await _write('approval_mode', v.name);
   }
@@ -1152,6 +1328,8 @@ class SettingsController extends Notifier<AppSettings> {
       customize(state.copyWith(showToolCalls: v), 'show_tool_calls', v);
   Future<void> setLeadingIcons(bool v) =>
       customize(state.copyWith(leadingIcons: v), 'leading_icons', v);
+  Future<void> setStartPage(String v) =>
+      customize(state.copyWith(startPage: v), 'start_page', v);
   Future<void> setOpenLastChat(bool v) =>
       customize(state.copyWith(openLastChat: v), 'open_last_chat', v);
   Future<void> setUse24h(bool v) =>
@@ -1185,6 +1363,12 @@ class SettingsController extends Notifier<AppSettings> {
       addisKey: state.addisKey,
       elevenKey: state.elevenKey,
       exaKey: state.exaKey,
+      coingeckoKey: state.coingeckoKey,
+      redditClientId: state.redditClientId,
+      nasaKey: state.nasaKey,
+      youtubeKey: state.youtubeKey,
+      verifyEtKey: state.verifyEtKey,
+      scholarxivKey: state.scholarxivKey,
       composioKey: state.composioKey,
       composioUserId: state.composioUserId,
       cloudflareToken: state.cloudflareToken,
@@ -1230,6 +1414,11 @@ class SettingsController extends Notifier<AppSettings> {
     await _write('keep_alive', v);
   }
 
+  Future<void> setBackgroundNotice(BackgroundNotice v) async {
+    state = state.copyWith(backgroundNotice: v);
+    await _write('background_notice', v.name);
+  }
+
   Future<void> setBackgroundAlways(bool v) async {
     state = state.copyWith(backgroundAlways: v);
     await _write('background_always', v);
@@ -1253,6 +1442,14 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setDrawerTools(bool v) async {
     state = state.copyWith(drawerTools: v);
     await _write('drawer_tools', v);
+  }
+
+  /// Shows or hides one drawer item ([DrawerItems] keys).
+  Future<void> setDrawerItem(String key, bool shown) async {
+    final hidden = {...state.drawerHidden};
+    shown ? hidden.remove(key) : hidden.add(key);
+    state = state.copyWith(drawerHidden: hidden);
+    await _write('drawer_hidden', hidden.toList()..sort());
   }
 
   Future<void> setDrawerChatsOpen(bool v) async {
@@ -1296,6 +1493,7 @@ class SettingsController extends Notifier<AppSettings> {
   }
 
   Future<void> setReadOnlyMode(bool v) async {
+    if (v != state.readOnlyMode) _audit(v ? 'Read-only mode turned on' : 'Read-only mode turned off', v ? 'Only tools that read are available.' : 'Tools that act are available again.');
     state = state.copyWith(readOnlyMode: v);
     await _write('read_only_mode', v);
   }
@@ -1311,14 +1509,18 @@ class SettingsController extends Notifier<AppSettings> {
     bool enabled, {
     bool destructive = false,
   }) async {
+    final list = names.toList();
+    if (list.isNotEmpty) {
+      _audit('${list.length == 1 ? 'A tool' : '${list.length} tools'} turned ${enabled ? 'on' : 'off'}${destructive ? ' (destructive)' : ''}', list.take(30).join(', '));
+    }
     if (destructive) {
       final next = {...state.enabledDangerTools};
-      enabled ? next.addAll(names) : next.removeAll(names);
+      enabled ? next.addAll(list) : next.removeAll(list);
       state = state.copyWith(enabledDangerTools: next);
       await _write('danger_tools', next.toList());
     } else {
       final next = {...state.disabledTools};
-      enabled ? next.removeAll(names) : next.addAll(names);
+      enabled ? next.removeAll(list) : next.addAll(list);
       state = state.copyWith(disabledTools: next);
       await _write('disabled_tools', next.toList());
     }
@@ -1329,6 +1531,7 @@ class SettingsController extends Notifier<AppSettings> {
     bool enabled, {
     bool destructive = false,
   }) async {
+    _audit('Tool $name turned ${enabled ? 'on' : 'off'}${destructive ? ' (destructive)' : ''}');
     if (destructive) {
       final next = {...state.enabledDangerTools};
       enabled ? next.add(name) : next.remove(name);
@@ -1346,3 +1549,24 @@ class SettingsController extends Notifier<AppSettings> {
 final settingsProvider = NotifierProvider<SettingsController, AppSettings>(
   SettingsController.new,
 );
+
+/// The drawer's items that can be turned off one by one: (key, label).
+abstract final class DrawerItems {
+  static const chats = [
+    ('chats.dms', 'DMs'),
+    ('chats.bots', 'Bots'),
+    ('chats.groups', 'Groups'),
+    ('chats.channels', 'Channels'),
+    ('chats.contacts', 'Contacts'),
+    ('chats.archived', 'Archived'),
+    ('chats.calls', 'Calls'),
+  ];
+  static const tools = [
+    ('tools.files', 'Files'),
+    ('tools.brief', 'Brief'),
+    ('tools.canvas', 'Content Canvas'),
+    ('tools.search', 'Search'),
+    ('tools.browser', 'Browser'),
+    ('tools.pc', 'PC screen'),
+  ];
+}

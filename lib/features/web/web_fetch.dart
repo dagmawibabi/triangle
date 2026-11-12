@@ -8,6 +8,8 @@ import 'package:http/http.dart' as http;
 import 'package:mime/mime.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../../core/files/download_progress.dart';
+
 /// Plain HTTP for the assistant: reading pages without running their
 /// scripts (fast, cheap, fine for blogs and docs), calling APIs, and
 /// downloading files. Cookies are kept per host for the session, so a form
@@ -31,6 +33,24 @@ class WebFetcher {
   }
 
   Future<http.Response> request(
+    String method,
+    Uri url, {
+    Map<String, String> headers = const {},
+    Object? body,
+    int redirects = 8,
+  }) async {
+    final (streamed, req) = await _open(method, url, headers: headers, body: body, redirects: redirects);
+    final bytes = <int>[];
+    await for (final chunk in streamed.stream) {
+      bytes.addAll(chunk);
+      if (bytes.length > _maxBody) break;
+    }
+    return http.Response.bytes(bytes, streamed.statusCode, headers: streamed.headers, request: req, reasonPhrase: streamed.reasonPhrase);
+  }
+
+  /// Sends a request, following redirects and keeping cookies, and returns
+  /// the final response still streaming, with the request that got it.
+  Future<(http.StreamedResponse, http.Request)> _open(
     String method,
     Uri url, {
     Map<String, String> headers = const {},
@@ -73,12 +93,7 @@ class WebFetcher {
         }
         continue;
       }
-      final bytes = <int>[];
-      await for (final chunk in streamed.stream) {
-        bytes.addAll(chunk);
-        if (bytes.length > _maxBody) break;
-      }
-      return http.Response.bytes(bytes, streamed.statusCode, headers: streamed.headers, request: req, reasonPhrase: streamed.reasonPhrase);
+      return (streamed, req);
     }
     throw ArgumentError('Too many redirects.');
   }
@@ -121,10 +136,14 @@ class WebFetcher {
     'image/bmp',
   }.contains(lookupMimeType('', headerBytes: head));
 
-  /// Saves [url] to the app's downloads folder.
+  /// Saves [url] to the app's downloads folder, streaming to disk (no size
+  /// limit) and reporting progress to the tool call that asked for it.
   Future<File> download(Uri url, {String? name}) async {
-    final r = await request('GET', url);
-    if (r.statusCode >= 400) throw HttpException('HTTP ${r.statusCode}', uri: url);
+    final (r, _) = await _open('GET', url, headers: const {'accept': '*/*'});
+    if (r.statusCode >= 400) {
+      await r.stream.drain<void>();
+      throw HttpException('HTTP ${r.statusCode}', uri: url);
+    }
     final dir = Directory('${(await getApplicationSupportDirectory()).path}/downloads');
     if (!await dir.exists()) await dir.create(recursive: true);
     var file = name?.trim();
@@ -135,7 +154,25 @@ class WebFetcher {
     }
     file = Uri.decodeComponent(file).replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
     final out = File('${dir.path}/${DateTime.now().millisecondsSinceEpoch}_$file');
-    return out.writeAsBytes(r.bodyBytes);
+    final track = DownloadProgress.start(file, url: url.toString(), total: r.contentLength);
+    final sink = out.openWrite();
+    try {
+      // On a tool card the person can pause, resume or cancel it.
+      if (track != null) {
+        await track.pipe(r.stream, sink);
+      } else {
+        await sink.addStream(r.stream);
+      }
+    } catch (e) {
+      track?.fail('$e');
+      await sink.close();
+      // A cancelled or broken download leaves nothing half-written.
+      await out.delete().catchError((Object _) => out);
+      rethrow;
+    }
+    await sink.close();
+    track?.finish(out.path);
+    return out;
   }
 }
 
@@ -246,3 +283,57 @@ class ReadablePage {
 }
 
 final webFetcherProvider = Provider<WebFetcher>((ref) => WebFetcher());
+
+/// What a page says about itself for link previews: its share image, site
+/// name, author, publish date, theme colour and icon, from Open Graph,
+/// Twitter and standard meta tags. Absent ones are left out.
+Map<String, String> pagePreviewMeta(String source, Uri base) {
+  final doc = html.parse(source);
+  String? meta(List<String> keys) {
+    for (final k in keys) {
+      final v = (doc.querySelector('meta[property="$k"]') ?? doc.querySelector('meta[name="$k"]'))?.attributes['content']?.trim();
+      if (v != null && v.isNotEmpty) return v;
+    }
+    return null;
+  }
+
+  String? abs(String? href) {
+    if (href == null || href.isEmpty) return null;
+    try {
+      final u = base.resolve(href);
+      return u.scheme == 'http' || u.scheme == 'https' ? u.toString() : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  final icon = doc.querySelectorAll('link[rel]').where((l) => '${l.attributes['rel']}'.toLowerCase().contains('icon')).map((l) => l.attributes['href']).firstOrNull;
+  // Without a share image, the first picture in the content that's big
+  // enough to show: not a logo, icon, avatar, badge or tracking pixel.
+  String? contentImage() {
+    final skip = RegExp(r'logo|icon|sprite|avatar|badge|pixel|spacer|emoji|gravatar|1x1|blank|placeholder|\.svg', caseSensitive: false);
+    final root = doc.querySelector('article') ?? doc.querySelector('main') ?? doc.body;
+    for (final img in root?.querySelectorAll('img') ?? const <dom.Element>[]) {
+      final a = img.attributes;
+      final src = a['src'] ?? a['data-src'] ?? a['data-original'] ?? (a['srcset'] ?? '').split(',').firstOrNull?.trim().split(' ').firstOrNull;
+      if (src == null || src.isEmpty || src.startsWith('data:') || skip.hasMatch(src) || skip.hasMatch('${a['class'] ?? ''} ${a['alt'] ?? ''}')) continue;
+      final w = int.tryParse((a['width'] ?? '').replaceAll('px', ''));
+      final h = int.tryParse((a['height'] ?? '').replaceAll('px', ''));
+      if ((w != null && w < 200) || (h != null && h < 120)) continue;
+      final u = abs(src);
+      if (u != null) return u;
+    }
+    return null;
+  }
+
+  final published = meta(['article:published_time', 'og:published_time', 'datePublished', 'date', 'pubdate', 'dc.date']) ?? doc.querySelector('time[datetime]')?.attributes['datetime'];
+  return {
+    'image': ?(abs(meta(['og:image', 'og:image:url', 'og:image:secure_url', 'twitter:image', 'twitter:image:src'])) ?? abs(doc.querySelector('link[rel="image_src"]')?.attributes['href']) ?? contentImage()),
+    'site_name': ?meta(['og:site_name', 'application-name', 'apple-mobile-web-app-title']),
+    'author': ?meta(['author', 'article:author', 'twitter:creator']),
+    'published': ?published,
+    'theme_color': ?meta(['theme-color']),
+    'icon': ?abs(icon),
+    'type': ?meta(['og:type']),
+  };
+}

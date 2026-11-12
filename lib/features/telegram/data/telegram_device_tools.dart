@@ -65,17 +65,6 @@ final _deviceTools = <TelegramTool>[
     }),
   ),
   TelegramTool(
-    name: 'call_log',
-    label: 'Checking calls',
-    category: ToolCategory.device,
-    cost: ToolCost.device,
-    description: 'The phone\'s call history, newest first: who, when, how long, and missed/incoming/outgoing.',
-    parameters: _obj({
-      'type': {'type': 'string', 'enum': ['all', 'missed', 'incoming', 'outgoing']},
-      'limit': {'type': 'integer', 'description': '1-200, default 30.'},
-    }),
-  ),
-  TelegramTool(
     name: 'phone_contacts',
     label: 'Looking up phone contacts',
     category: ToolCategory.device,

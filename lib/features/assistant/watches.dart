@@ -6,6 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../infrastructure/telegram/accounts.dart';
+import 'device_events.dart';
+import 'tool_allowlist.dart';
 
 /// What a watch listens to.
 enum WatchScope {
@@ -16,14 +18,15 @@ enum WatchScope {
   mentions('Mentions of me'),
   folder('A folder'),
   schedule('On a schedule'),
-  app('New in an app');
+  app('New in an app'),
+  device('On the phone');
 
   const WatchScope(this.label);
   final String label;
 
   /// Fires on Telegram messages, so it needs Telegram connected. Schedules
   /// and app watches work without it.
-  bool get needsTelegram => this != schedule && this != app;
+  bool get needsTelegram => this != schedule && this != app && this != device;
 }
 
 /// What a watch does when it fires.
@@ -35,6 +38,26 @@ enum WatchMode {
   const WatchMode(this.label, this.explanation);
   final String label;
   final String explanation;
+}
+
+/// Which model a watch's runs use. Most watches only sort and summarise, so
+/// they start on a free model and move up only when asked to.
+abstract final class WatchModel {
+  /// A free model when a service with a key offers one, else the cheapest.
+  static const free = 'free';
+
+  /// The cheapest model that can use tools, free or not.
+  static const cheap = 'cheap';
+
+  /// The model chosen for chats in Settings.
+  static const main = 'main';
+
+  static String label(String m) => switch (m) {
+    free => 'Free',
+    cheap => 'Cheapest',
+    main => 'Same as chat',
+    _ => m,
+  };
 }
 
 /// A standing order: "tell me when X posts", "answer my DMs", "every morning
@@ -64,7 +87,19 @@ class Watch {
     this.quietAtNight = false,
     this.accountIds,
     this.folderAccountId,
+    this.device,
+    this.tools,
+    this.model = WatchModel.free,
   });
+
+  /// For [WatchScope.device]: what on the phone starts it.
+  final DeviceCondition? device;
+
+  /// The tools its runs may use; null for every tool the assistant has.
+  final ToolAllowlist? tools;
+
+  /// [WatchModel.free], [WatchModel.cheap], [WatchModel.main] or a model id.
+  final String model;
 
   /// The Telegram accounts it covers: it hears their messages, and its
   /// assistant runs may use only them. Null: every account.
@@ -146,6 +181,10 @@ class Watch {
     List<String>? accountIds,
     bool allAccounts = false,
     String? folderAccountId,
+    DeviceCondition? device,
+    ToolAllowlist? tools,
+    bool allTools = false,
+    String? model,
   }) => Watch(
     id: id,
     name: name ?? this.name,
@@ -169,6 +208,9 @@ class Watch {
     quietAtNight: quietAtNight ?? this.quietAtNight,
     accountIds: allAccounts ? null : (accountIds ?? this.accountIds),
     folderAccountId: folderAccountId ?? this.folderAccountId,
+    device: device ?? this.device,
+    tools: allTools ? null : (tools ?? this.tools),
+    model: model ?? this.model,
   );
 
   Map<String, dynamic> toJson() => {
@@ -194,6 +236,9 @@ class Watch {
     if (quietAtNight) 'quiet_at_night': true,
     'accounts': ?accountIds,
     'folder_account': ?folderAccountId,
+    if (device != null) 'device': device!.toJson(),
+    if (tools != null) 'tools': tools!.entries.toList(),
+    'model': model,
   };
 
   factory Watch.fromJson(Map<String, dynamic> j) => Watch(
@@ -219,6 +264,11 @@ class Watch {
     quietAtNight: j['quiet_at_night'] ?? false,
     accountIds: (j['accounts'] as List?)?.map((e) => '$e').toList(),
     folderAccountId: j['folder_account'],
+    device: DeviceCondition.fromJson(j['device']),
+    tools: j['tools'] is List ? ToolAllowlist.parse(j['tools'] as List) : null,
+    // Free by default, saved watches included; a run that fails on it is
+    // retried on the chat's model.
+    model: '${j['model'] ?? WatchModel.free}',
   );
 
   /// For the assistant and the Watches screen.
@@ -242,6 +292,9 @@ class Watch {
     if (builtIn) 'built_in': 'can be changed or turned off, not deleted',
     if (quietAtNight) 'quiet_at_night': true,
     'accounts': accountIds ?? 'all',
+    if (device != null) 'phone_trigger': {...device!.toJson(), 'means': device!.describe()},
+    'tools': tools == null ? 'all' : tools!.toModel(),
+    'model': model,
   };
 }
 

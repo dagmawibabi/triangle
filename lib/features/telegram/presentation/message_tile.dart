@@ -89,7 +89,16 @@ class MessageTile extends ConsumerWidget {
     this.selecting = false,
     this.selected = false,
     this.album = const [],
+    this.onActions,
+    this.onGoTo,
   });
+
+  /// Shows a round arrow beside the message that takes you to it in its
+  /// chat (the pinned messages list).
+  final VoidCallback? onGoTo;
+
+  /// Replaces the long-press menu (a scheduled message has its own).
+  final VoidCallback? onActions;
 
   /// When [message] is part of an album: every message of it, oldest
   /// first, shown together as one post. [message] is the one with the
@@ -168,13 +177,26 @@ class MessageTile extends ConsumerWidget {
     // Ephemeral content (seen only by this account) replaces the message's own.
     final shown = m.ephemeralContent?.content ?? m.content;
     final g = gistOf(shown);
-    final time = clockTime(DateTime.fromMillisecondsSinceEpoch(m.date * 1000));
+    // A scheduled message shows when it goes out (and how often), not when
+    // it was written.
+    final sched = m.schedulingState;
+    final clock = clockTime(
+      DateTime.fromMillisecondsSinceEpoch((sched is td.MessageSchedulingStateSendAtDate ? sched.sendDate : m.date) * 1000),
+    );
+    final time = switch (sched) {
+      td.MessageSchedulingStateSendAtDate(:final repeatPeriod) when repeatPeriod > 0 =>
+        '${repeatLabel(repeatPeriod)}, $clock',
+      td.MessageSchedulingStateSendWhenOnline() => 'when online',
+      _ => clock,
+    };
     final sender = m.isOutgoing ? 'You' : store.senderName(m.senderId);
     void open() {
       if (selecting) {
         onSelect?.call(m);
         return;
       }
+      // In the pinned list a tap goes to the message in its chat.
+      if (onGoTo != null) return onGoTo!();
       if (m.content is td.MessagePhoto ||
           m.content is td.MessageVideo ||
           m.content is td.MessageAnimation) {
@@ -192,6 +214,7 @@ class MessageTile extends ConsumerWidget {
         onSelect?.call(m);
         return;
       }
+      if (onActions != null) return onActions!();
       showMessageActions(context, ref, m, chatTitle: chatTitle, onReply: onReply, onSelect: onSelect);
     }
 
@@ -235,30 +258,37 @@ class MessageTile extends ConsumerWidget {
       _ => null,
     };
 
+    final channel = kind == ChatKind.channel;
+    // A post atop its comments is the discussion group's pinned copy.
+    final pinMark = inComments;
     final footer = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         if (views > 0) ...[
           Icon(
             Icons.visibility_outlined,
-            size: 12,
+            size: channel ? 13 : 12,
             color: AppColors.text3,
           ),
           const SizedBox(width: 3),
           Text(
             NumberFormat.compact().format(views),
-            style: TextStyle(fontSize: 11, color: AppColors.text3),
+            style: TextStyle(fontSize: 11.5, color: AppColors.text3),
           ),
           const SizedBox(width: Space.s),
+        ],
+        if (pinMark) ...[
+          Icon(Icons.push_pin_rounded, size: 12, color: AppColors.text3),
+          const SizedBox(width: 4),
         ],
         if (m.editDate > 0)
           Text(
             'edited  ',
-            style: TextStyle(fontSize: 11, color: AppColors.text3),
+            style: TextStyle(fontSize: 11.5, color: AppColors.text3),
           ),
         Text(
           time,
-          style: TextStyle(fontSize: 11, color: AppColors.text3),
+          style: TextStyle(fontSize: 11.5, color: AppColors.text3),
         ),
         if (out) ...[
           const SizedBox(width: 3),
@@ -275,183 +305,244 @@ class MessageTile extends ConsumerWidget {
       ],
     );
 
-    final content = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (kind == ChatKind.group && !m.isOutgoing && !grouped)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 3),
+    // What comes above the media: who wrote it, where it was forwarded
+    // from, what it replies to.
+    final showChannelName =
+        channel && !grouped && (inComments || (!visual && album.isEmpty) || m.replyTo != null || m.forwardInfo != null);
+    final head = <Widget>[
+      if (showChannelName)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 3),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  chatTitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: nameColor(chatTitle)),
+                ),
+              ),
+              if (inComments) Text('channel', style: TextStyle(fontSize: 12, color: AppColors.text3)),
+            ],
+          ),
+        ),
+      if (kind == ChatKind.group && !m.isOutgoing && !grouped)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 3),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Text(
+                  sender,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: nameColor(sender),
+                  ),
+                ),
+              ),
+              // The sender's member tag, as Telegram shows it by the name.
+              if (m.senderTag.isNotEmpty) ...[
+                const SizedBox(width: 6),
+                Text(
+                  m.senderTag,
+                  style: TextStyle(fontSize: 11.5, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                ),
+              ],
+            ],
+          ),
+        ),
+      if (m.forwardInfo case final f?) ForwardHeader(origin: f.origin),
+      if (m.ephemeralContent != null)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(Radii.s),
+            // Back to what everyone else sees.
+            onTap: () => ref
+                .read(telegramClientProvider)
+                .send<td.Ok>(td.DeleteMessageEphemeralContent(chatId: m.chatId, messageId: m.id))
+                .catchError((Object _) => const td.Ok()),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Flexible(
-                  child: Text(
-                    sender,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: nameColor(sender),
-                    ),
-                  ),
-                ),
-                // The sender's member tag, as Telegram shows it by the name.
-                if (m.senderTag.isNotEmpty) ...[
-                  const SizedBox(width: 6),
-                  Text(
-                    m.senderTag,
-                    style: TextStyle(fontSize: 11.5, color: Theme.of(context).colorScheme.onSurfaceVariant),
-                  ),
-                ],
+                Icon(Icons.visibility_outlined, size: 13, color: AppColors.text3),
+                SizedBox(width: 4),
+                Text('Only you can see this · tap to dismiss', style: TextStyle(fontSize: 11.5, color: AppColors.text3)),
               ],
             ),
           ),
-        if (m.forwardInfo case final f?) ForwardHeader(origin: f.origin),
-        if (m.ephemeralContent != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 4),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(Radii.s),
-              // Back to what everyone else sees.
-              onTap: () => ref
-                  .read(telegramClientProvider)
-                  .send<td.Ok>(td.DeleteMessageEphemeralContent(chatId: m.chatId, messageId: m.id))
-                  .catchError((Object _) => const td.Ok()),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.visibility_outlined, size: 13, color: AppColors.text3),
-                  SizedBox(width: 4),
-                  Text('Only you can see this · tap to dismiss', style: TextStyle(fontSize: 11.5, color: AppColors.text3)),
-                ],
-              ),
-            ),
-          ),
-        if (m.replyTo case final td.MessageReplyToMessage r?)
-          _ReplyPreview(reply: r, findMessage: findMessage, chatId: m.chatId, onJumpTo: onJumpTo),
-        if (album.length > 1) ...[
-          // An album: one post, its photos and videos in a grid, its files
-          // and songs one under another, and one caption.
-          if (album.any((x) => _isVisual(x.content)))
-            AlbumGrid(
-              messages: [for (final x in album) if (_isVisual(x.content)) x],
-              onOpen: (x) => selecting ? onSelect?.call(m) : showMediaViewer(context, x.content, title: chatTitle),
-            ),
-          for (final x in album)
-            if (x.content case td.MessageDocument(:final document))
-              Padding(padding: const EdgeInsets.only(bottom: Space.xs), child: DocumentRow(document: document))
-            else if (x.content case td.MessageAudio(:final audio))
-              _AudioRow(message: x, audio: audio, playlist: playlist),
-        ] else ...[
-          if (visual) MediaPreview(content: m.content, onOpen: open),
-          if (m.content case td.MessageAudio(:final audio))
-            _AudioRow(message: m, audio: audio, playlist: playlist),
-          if (m.content case td.MessageDocument(:final document))
-            DocumentRow(document: document),
-        ],
-        if (m.content case td.MessageVoiceNote(:final voiceNote))
-          _VoiceBubble(message: m, note: voiceNote, playlist: playlist),
-        if (m.content case td.MessageSticker(:final sticker)) StickerImage(sticker: sticker, size: 160),
-        if (!visual &&
-            g.isMedia &&
-            m.content is! td.MessageVoiceNote &&
-            m.content is! td.MessageAudio &&
-            m.content is! td.MessageDocument &&
-            m.content is! td.MessageSticker)
-          _GenericMedia(gist: g),
-        if (preview != null && preview.showAboveText) LinkPreviewCard(preview: preview),
-        if (textSpan != null)
-          Padding(
-            padding: EdgeInsets.only(top: g.isMedia ? Space.s : 0),
-            child: Text.rich(
-              textSpan,
-              style: TextStyle(
-                fontSize: 15,
-                height: 1.4,
-                color: AppColors.text,
-              ),
-            ),
-          ),
-        if (preview != null && !preview.showAboveText) LinkPreviewCard(preview: preview),
-        if (shown case td.MessageRichMessage(:final message))
-          RichMessageView(message: message, chatId: m.chatId, messageId: m.id, title: chatTitle),
-        if (m.content case td.MessagePoll(:final poll))
-          ConstrainedBox(
-            constraints: const BoxConstraints(minWidth: 240),
-            child: PollView(key: ValueKey(poll.id), message: m, poll: poll),
-          ),
-        if (m.replyMarkup is td.ReplyMarkupInlineKeyboard) BotButtons(message: m),
-        if (reactions.isNotEmpty) MessageReactions(message: m, reactions: reactions),
-        const SizedBox(height: 4),
-        Align(alignment: Alignment.centerRight, widthFactor: 1, child: footer),
-        if (kind == ChatKind.channel &&
-            !inComments &&
-            m.interactionInfo?.replyInfo != null) ...[
-          const Divider(height: Space.l),
-          InkWell(
-            borderRadius: BorderRadius.circular(Radii.s),
-            onTap: () => openComments(context, ref, m),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.mode_comment_outlined,
-                    size: 17,
-                    color: AppColors.activeAccent,
-                  ),
-                  const SizedBox(width: Space.s),
-                  Expanded(
-                    child: Text(
-                      comments == 0
-                          ? 'Leave a comment'
-                          : '$comments comment${comments == 1 ? '' : 's'}',
-                      style: TextStyle(
-                        color: AppColors.activeAccent,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                  Icon(
-                    Icons.chevron_right_rounded,
-                    size: 20,
-                    color: AppColors.activeAccent,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ],
-    );
+        ),
+      if (m.replyTo case final td.MessageReplyToMessage r?)
+        _ReplyPreview(reply: r, findMessage: findMessage, chatId: m.chatId, onJumpTo: onJumpTo),
+    ];
 
-    final reply = onReply == null || selecting ? null : () => onReply!(m);
-    if (kind == ChatKind.channel) {
-      return SwipeToReply(
-        onReply: reply,
-        child: Padding(
-        padding: const EdgeInsets.only(bottom: Space.m),
-        child: Material(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(Radii.xl),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(Radii.xl),
-            onTap: open,
-            onLongPress: actions,
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(Space.m + 2),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(Radii.xl),
-                border: Border.all(color: AppColors.line),
-              ),
-              child: content,
+    // The photo, video or album grid: edge to edge in a channel post.
+    final Widget? visualBlock = album.length > 1
+        ? (album.any((x) => _isVisual(x.content))
+              ? AlbumGrid(
+                  messages: [for (final x in album) if (_isVisual(x.content)) x],
+                  onOpen: (x) => selecting ? onSelect?.call(m) : showMediaViewer(context, x.content, title: chatTitle),
+                )
+              : null)
+        : (visual ? MediaPreview(content: m.content, onOpen: open) : null);
+
+    final commentsRow = channel && !inComments && m.schedulingState == null && m.interactionInfo?.replyInfo != null
+        ? _CommentsRow(message: m, count: comments)
+        : null;
+
+    final rest = <Widget>[
+      if (album.length > 1) ...[
+        // An album's files and songs one under another, and one caption.
+        for (final x in album)
+          if (x.content case td.MessageDocument(:final document))
+            Padding(padding: const EdgeInsets.only(bottom: Space.xs), child: DocumentRow(document: document))
+          else if (x.content case td.MessageAudio(:final audio))
+            _AudioRow(message: x, audio: audio, playlist: playlist),
+      ] else ...[
+        if (m.content case td.MessageAudio(:final audio))
+          _AudioRow(message: m, audio: audio, playlist: playlist),
+        if (m.content case td.MessageDocument(:final document))
+          DocumentRow(document: document),
+      ],
+      if (m.content case td.MessageVoiceNote(:final voiceNote))
+        _VoiceBubble(message: m, note: voiceNote, playlist: playlist),
+      if (m.content case td.MessageSticker(:final sticker)) StickerImage(sticker: sticker, size: 160),
+      if (!visual &&
+          g.isMedia &&
+          m.content is! td.MessageVoiceNote &&
+          m.content is! td.MessageAudio &&
+          m.content is! td.MessageDocument &&
+          m.content is! td.MessageSticker)
+        _GenericMedia(gist: g),
+      if (preview != null && preview.showAboveText) LinkPreviewCard(preview: preview),
+      if (textSpan != null)
+        Padding(
+          padding: EdgeInsets.only(top: g.isMedia && !(channel && visualBlock != null) ? Space.s : 0),
+          child: Text.rich(
+            textSpan,
+            style: TextStyle(
+              fontSize: 15,
+              height: 1.4,
+              color: AppColors.text,
             ),
           ),
         ),
-      ),
+      if (preview != null && !preview.showAboveText) LinkPreviewCard(preview: preview),
+      if (shown case td.MessageRichMessage(:final message))
+        RichMessageView(message: message, chatId: m.chatId, messageId: m.id, title: chatTitle),
+      if (m.content case td.MessagePoll(:final poll))
+        ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 240),
+          child: PollView(key: ValueKey(poll.id), message: m, poll: poll),
+        ),
+      if (m.replyMarkup is td.ReplyMarkupInlineKeyboard) BotButtons(message: m),
+      if (channel)
+        // Reactions on the left, views and time on the right, on one line
+        // when they fit, as Telegram lays a channel post out.
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: reactions.isEmpty ? const SizedBox.shrink() : MessageReactions(message: m, reactions: reactions),
+              ),
+              const SizedBox(width: Space.s),
+              Padding(padding: const EdgeInsets.only(bottom: 2), child: footer),
+            ],
+          ),
+        )
+      else ...[
+        if (reactions.isNotEmpty) MessageReactions(message: m, reactions: reactions),
+        const SizedBox(height: 4),
+        Align(alignment: Alignment.centerRight, widthFactor: 1, child: footer),
+      ],
+    ];
+
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [...head, ?visualBlock, ...rest],
+    );
+
+    final reply = onReply == null || selecting ? null : () => onReply!(m);
+    if (channel) {
+      const radius = Radii.xl;
+      final post = Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (head.isNotEmpty)
+            Padding(
+              padding: EdgeInsets.fromLTRB(12, 9, 12, visualBlock == null ? 0 : 6),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: head),
+            ),
+          if (visualBlock != null)
+            Padding(
+              padding: EdgeInsets.fromLTRB(3, head.isEmpty ? 3 : 0, 3, 0),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(radius - 3),
+                child: visualBlock,
+              ),
+            ),
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              12,
+              visualBlock != null ? 8 : (head.isEmpty ? 9 : 0),
+              12,
+              commentsRow == null ? 7 : 0,
+            ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: rest),
+          ),
+          if (commentsRow != null) ...[
+            Divider(height: Space.m, thickness: 0.6, color: AppColors.line),
+            commentsRow,
+          ],
+        ],
+      );
+      final share = onGoTo != null || (!inComments && !selecting && m.sendingState == null && m.schedulingState == null);
+      final width = MediaQuery.sizeOf(context).width;
+      return SwipeToReply(
+        onReply: reply,
+        child: Padding(
+          padding: EdgeInsets.only(bottom: grouped ? 4 : Space.s),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Flexible(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: inComments || !share ? double.infinity : (width * 0.86).clamp(0, 560).toDouble(),
+                  ),
+                  child: Material(
+                    color: AppColors.surface2,
+                    clipBehavior: Clip.antiAlias,
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(radius),
+                      topRight: Radius.circular(radius),
+                      bottomRight: Radius.circular(radius),
+                      bottomLeft: Radius.circular(6),
+                    ),
+                    child: InkWell(onTap: open, onLongPress: actions, child: post),
+                  ),
+                ),
+              ),
+              if (share)
+                Padding(
+                  padding: const EdgeInsets.only(left: Space.s, bottom: 2),
+                  child: _ShareButton(
+                    icon: onGoTo == null ? Icons.shortcut_rounded : Icons.arrow_forward_rounded,
+                    onTap: onGoTo ??
+                        () => showForwardSheet(context, m.chatId, album.isEmpty ? [m.id] : [for (final x in album) x.id]),
+                  ),
+                ),
+            ],
+          ),
+        ),
       );
     }
 
@@ -506,7 +597,9 @@ class MessageTile extends ConsumerWidget {
                   },
             const SizedBox(width: Space.s),
           ],
+          if (onGoTo != null && out) ...[_ShareButton(icon: Icons.arrow_forward_rounded, onTap: onGoTo!), const SizedBox(width: Space.s)],
           Flexible(child: bubble),
+          if (onGoTo != null && !out) ...[const SizedBox(width: Space.s), _ShareButton(icon: Icons.arrow_forward_rounded, onTap: onGoTo!)],
         ],
       ),
     ),
@@ -523,6 +616,98 @@ class MessageTile extends ConsumerWidget {
   ];
   static Color nameColor(String name) =>
       _names[name.hashCode.abs() % _names.length];
+}
+
+/// How often a repeating scheduled message goes out, in Telegram's words.
+String repeatLabel(int seconds) => switch (seconds) {
+  86400 => 'daily',
+  604800 => 'weekly',
+  1209600 => 'biweekly',
+  2592000 => 'monthly',
+  7776000 => 'every 3 months',
+  15552000 => 'every 6 months',
+  31536000 => 'yearly',
+  _ when seconds % 86400 == 0 => 'every ${seconds ~/ 86400} days',
+  _ => 'repeating',
+};
+
+/// Under a channel post: who commented last, how many, and the way in.
+class _CommentsRow extends ConsumerWidget {
+  const _CommentsRow({required this.message, required this.count});
+  final td.Message message;
+  final int count;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final store = ref.watch(telegramStoreProvider);
+    final repliers = message.interactionInfo?.replyInfo?.recentReplierIds ?? const <td.MessageSender>[];
+    final color = AppColors.activeAccent;
+    Widget avatar(td.MessageSender s) {
+      final name = store.senderName(s);
+      return Container(
+        padding: const EdgeInsets.all(1.5),
+        decoration: BoxDecoration(color: AppColors.surface2, shape: BoxShape.circle),
+        child: switch (s) {
+          td.MessageSenderUser(:final userId) => TgAvatar(userId: userId, title: name, size: 24),
+          td.MessageSenderChat(:final chatId) => TgAvatar(chatId: chatId, title: name, size: 24),
+        },
+      );
+    }
+
+    final shown = repliers.take(3).toList();
+    return InkWell(
+      onTap: () => openComments(context, ref, message),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 4, 8, 8),
+        child: Row(
+          children: [
+            if (shown.isEmpty)
+              Icon(Icons.mode_comment_outlined, size: 20, color: color)
+            else
+              SizedBox(
+                width: 27.0 + (shown.length - 1) * 17,
+                height: 27,
+                child: Stack(
+                  children: [
+                    for (final (i, s) in shown.indexed.toList().reversed)
+                      Positioned(left: i * 17.0, child: avatar(s)),
+                  ],
+                ),
+              ),
+            const SizedBox(width: Space.s + 2),
+            Expanded(
+              child: Text(
+                count == 0 ? 'Leave a comment' : '${NumberFormat.compact().format(count)} comment${count == 1 ? '' : 's'}',
+                style: TextStyle(color: color, fontSize: 15, fontWeight: FontWeight.w500),
+              ),
+            ),
+            Icon(Icons.chevron_right_rounded, size: 22, color: color),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The round share arrow beside a channel post.
+class _ShareButton extends StatelessWidget {
+  const _ShareButton({required this.onTap, this.icon = Icons.shortcut_rounded});
+  final VoidCallback onTap;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: AppColors.surface2.withValues(alpha: 0.85),
+    shape: const CircleBorder(),
+    child: InkWell(
+      customBorder: const CircleBorder(),
+      onTap: onTap,
+      child: SizedBox.square(
+        dimension: 36,
+        child: Icon(icon, size: 19, color: AppColors.text),
+      ),
+    ),
+  );
 }
 
 /// Replying to [m], quoting [quote] of its text when given.
@@ -852,12 +1037,15 @@ class MessageReactions extends ConsumerWidget {
             Builder(
               builder: (context) {
                 final paid = r.type is td.ReactionTypePaid;
-                final tint = paid ? starGold : AppColors.accent;
+                // Like Telegram: your own reaction is a solid pill in the
+                // accent colour, the rest quiet; no outlines (Stars keep
+                // their gold edge).
+                final mine = r.isChosen && !paid;
                 return Material(
                   color: paid
                       ? starGold.withValues(alpha: r.isChosen ? 0.3 : 0.16)
-                      : r.isChosen
-                      ? AppColors.accent.withValues(alpha: 0.25)
+                      : mine
+                      ? AppColors.accent
                       : AppColors.surface3,
                   borderRadius: BorderRadius.circular(999),
                   child: InkWell(
@@ -872,7 +1060,9 @@ class MessageReactions extends ConsumerWidget {
                       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(999),
-                        border: Border.all(color: r.isChosen || paid ? tint.withValues(alpha: paid && !r.isChosen ? 0.5 : 1) : Colors.transparent),
+                        border: paid
+                            ? Border.all(color: starGold.withValues(alpha: r.isChosen ? 1 : 0.5))
+                            : null,
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -883,8 +1073,8 @@ class MessageReactions extends ConsumerWidget {
                             NumberFormat.compact().format(r.totalCount),
                             style: TextStyle(
                               fontSize: 13,
-                              color: paid ? starGold : AppColors.text,
-                              fontWeight: paid ? FontWeight.w600 : null,
+                              color: paid ? starGold : (mine ? AppColors.bg : AppColors.text),
+                              fontWeight: paid || mine ? FontWeight.w600 : null,
                             ),
                           ),
                         ],
@@ -1176,9 +1366,13 @@ Future<void> showMessageActions(
 /// A photo or video thumbnail. Photos download on their own when Settings
 /// say so; otherwise the blurry preview waits for a tap.
 class MediaPreview extends ConsumerStatefulWidget {
-  const MediaPreview({super.key, required this.content, this.onOpen});
+  const MediaPreview({super.key, required this.content, this.onOpen, this.fill = false});
   final td.MessageContent content;
   final VoidCallback? onOpen;
+
+  /// Covers the box it is given (an album cell) instead of keeping its own
+  /// shape; the picture is cropped, never stretched.
+  final bool fill;
 
   @override
   ConsumerState<MediaPreview> createState() => _MediaPreviewState();
@@ -1252,9 +1446,10 @@ class _MediaPreviewState extends ConsumerState<MediaPreview> {
           ? () => setState(() => _load(force: true))
           : widget.onOpen,
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(Radii.l),
-        child: AspectRatio(
-          aspectRatio: ratio.toDouble(),
+        borderRadius: BorderRadius.circular(widget.fill ? 0 : Radii.l),
+        child: _Shape(
+          fill: widget.fill,
+          ratio: ratio.toDouble(),
           child: Stack(
             fit: StackFit.expand,
             children: [
@@ -1632,58 +1827,136 @@ class DocumentRow extends ConsumerWidget {
   }
 }
 
-/// An album's photos and videos laid out like Telegram does: two side by
-/// side, or one wide with the rest in rows beneath.
+/// A photo's, video's or GIF's width over height, kept to a sensible range.
+double mediaRatio(td.MessageContent c) {
+  final (w, h) = switch (c) {
+    td.MessagePhoto(:final photo) when photo.sizes.isNotEmpty => (photo.sizes.last.width, photo.sizes.last.height),
+    td.MessageVideo(:final video) => (video.width, video.height),
+    td.MessageAnimation(:final animation) => (animation.width, animation.height),
+    _ => (4, 3),
+  };
+  if (w <= 0 || h <= 0) return 4 / 3;
+  return (w / h).clamp(0.5, 2.4).toDouble();
+}
+
+/// Keeps a picture's own shape, or covers the box it is given.
+class _Shape extends StatelessWidget {
+  const _Shape({required this.fill, required this.ratio, required this.child});
+  final bool fill;
+  final double ratio;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) =>
+      fill ? SizedBox.expand(child: child) : AspectRatio(aspectRatio: ratio, child: child);
+}
+
+/// An album's photos and videos laid out like Telegram does: rows whose
+/// height follows the pictures' shapes, each picture as wide as its shape
+/// asks, so every row runs edge to edge and the edges line up. Pictures
+/// are cropped a little to fit, never stretched.
 class AlbumGrid extends StatelessWidget {
   const AlbumGrid({super.key, required this.messages, required this.onOpen});
   final List<td.Message> messages;
   final void Function(td.Message) onOpen;
 
+  static const _gap = 2.0;
+
+  /// Splits the album into rows: a wide or lone first picture on top when
+  /// there are three or more, then rows of two or three, never a lone one
+  /// at the end.
+  static List<List<int>> _rows(List<double> ratios) {
+    final n = ratios.length;
+    if (n <= 2) return [List.generate(n, (i) => i)];
+    if (n == 3) {
+      // One across the top when it's wide, else one tall beside two.
+      return ratios[0] >= 1.2 ? [[0], [1, 2]] : [[0, 1, 2]];
+    }
+    final rows = <List<int>>[[0]];
+    var i = 1;
+    while (i < n) {
+      final left = n - i;
+      final take = left == 4 ? 2 : (left >= 3 ? 3 : left);
+      rows.add([for (var k = i; k < i + take; k++) k]);
+      i += take;
+    }
+    return rows;
+  }
+
   @override
   Widget build(BuildContext context) {
-    Widget cell(td.Message x) => ClipRRect(
-      borderRadius: BorderRadius.circular(Radii.s),
-      child: MediaPreview(key: ValueKey(x.id), content: x.content, onOpen: () => onOpen(x)),
-    );
-    Widget row(List<td.Message> xs, double height) => SizedBox(
-      height: height,
-      child: Row(
-        children: [
-          for (final (i, x) in xs.indexed) ...[
-            if (i > 0) const SizedBox(width: 3),
-            Expanded(child: cell(x)),
-          ],
-        ],
-      ),
-    );
-    if (messages.length == 1) return cell(messages.single);
-    return LayoutBuilder(
+    if (messages.length == 1) {
+      return MediaPreview(key: ValueKey(messages.single.id), content: messages.single.content, onOpen: () => onOpen(messages.single));
+    }
+    final ratios = [for (final m in messages) mediaRatio(m.content)];
+    // Rounded as one picture; the cells inside meet with a hairline gap.
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(Radii.l),
+      child: LayoutBuilder(
       builder: (context, box) {
         final w = box.maxWidth.isFinite ? box.maxWidth : 320.0;
-        final rows = <List<td.Message>>[];
-        if (messages.length == 2) {
-          rows.add(messages);
-        } else {
-          rows.add([messages.first]);
-          final rest = messages.skip(1).toList();
-          // Rows of two or three, never a lone one at the end.
-          for (var i = 0; i < rest.length;) {
-            final left = rest.length - i;
-            final take = left == 4 ? 2 : (left >= 3 ? 3 : left);
-            rows.add(rest.sublist(i, i + take));
-            i += take;
-          }
+        Widget cell(int i) => MediaPreview(
+          key: ValueKey(messages[i].id),
+          content: messages[i].content,
+          fill: true,
+          onOpen: () => onOpen(messages[i]),
+        );
+        final rows = _rows(ratios);
+        // Three in one row with the first tall: it spans the height of the
+        // other two stacked.
+        if (rows.length == 1 && rows.single.length == 3) {
+          final right = 1 / (1 / ratios[1] + 1 / ratios[2]);
+          final h = ((w - _gap) / (ratios[0] + right)).clamp(w * 0.5, w * 1.1).toDouble();
+          return SizedBox(
+            height: h,
+            child: Row(
+              children: [
+                Expanded(flex: (ratios[0] * 1000).round(), child: cell(0)),
+                const SizedBox(width: _gap),
+                Expanded(
+                  flex: (right * 1000).round(),
+                  child: Column(
+                    children: [
+                      Expanded(flex: (1000 / ratios[1]).round(), child: cell(1)),
+                      const SizedBox(height: _gap),
+                      Expanded(flex: (1000 / ratios[2]).round(), child: cell(2)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
         }
         return Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            for (final (i, r) in rows.indexed) ...[
-              if (i > 0) const SizedBox(height: 3),
-              row(r, r.length == 1 ? w * 0.62 : (r.length == 2 ? w * 0.48 : w * 0.32)),
+            for (final (r, row) in rows.indexed) ...[
+              if (r > 0) const SizedBox(height: _gap),
+              Builder(
+                builder: (_) {
+                  final sum = row.fold<double>(0, (t, i) => t + ratios[i]);
+                  final inner = w - _gap * (row.length - 1);
+                  // The height that fits them all edge to edge, kept within
+                  // reason (a lone panorama doesn't become a sliver).
+                  final h = (inner / sum).clamp(w * 0.22, row.length == 1 ? w * 0.8 : w * 0.65).toDouble();
+                  return SizedBox(
+                    height: h,
+                    child: Row(
+                      children: [
+                        for (final (k, i) in row.indexed) ...[
+                          if (k > 0) const SizedBox(width: _gap),
+                          Expanded(flex: (ratios[i] * 1000).round(), child: cell(i)),
+                        ],
+                      ],
+                    ),
+                  );
+                },
+              ),
             ],
           ],
         );
       },
+      ),
     );
   }
 }

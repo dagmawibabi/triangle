@@ -19,7 +19,7 @@ final _discoverTools = <TelegramTool>[
   TelegramTool(
     name: 'search_books',
     label: 'Searching books',
-    category: ToolCategory.discover,
+    category: ToolCategory.library,
     cost: ToolCost.web,
     description:
         'Searches books by title, author, subject or anything (query), across Open Library (millions of books: '
@@ -39,7 +39,7 @@ final _discoverTools = <TelegramTool>[
   TelegramTool(
     name: 'book_details',
     label: 'Reading about a book',
-    category: ToolCategory.discover,
+    category: ToolCategory.library,
     cost: ToolCost.web,
     description:
         'Everything about one book (book_id from search_books): description, authors, first published, subjects, '
@@ -52,7 +52,7 @@ final _discoverTools = <TelegramTool>[
   TelegramTool(
     name: 'find_free_copy',
     label: 'Looking for a free copy',
-    category: ToolCategory.discover,
+    category: ToolCategory.library,
     cost: ToolCost.web,
     description:
         'Checks every legal source for a free copy of a book (public domain or openly licensed): Gutenberg, '
@@ -66,7 +66,7 @@ final _discoverTools = <TelegramTool>[
   TelegramTool(
     name: 'download_book',
     label: 'Downloading a book',
-    category: ToolCategory.discover,
+    category: ToolCategory.library,
     cost: ToolCost.web,
     description:
         'Downloads a free, legal ebook (book_id from search_books or find_free_copy) onto the phone: epub (default), '
@@ -76,62 +76,6 @@ final _discoverTools = <TelegramTool>[
       'book_id': {'type': 'string'},
       'format': {'type': 'string', 'enum': ['epub', 'kindle', 'pdf', 'txt']},
     }, ['book_id']),
-  ),
-  TelegramTool(
-    name: 'youtube_search',
-    label: 'Searching YouTube',
-    category: ToolCategory.discover,
-    cost: ToolCost.web,
-    description: 'Searches YouTube: videos with title, channel, length, views, when published and a link.',
-    parameters: _obj({
-      'query': {'type': 'string'},
-      'limit': {'type': 'integer', 'description': 'Default 10, at most 20.'},
-    }, ['query']),
-  ),
-  TelegramTool(
-    name: 'youtube_video',
-    label: 'Reading a YouTube video',
-    category: ToolCategory.discover,
-    cost: ToolCost.web,
-    description:
-        'A YouTube video\'s details (url or id): title, channel, published date, length, views, category, tags, the '
-        'full description, chapters, which caption languages exist, and its thumbnail (shown to the user).',
-    parameters: _obj({
-      'video': {'type': 'string', 'description': 'A link or the 11-character id.'},
-    }, ['video']),
-  ),
-  TelegramTool(
-    name: 'youtube_transcript',
-    label: 'Reading a transcript',
-    category: ToolCategory.discover,
-    cost: ToolCost.web,
-    description:
-        'The captions of a YouTube video as text with timestamps, in a language when given. YouTube often refuses '
-        'apps without a signed-in browser; then the tool says so, and the description and chapters are what there is.',
-    parameters: _obj({
-      'video': {'type': 'string'},
-      'language': {'type': 'string', 'description': 'e.g. en, am. Default: the original.'},
-    }, ['video']),
-  ),
-  TelegramTool(
-    name: 'youtube_channel',
-    label: 'Looking at a YouTube channel',
-    category: ToolCategory.discover,
-    cost: ToolCost.web,
-    description: 'A YouTube channel (@handle, link or channel id): name, description, subscribers, videos count, and its latest uploads.',
-    parameters: _obj({
-      'channel': {'type': 'string'},
-    }, ['channel']),
-  ),
-  TelegramTool(
-    name: 'youtube_playlist',
-    label: 'Reading a YouTube playlist',
-    category: ToolCategory.discover,
-    cost: ToolCost.web,
-    description: 'The videos of a YouTube playlist (link or id), with titles, channels and dates.',
-    parameters: _obj({
-      'playlist': {'type': 'string'},
-    }, ['playlist']),
   ),
   TelegramTool(
     name: 'x_post',
@@ -716,7 +660,12 @@ extension _DiscoverTools on TelegramToolRunner {
       lines.add('[${formatDuration(((e['tStartMs'] as num? ?? 0) / 1000).floor())}] $text');
     }
     final text = lines.join('\n');
+    final details = player?['videoDetails'] as Map?;
     return ToolOutput({
+      'video_id': id,
+      'title': ?details?['title'],
+      'channel': ?details?['author'],
+      if (int.tryParse('${details?['lengthSeconds'] ?? ''}') case final secs?) 'seconds': secs,
       'language': track['languageCode'],
       if (track['kind'] == 'asr') 'auto_generated': true,
       'lines': lines.length,

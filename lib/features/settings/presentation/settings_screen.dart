@@ -1,4 +1,5 @@
 
+import '../../../app/start_page.dart';
 import '../../telegram/presentation/chat_actions.dart' show confirmAction;
 import '../../brief/brief_store.dart';
 import '../../canvas/canvas_store.dart';
@@ -88,6 +89,61 @@ class SettingsScreen extends ConsumerWidget {
       ),
     );
     if (id != null) await set(id);
+  }
+
+  /// The model that answers when the chat model fails.
+  Widget _fallbackTile(BuildContext context, WidgetRef ref, AppSettings s) {
+    final ai = ref.read(aiProvider);
+    ref.watch(modelCatalogProvider);
+    final chosen = s.fallbackModel.trim();
+    final auto = chosen.isEmpty ? fallbackChatModel(ai, s, s.model) : null;
+    return ListTile(
+      leading: lead(const Icon(Icons.alt_route_rounded)),
+      title: const Text('Fallback model'),
+      subtitle: Text(
+        chosen.isNotEmpty
+            ? '${modelLabel(chosen)} · answers when the chat model fails'
+            : auto != null
+            ? 'Automatic: a free model (now ${modelLabel(auto)})'
+            : 'Automatic: no free model with tools for your keys yet',
+        style: context.text.bodySmall,
+      ),
+      trailing: Icon(Icons.chevron_right_rounded, color: AppColors.text3),
+      onTap: () async {
+        final choice = await showModalBottomSheet<String>(
+          context: context,
+          showDragHandle: true,
+          backgroundColor: AppColors.surface,
+          builder: (context) => SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.auto_awesome_outlined),
+                  title: const Text('Automatic'),
+                  subtitle: const Text('A free model from a service you have a key for (OpenRouter :free, LM Studio)'),
+                  trailing: chosen.isEmpty ? const Icon(Icons.check_rounded) : null,
+                  onTap: () => Navigator.of(context).pop(''),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.list_rounded),
+                  title: const Text('Choose a model…'),
+                  trailing: chosen.isNotEmpty ? const Icon(Icons.check_rounded) : null,
+                  onTap: () => Navigator.of(context).pop('pick'),
+                ),
+              ],
+            ),
+          ),
+        );
+        if (choice == null || !context.mounted) return;
+        final ctl = ref.read(settingsProvider.notifier);
+        if (choice == 'pick') {
+          await _pick(context, ref, ModelType.text, chosen.isEmpty ? s.model : chosen, ctl.setFallbackModel);
+        } else {
+          await ctl.setFallbackModel('');
+        }
+      },
+    );
   }
 
   Future<void> _signOut(BuildContext context, WidgetRef ref) async {
@@ -240,6 +296,7 @@ class SettingsScreen extends ConsumerWidget {
                         ctl.setModel,
                       ),
                     ),
+                    _fallbackTile(context, ref, s),
                     if (model != null && !model.toolCall)
                       Padding(
                         padding: const EdgeInsets.fromLTRB(
@@ -457,6 +514,7 @@ class SettingsScreen extends ConsumerWidget {
                         ctl.setModel,
                       ),
                     ),
+                    _fallbackTile(context, ref, s),
                     const Divider(indent: Space.l, endIndent: Space.l),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(
@@ -664,6 +722,49 @@ class SettingsScreen extends ConsumerWidget {
                       ),
                       value: s.backgroundAlways,
                       onChanged: ctl.setBackgroundAlways,
+                    ),
+                    ListTile(
+                      leading: lead(const Icon(Icons.notifications_paused_outlined)),
+                      title: const Text('Background notification'),
+                      subtitle: Text('${s.backgroundNotice.label} · ${s.backgroundNotice.description}', style: context.text.bodySmall),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: () async {
+                        final v = await showModalBottomSheet<BackgroundNotice>(
+                          context: context,
+                          showDragHandle: true,
+                          builder: (context) => SafeArea(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(Space.xl, 0, Space.xl, Space.s),
+                                  child: Text(
+                                    'Android keeps an app running in the background only while it shows an ongoing notification. It\'s shown even when Triangle\'s alerts are off.',
+                                    style: context.text.bodySmall?.copyWith(color: AppColors.text2),
+                                  ),
+                                ),
+                                RadioGroup<BackgroundNotice>(
+                                  groupValue: s.backgroundNotice,
+                                  onChanged: (v) => Navigator.pop(context, v),
+                                  child: Column(
+                                    children: [
+                                      for (final n in BackgroundNotice.values)
+                                        RadioListTile<BackgroundNotice>(
+                                          value: n,
+                                          title: Text(n.label),
+                                          subtitle: Text(n.description, style: context.text.bodySmall),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: Space.s),
+                              ],
+                            ),
+                          ),
+                        );
+                        if (v != null) await ctl.setBackgroundNotice(v);
+                      },
                     ),
                     SwitchListTile(
                       secondary: lead(const Icon(Icons.restart_alt_rounded)),
@@ -1084,15 +1185,15 @@ class SettingsScreen extends ConsumerWidget {
                 const _Header('Side drawer'),
                 _Card(
                   children: [
-                    SwitchListTile(
-                      secondary: lead(const Icon(Icons.forum_outlined)),
-                      title: const Text('Chats'),
-                      subtitle: Text(
-                        'DMs, groups, channels, bots, contacts and calls',
-                        style: context.text.bodySmall,
-                      ),
+                    _DrawerSectionTile(
+                      icon: Icons.forum_outlined,
+                      title: 'Chats',
+                      subtitle: 'DMs, groups, channels, bots, contacts and calls',
                       value: s.drawerChats,
                       onChanged: ctl.setDrawerChats,
+                      items: DrawerItems.chats,
+                      settings: s,
+                      onItem: ctl.setDrawerItem,
                     ),
                     SwitchListTile(
                       secondary: lead(const Icon(Icons.folder_outlined)),
@@ -1104,15 +1205,15 @@ class SettingsScreen extends ConsumerWidget {
                       value: s.drawerFolders,
                       onChanged: ctl.setDrawerFolders,
                     ),
-                    SwitchListTile(
-                      secondary: lead(const Icon(Icons.widgets_outlined)),
-                      title: const Text('Tools'),
-                      subtitle: Text(
-                        'Files, Brief, Content Canvas, Search all chats and Browser',
-                        style: context.text.bodySmall,
-                      ),
+                    _DrawerSectionTile(
+                      icon: Icons.widgets_outlined,
+                      title: 'Tools',
+                      subtitle: 'Files, Brief, Content Canvas, Search, Browser and PC screen',
                       value: s.drawerTools,
                       onChanged: ctl.setDrawerTools,
+                      items: DrawerItems.tools,
+                      settings: s,
+                      onItem: ctl.setDrawerItem,
                     ),
                   ],
                 ),
@@ -1251,6 +1352,27 @@ class SettingsScreen extends ConsumerWidget {
                 const _Header('Opening the app'),
                 _Card(
                   children: [
+                    ListTile(
+                      leading: lead(Icon(StartPage.parse(s.startPage).icon)),
+                      title: const Text('Start on'),
+                      subtitle: Text(
+                        'The page Triangle opens on. Going back from it lands in the AI chat.',
+                        style: context.text.bodySmall,
+                      ),
+                      trailing: DropdownButton<StartPage>(
+                        value: StartPage.parse(s.startPage),
+                        underline: const SizedBox.shrink(),
+                        borderRadius: BorderRadius.circular(Radii.m),
+                        items: [
+                          for (final p in StartPage.values)
+                            DropdownMenuItem(value: p, child: Text(p.label)),
+                        ],
+                        onChanged: (p) {
+                          if (p != null) ctl.setStartPage(p.name);
+                        },
+                      ),
+                    ),
+                    const Divider(indent: Space.l, endIndent: Space.l),
                     Padding(
                       padding: const EdgeInsets.all(Space.l),
                       child: Column(
@@ -2358,3 +2480,140 @@ typedef SettingsCard = _Card;
 typedef SettingsHeader = _Header;
 typedef SettingsKeyTile = _KeyTile;
 typedef SettingsFeatureSwitch = _FeatureSwitch;
+
+/// One drawer section's items as indented rows under its switch: icon,
+/// name and a small switch each, joined by a guide line on the left.
+class _DrawerItemChips extends StatelessWidget {
+  const _DrawerItemChips({required this.items, required this.settings, required this.onChanged});
+  final List<(String, String)> items;
+  final AppSettings settings;
+  final void Function(String key, bool shown) onChanged;
+
+  static const _icons = <String, IconData>{
+    'chats.dms': Icons.person_outline_rounded,
+    'chats.bots': Icons.smart_toy_outlined,
+    'chats.groups': Icons.groups_outlined,
+    'chats.channels': Icons.campaign_outlined,
+    'chats.contacts': Icons.contacts_outlined,
+    'chats.archived': Icons.archive_outlined,
+    'chats.calls': Icons.call_outlined,
+    'tools.files': Icons.folder_copy_outlined,
+    'tools.brief': Icons.wb_twilight_rounded,
+    'tools.canvas': Icons.dashboard_customize_outlined,
+    'tools.search': Icons.manage_search_rounded,
+    'tools.browser': Icons.public_rounded,
+    'tools.pc': Icons.desktop_windows_outlined,
+  };
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(36, 0, Space.s, Space.s),
+    child: Container(
+      decoration: BoxDecoration(border: Border(left: BorderSide(color: AppColors.line, width: 2))),
+      child: Column(
+        children: [
+          for (final (key, label) in items)
+            InkWell(
+              borderRadius: BorderRadius.circular(Radii.m),
+              onTap: () => onChanged(key, !settings.drawerShows(key)),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(Space.l, 2, 0, 2),
+                child: Row(
+                  children: [
+                    Icon(_icons[key] ?? Icons.circle_outlined, size: 19, color: settings.drawerShows(key) ? AppColors.text2 : AppColors.text3),
+                    const SizedBox(width: Space.m),
+                    Expanded(
+                      child: Text(
+                        label,
+                        style: context.text.bodyMedium?.copyWith(color: settings.drawerShows(key) ? AppColors.text : AppColors.text3),
+                      ),
+                    ),
+                    Transform.scale(
+                      scale: 0.8,
+                      child: Switch(value: settings.drawerShows(key), onChanged: (v) => onChanged(key, v)),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
+}
+
+/// A drawer section in Appearance: its switch, and its items folded away
+/// until the row is tapped.
+class _DrawerSectionTile extends StatefulWidget {
+  const _DrawerSectionTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    required this.onChanged,
+    required this.items,
+    required this.settings,
+    required this.onItem,
+  });
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+  final List<(String, String)> items;
+  final AppSettings settings;
+  final void Function(String key, bool shown) onItem;
+
+  @override
+  State<_DrawerSectionTile> createState() => _DrawerSectionTileState();
+}
+
+class _DrawerSectionTileState extends State<_DrawerSectionTile> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final shown = widget.items.where((i) => widget.settings.drawerShows(i.$1)).length;
+    final all = shown == widget.items.length;
+    return Column(
+      children: [
+        ListTile(
+          leading: lead(Icon(widget.icon)),
+          title: Text(widget.title),
+          subtitle: Text(
+            !widget.value ? 'Hidden from the drawer' : (all ? widget.subtitle : '$shown of ${widget.items.length} shown'),
+            style: context.text.bodySmall,
+          ),
+          onTap: () => setState(() => _open = !_open),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AnimatedRotation(
+                turns: _open ? 0.5 : 0,
+                duration: const Duration(milliseconds: 200),
+                child: Icon(Icons.expand_more_rounded, color: AppColors.text3),
+              ),
+              Switch(value: widget.value, onChanged: widget.onChanged),
+            ],
+          ),
+        ),
+        AnimatedSize(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          alignment: Alignment.topCenter,
+          child: _open
+              ? IgnorePointer(
+                  // Items can't be picked while the whole section is off.
+                  ignoring: !widget.value,
+                  child: AnimatedOpacity(
+                    duration: const Duration(milliseconds: 200),
+                    opacity: widget.value ? 1 : 0.45,
+                    child: _DrawerItemChips(items: widget.items, settings: widget.settings, onChanged: widget.onItem),
+                  ),
+                )
+              : const SizedBox(width: double.infinity),
+        ),
+      ],
+    );
+  }
+}

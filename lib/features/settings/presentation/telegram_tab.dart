@@ -10,6 +10,7 @@ import '../../auth/data/auth_controller.dart';
 import '../../auth/presentation/telegram_sign_in_screen.dart';
 import '../../telegram/data/telegram_store.dart';
 import '../../telegram/presentation/chat_actions.dart' show confirmAction;
+import '../../telegram/presentation/block_mute_screen.dart';
 import '../../telegram/presentation/folders_screen.dart';
 import '../../telegram/presentation/scheduled_screen.dart';
 import '../../telegram/presentation/tg_avatar.dart';
@@ -232,6 +233,7 @@ class TelegramTab extends ConsumerWidget {
               section('Account', [
                 link(Icons.folder_copy_outlined, 'Folders', 'Make, edit and order chat folders', const FoldersScreen()),
                 link(Icons.schedule_send_outlined, 'Scheduled messages', 'Everything waiting to go out', const ScheduledScreen()),
+                link(Icons.block_rounded, 'Block & mute', 'Blocked accounts, channels, groups and muted words', const BlockMuteScreen()),
                 link(Icons.shield_outlined, 'Privacy & security', 'Check-up, devices, who sees what', const SecurityScreen()),
                 link(Icons.storage_rounded, 'Storage', 'What Telegram keeps on this phone', const StorageScreen()),
                 ListTile(

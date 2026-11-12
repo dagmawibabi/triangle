@@ -2444,3 +2444,127 @@ footer {
 		offset-distance: 0%;
 	}
 }
+
+/* Money: a short ledger and a budget bar filling. */
+.cell-money .art,
+.cell-mute .art,
+.cell-everyday .art {
+	align-items: stretch;
+	flex-direction: column;
+	justify-content: center;
+}
+.ledger {
+	display: grid;
+	gap: 11px;
+	font-size: 13px;
+	font-weight: 400;
+}
+.ledger li {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	color: #9a9a9e;
+}
+.ledger b {
+	font-weight: 500;
+	color: var(--white);
+	font-variant-numeric: tabular-nums;
+}
+.ledger-budget i {
+	position: relative;
+	flex: none;
+	width: 72px;
+	height: 6px;
+	background: #333;
+}
+.ledger-budget i::after {
+	content: '';
+	position: absolute;
+	inset: 0 auto 0 0;
+	width: var(--w);
+	background: var(--white);
+	animation: budget 5s var(--snap) infinite;
+}
+@keyframes budget {
+	0% {
+		width: 18%;
+	}
+	60%,
+	100% {
+		width: var(--w);
+	}
+}
+
+/* Block and mute: a hidden message folded behind a notice. */
+.muted-msgs {
+	display: grid;
+	gap: 12px;
+}
+.muted-msgs li {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+.muted-msgs i {
+	flex: none;
+	width: 18px;
+	height: 18px;
+	border-radius: 50%;
+	background: #4a4a4a;
+}
+.muted-msgs span {
+	display: block;
+	height: 22px;
+	width: var(--w);
+	background: #2a2a2e;
+}
+.muted-msgs .muted {
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 2px;
+	padding: 8px 12px;
+	border: 1px solid #444;
+	font-size: 12px;
+}
+.muted-msgs em {
+	font-style: normal;
+	color: var(--white);
+}
+.muted-msgs small {
+	font-size: 11px;
+	color: #8a8a8e;
+}
+@media (prefers-reduced-motion: no-preference) {
+	.muted-msgs .muted {
+		transition: border-color 0.4s var(--snap);
+	}
+	.cell-mute:hover .muted-msgs .muted {
+		border-color: var(--white);
+	}
+}
+
+/* Everyday: topics as outlined chips. */
+.topics {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	font-size: 12px;
+	font-weight: 400;
+}
+.topics li {
+	padding: 5px 10px;
+	border: 1px solid #555;
+	color: #c8c8cc;
+}
+@media (prefers-reduced-motion: no-preference) {
+	.topics li {
+		transition:
+			background 0.3s var(--snap),
+			color 0.3s var(--snap);
+	}
+	.cell-everyday:hover .topics li:nth-child(odd) {
+		background: var(--white);
+		color: #000;
+	}
+}

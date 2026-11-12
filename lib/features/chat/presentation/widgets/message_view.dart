@@ -18,6 +18,7 @@ import '../../../settings/presentation/model_picker_screen.dart' show showModelD
 import '../../../ai/data/ai.dart';
 import '../../../integrations/code_editor_screen.dart';
 import 'post_viewer.dart';
+import 'post_sources.dart';
 import 'thinking_block.dart';
 import 'tool_card.dart';
 import '../../../telegram/presentation/link_opener.dart';
@@ -280,6 +281,27 @@ class AssistantMessage extends ConsumerWidget {
                 ));
     if (waiting) children.add(const _Typing());
 
+    if (entry.notice != null) {
+      children.add(
+        Padding(
+          padding: const EdgeInsets.only(top: Space.xs),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.info_outline_rounded, size: 14, color: AppColors.warning),
+              const SizedBox(width: Space.xs),
+              Expanded(
+                child: Text(
+                  entry.notice!,
+                  style: context.text.bodySmall?.copyWith(color: AppColors.text2),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     if (entry.error != null) {
       children.add(
         Container(
@@ -317,19 +339,8 @@ class AssistantMessage extends ConsumerWidget {
     if (cited.isNotEmpty) {
       children.add(
         Padding(
-          padding: const EdgeInsets.only(top: Space.s),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('SOURCES · ${cited.length}', style: context.text.labelSmall),
-              const SizedBox(height: Space.s),
-              Wrap(
-                spacing: Space.s,
-                runSpacing: Space.s,
-                children: [for (final p in cited) PostChip(post: p)],
-              ),
-            ],
-          ),
+          padding: const EdgeInsets.only(top: Space.m),
+          child: PostSources(posts: cited),
         ),
       );
     }

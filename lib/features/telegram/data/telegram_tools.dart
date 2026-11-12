@@ -48,7 +48,18 @@ import 'rich_message.dart';
 import 'telegram_store.dart';
 import 'account_tools.dart' show accountsParameter;
 import '../../../infrastructure/telegram/td_compat.dart';
+import '../../../core/files/download_progress.dart' show DownloadProgress, TransferCancelled, formatBytes, toolCallZoneKey;
+import '../../device/net.dart';
+import '../../ethiopian/ethiopian_calendar.dart';
+import '../../qr/qr.dart';
+import '../../youtube/youtube_api.dart';
+import '../../retro/retro_games.dart';
+import '../../papers/papers_api.dart';
+import 'package:mobile_scanner/mobile_scanner.dart' show MobileScannerException;
 import '../../../core/files/generated_files.dart';
+import '../../library/library_api.dart';
+import '../../pokemon/pokemon_api.dart' show PokemonApi, PokemonException, pokeTypes;
+import '../../sports/sports_api.dart' show leagueIds, scorerCompetitions;
 
 part 'telegram_account_tools.dart';
 part 'telegram_activity_tools.dart';
@@ -68,6 +79,13 @@ part 'telegram_extra_tools.dart';
 part 'telegram_bot_tools.dart';
 part 'telegram_botfather_tools.dart';
 part 'telegram_media_meta_tools.dart';
+part 'telegram_markets_tools.dart';
+part 'telegram_news_tools.dart';
+part 'telegram_bible_tools.dart';
+part 'telegram_finance_tools.dart';
+part 'telegram_call_history_tools.dart';
+part 'telegram_library_tools.dart';
+part 'telegram_pokemon_tools.dart';
 part 'telegram_media_tools.dart';
 part 'telegram_new_tools.dart';
 part 'telegram_more_tools.dart';
@@ -80,6 +98,13 @@ part 'telegram_tool_metadata.dart';
 part 'telegram_tool_documentation.dart';
 part 'telegram_tool_reference.dart';
 part 'telegram_capability_tools.dart';
+part 'telegram_info_tools.dart';
+part 'telegram_safety_tools.dart';
+part 'telegram_screen_tools.dart';
+part 'telegram_utility_tools.dart';
+part 'telegram_youtube_tools.dart';
+part 'telegram_retro_tools.dart';
+part 'telegram_papers_tools.dart';
 
 /// What a tool hands back: JSON for the model, and the posts it showed so
 /// the chat can turn citations into chips.
@@ -111,22 +136,41 @@ enum ToolCategory {
   chats('Chats'),
   messages('Messages'),
   media('Media & appearance'),
-  actions('Actions'),
   memory('Memory'),
+  vault('Vault'),
   canvas('Canvas'),
-  files('Files'),
-  vision('Images & vision'),
+  files('Files & images'),
   code('Code sandbox'),
-  automation('Watches & routines'),
+  automation('Watches, reminders & widgets'),
+  routines('Routines'),
   stories('Stories'),
   folders('Folders'),
   web('Web & browsing'),
   developer('Public GitHub'),
-  discover('Entertainment'),
+  discover('Video, music & social'),
+  markets('Markets, weather & travel'),
+  news('Reddit & Hacker News'),
+  library('Books, audiobooks, radio & podcasts'),
+  explore('Countries, space & Pokémon'),
+  utilities('Ethiopian calendar & QR codes'),
+  games('Retro games'),
+  youtube('YouTube'),
+  papers('Research papers'),
+  bible('Bible'),
+  finance('Money & banking'),
+  callHistory('Call history'),
+  screenTime('Screen time'),
+  imageTools('Image tools'),
+  packages('Packages, domains & xkcd'),
+  world('Prices, quakes & air quality'),
+  food('Recipes & nutrition'),
+  reference('Dictionary, translation & Wikipedia'),
+  sports('Sports'),
   stars('Stars'),
-  creative('Creative'),
-  ai('AI & models'),
+  creative('Create: images, video & audio'),
   device('Device'),
+  system('System check'),
+  screen('Screen control'),
   gmail('Gmail'),
   outlook('Outlook'),
   calendar('Google Calendar'),
@@ -158,7 +202,6 @@ enum ToolCategory {
     chats ||
     messages ||
     media ||
-    actions ||
     stories ||
     folders ||
     stars => true,
@@ -171,12 +214,32 @@ enum ToolCategory {
     web ||
     developer ||
     discover ||
+    markets ||
+    news ||
+    library ||
+    explore ||
+    utilities ||
+    games ||
+    youtube ||
+    papers ||
+    bible ||
+    finance ||
+    callHistory ||
+    screenTime ||
+    imageTools ||
+    packages ||
+    world ||
+    food ||
+    reference ||
+    sports ||
     creative ||
-    ai ||
     memory ||
+    vault ||
+    routines ||
     canvas ||
     files ||
-    vision ||
+    system ||
+    screen ||
     automation => true,
     gmail ||
     outlook ||
@@ -569,24 +632,6 @@ final _tools = <TelegramTool>[
         'limit': {'type': 'integer', 'description': '1-50, default 20.'},
       },
       ['chat_id', 'type'],
-    ),
-  ),
-  TelegramTool(
-    name: 'get_chat_members',
-    label: 'Listing members',
-    category: ToolCategory.members,
-    description: 'Members of a group: admins, bots or recent members. For channels only admins are visible.',
-    parameters: _obj(
-      {
-        'chat_id': {'type': 'integer'},
-        'filter': {
-          'type': 'string',
-          'enum': ['admins', 'recent', 'bots'],
-          'description': 'Default recent.',
-        },
-        'limit': {'type': 'integer', 'description': '1-100, default 30.'},
-      },
-      ['chat_id'],
     ),
   ),
   TelegramTool(
@@ -1196,7 +1241,10 @@ final _tools = <TelegramTool>[
         'Creates a watch that runs on its own. Triggers: new messages in specific chats (chat_ids), all_dms, '
         'all_groups, all_channels, mentions of the user, a folder (these need Telegram), a schedule (daily_at "HH:MM" or '
         'every_minutes), or app: something new in a connected app (app = a toolkit like gmail, slack, github, notion, '
-        'todoist, or "any"; query = what to look for, e.g. "emails from my bank"), checked every_minutes (default 15). Modes: notify (a phone notification with the new messages), summarize (you write a short '
+        'todoist, or "any"; query = what to look for, e.g. "emails from my bank"), checked every_minutes (default 15), or phone: '
+        'something on the phone (phone_event: battery low, plugged in/unplugged, Wi-Fi joins/leaves, arriving at or '
+        'leaving a place, a missed call, a new SMS, the user opening the app). tools limits what its runs may use; '
+        'model picks a cheaper model (free by default). Modes: notify (a phone notification with the new messages), summarize (you write a short '
         'note and the user is notified), act (you follow the instructions on every trigger, e.g. reply to each new '
         'DM, and may use any tool). Use for "tell me when X posts", "watch my DMs and answer them", "every morning '
         'summarise my channels".',
@@ -1217,7 +1265,22 @@ final _tools = <TelegramTool>[
             'folder',
             'schedule',
             'app',
+            'phone',
           ],
+        },
+        ...phoneTriggerParams,
+        'tools': {
+          'type': 'array',
+          'items': {'type': 'string', 'description': 'A tool name, category or area.'},
+          'description':
+              'Only these tools for its runs: tool names, categories (e.g. Messages, Gmail, Device) or areas '
+              '(Telegram, Apps & web, Device). Leave out to allow every tool (the default).',
+        },
+        'model': {
+          'type': 'string',
+          'description':
+              'The model its runs use: free (default; a free model when one is available, else the cheapest), '
+              'cheap, main (the chat\'s model) or a model id. Use main only for watches that need careful writing.',
         },
         'app': {
           'type': 'string',
@@ -1299,6 +1362,12 @@ final _tools = <TelegramTool>[
           'description': 'false: run quietly, no notifications.',
         },
         'accounts': accountsParameter('the watch'),
+        'tools': {
+          'type': 'array',
+          'items': {'type': 'string', 'description': 'A tool name, category or area.'},
+          'description': 'Only these tools for its runs (names, categories or areas); ["all"] allows every tool again.',
+        },
+        'model': {'type': 'string', 'description': 'free, cheap, main or a model id.'},
       },
       ['watch_id'],
     ),
@@ -1530,11 +1599,25 @@ final _tools = <TelegramTool>[
   ..._accountTools,
   ..._moreTdTools,
   ..._discoverTools,
+  ..._youtubeTools,
   ..._newTools,
   ..._mediaMetaTools,
+  ..._marketsTools,
+  ..._newsTools,
+  ..._bibleTools,
+  ..._financeTools,
+  ..._callHistoryTools,
+  ..._libraryTools,
+  ..._pokemonTools,
+  ..._papersTools,
   ..._appTools,
   ..._cloudTools,
   ..._deviceTools,
+  ..._utilityTools,
+  ..._retroTools,
+  ..._infoTools,
+  ..._safetyTools,
+  ..._screenTools,
   ..._capabilityTools,
 ];
 
@@ -1679,7 +1762,7 @@ final generateMusicTool = TelegramTool(
 final getModelSettingsTool = TelegramTool(
   name: 'get_model_settings',
   label: 'Checking the AI models',
-  category: ToolCategory.ai,
+  category: ToolCategory.creative,
   cost: ToolCost.device,
   description:
       'The AI models chosen in Settings (AI & models) for chat, decisions (Jev), images, video and audio, with each '
@@ -1990,6 +2073,8 @@ class TelegramToolRunner {
       _runApps(name, args) ??
       _runCloud(name, args) ??
       _runDevice(name, args) ??
+      _runUtility(name, args) ??
+      _runRetro(name, args) ??
       _runMore(name, args) ??
       _runMedia(name, args) ??
       _runBackgrounds(name, args) ??
@@ -2007,9 +2092,15 @@ class TelegramToolRunner {
       _runManage(name, args) ??
       _runAccount(name, args) ??
       _runMoreTd(name, args) ??
+      _runYoutube(name, args) ??
       _runDiscover(name, args) ??
       _runNew(name, args) ??
-      _runMediaMeta(name, args);
+      _runMediaMeta(name, args) ??
+      _runMarkets(name, args) ??
+      _runNews(name, args) ??
+      _runLibrary(name, args) ??
+      _runPokemon(name, args) ??
+      _runPapers(name, args);
 
   String? _describeExtra(
     String name,
@@ -2908,7 +2999,44 @@ class TelegramToolRunner {
     final settled = <int, td.Message>{};
     final failed = <int, td.TdError>{};
     final waiters = <int, Completer<td.Message>>{};
+    // Files going up: shown on the tool card that sent them, with how much
+    // of how much has gone, and a cancel that takes the messages back.
+    var sizes = 0;
+    for (final f in files) {
+      try {
+        sizes += File(f).lengthSync();
+      } catch (_) {}
+    }
+    var cancelled = false;
+    final upload = files.isEmpty || sizes == 0 || sendAt != null
+        ? null
+        : DownloadProgress.startUpload(
+            files.length == 1 ? files.single.split(RegExp(r'[\/]')).last : '${files.length} files',
+            total: sizes,
+            files: files.length,
+            onCancel: () async {
+              cancelled = true;
+              final pending = [for (final m in sent) if (m.sendingState != null && !settled.containsKey(m.id)) m.id];
+              for (final w in waiters.values) {
+                if (!w.isCompleted) w.completeError(const TransferCancelled());
+              }
+              waiters.clear();
+              if (pending.isNotEmpty) {
+                await _client.send<td.Ok>(td.DeleteMessages(chatId: chatId, messageIds: pending, revoke: true)).catchError((Object _) => const td.Ok());
+              }
+            },
+          );
+    final uploaded = <int, int>{};
     final sub = _client.updates.listen((u) {
+      if (upload != null && u is td.UpdateFile) {
+        final f = u.file;
+        if (f.remote.isUploadingActive || uploaded.containsKey(f.id)) {
+          final size = f.size > 0 ? f.size : f.expectedSize;
+          uploaded[f.id] = f.remote.isUploadingCompleted ? size : f.remote.uploadedSize;
+          upload.set(uploaded.values.fold<int>(0, (a, b) => a + b).clamp(0, sizes));
+        }
+        return;
+      }
       if (u is td.UpdateMessageSendSucceeded && u.message.chatId == chatId) {
         settled[u.oldMessageId] = u.message;
         waiters.remove(u.oldMessageId)?.complete(u.message);
@@ -3042,12 +3170,14 @@ class TelegramToolRunner {
         }
         if (failed[m.id] case final e?)
           throw TelegramException(e.code, e.message);
+        if (cancelled) throw const TransferCancelled();
         final c = waiters[m.id] = Completer<td.Message>();
         // Uploads can take a while; past that, the temporary message is
         // still the best there is.
         out.add(
           await c.future.timeout(
-            Duration(seconds: files.isEmpty ? 15 : 120),
+            // A big upload shows its progress, so it's worth waiting for.
+            Duration(seconds: files.isEmpty ? 15 : (upload != null ? 1800 : 120)),
             onTimeout: () => m,
           ),
         );
@@ -3059,7 +3189,11 @@ class TelegramToolRunner {
           chat.hasUnread) {
         await markRead(chat).catchError((Object _) {});
       }
+      upload?.finish('');
       return out;
+    } catch (e) {
+      if (!cancelled) upload?.fail(e is TelegramException ? e.message : '$e');
+      rethrow;
     } finally {
       busy?.cancel();
       await sub.cancel();

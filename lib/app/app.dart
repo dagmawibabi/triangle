@@ -22,6 +22,8 @@ import '../features/settings/data/settings.dart';
 import '../infrastructure/telegram/accounts.dart';
 import '../infrastructure/telegram/telegram_client.dart';
 import 'theme.dart';
+import 'start_page.dart';
+import '../features/lock/lock_screen.dart';
 import '../features/telegram/presentation/link_opener.dart';
 
 /// Lets screens know when another route covers them.
@@ -86,6 +88,8 @@ class _TeleAiAppState extends ConsumerState<TeleAiApp> with WidgetsBindingObserv
       themeMode: light ? ThemeMode.light : ThemeMode.dark,
       navigatorKey: appNavigatorKey,
       navigatorObservers: [appRouteObserver],
+      // The app lock covers every screen, dialogs and sheets included.
+      builder: (context, child) => AppLockGate(child: child ?? const SizedBox.shrink()),
       home: const AppGate(),
     );
   }
@@ -112,6 +116,26 @@ class AppGate extends ConsumerStatefulWidget {
 }
 
 class _AppGateState extends ConsumerState<AppGate> with WidgetsBindingObserver {
+  /// The start page from Settings has been opened over the AI chat (once
+  /// per launch).
+  bool _startOpened = false;
+
+  /// Opens the chosen start page over the AI chat, once its screen is up
+  /// (and, for Telegram pages, once the account is signed in).
+  void _openStartPage({required bool telegramReady}) {
+    if (_startOpened) return;
+    final page = StartPage.parse(ref.read(settingsProvider).startPage);
+    _startOpened = true;
+    // Without Telegram a chat list has nothing to show: stay on the AI chat
+    // (and don't spring it open later, on signing in).
+    if (page.needsTelegram && !telegramReady) return;
+    final screen = page.build();
+    if (screen == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      appNavigatorKey.currentState?.push(MaterialPageRoute<void>(builder: (_) => screen));
+    });
+  }
+
   /// Online while on screen and allowed; offline in the background.
   void _syncOnline() {
     final resumed = WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
@@ -178,7 +202,9 @@ class _AppGateState extends ConsumerState<AppGate> with WidgetsBindingObserver {
     final Widget screen;
     if (auth is td.AuthorizationStateReady || adding) {
       screen = const ChatScreen(key: ValueKey('chat'));
+      if (loaded && !adding) _openStartPage(telegramReady: true);
     } else if (skipped && loaded) {
+      _openStartPage(telegramReady: false);
       // Using the app without Telegram: it can be connected later from
       // Settings → Apps & web → Telegram (TelegramSignInScreen).
       screen = const ChatScreen(key: ValueKey('chat'));

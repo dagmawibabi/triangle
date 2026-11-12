@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -27,6 +28,7 @@ import '../../telegram/presentation/attach_sheet.dart';
 import 'history_drawer.dart';
 import '../../share/ask_sheet.dart';
 import '../../share/share_intake.dart';
+import '../../assistant/default_assistant.dart';
 import 'widgets/chat_sheets.dart';
 import 'widgets/message_view.dart';
 import 'widgets/chat_date_divider.dart';
@@ -103,7 +105,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
   final _input = TextEditingController();
   final _focus = FocusNode();
-  final _scroll = ScrollController();
+  // While a reply streams and the person has scrolled up to read, the
+  // list holds what they're reading still (see _HoldingScrollController).
+  bool _streaming = false;
+  late final _scroll = _HoldingScrollController(hold: () => _streaming);
   bool _pinnedToBottom = true;
 
   @override
@@ -144,6 +149,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       ref.read(chatControllerProvider.notifier).open(id);
     });
     ShareIntake.listen(_onShared);
+    DefaultAssistant.listen(_onAssist);
+  }
+
+  /// Called up as the phone's assistant (long-press home): voice mode or a
+  /// fresh chat with the keyboard up, as Settings → Default assistant says.
+  Future<void> _onAssist(bool voice) async {
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    if (!mounted) return;
+    Navigator.of(context).popUntil((r) => r.isFirst);
+    ref.read(chatControllerProvider.notifier).newChat();
+    if (voice || ref.read(assistOpensProvider) == AssistOpens.voice) {
+      await VoiceModeScreen.open(context);
+    } else {
+      _input.clear();
+      _focus.requestFocus();
+    }
   }
 
   StreamSubscription<String>? _taps;
@@ -289,7 +310,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         _MessageList(
                           scroll: _scroll,
                           conversation: chat.conversation,
-                          busy: chat.busy,
+                          busy: _streaming = chat.busy,
                         ),
                         if (!_pinnedToBottom)
                           Positioned(
@@ -448,7 +469,7 @@ class _MessageList extends ConsumerWidget {
             streaming: busy && i == 0,
           ),
         };
-        return Center(
+        final item = Center(
           key: ValueKey(e.id),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 760),
@@ -474,6 +495,8 @@ class _MessageList extends ConsumerWidget {
             ),
           ),
         );
+        // The newest message: its growth is what the list makes up for.
+        return i == 0 ? _HeightReporter(key: ValueKey('h${e.id}'), id: e.id, child: item) : item;
       },
     );
   }
@@ -640,6 +663,8 @@ class _EmptyState extends StatelessWidget {
     (Icons.inventory_2_outlined, 'What\'s in my R2 bucket? Make a share link for the newest file.'),
     (Icons.terminal_rounded, 'Plot the last 30 days of BTC prices in E2B.'),
     (Icons.sms_outlined, 'What\'s the latest verification code in my texts?'),
+    (Icons.account_balance_wallet_outlined, 'Sync my bank texts and show where my money went this month.'),
+    (Icons.health_and_safety_outlined, 'How healthy are my finances? Any recurring payments?'),
     (Icons.call_missed_rounded, 'Who called me today that I missed?'),
     (Icons.battery_charging_full_rounded, 'How\'s my battery and storage?'),
     (Icons.flashlight_on_rounded, 'Turn on the flashlight.'),
@@ -648,6 +673,69 @@ class _EmptyState extends StatelessWidget {
     (Icons.menu_book_rounded, 'Find a free copy of Pride and Prejudice.'),
     (Icons.record_voice_over_outlined, 'Read me a good-morning message in Amharic.'),
     (Icons.brush_outlined, 'Make an image of a cosy reading nook at night.'),
+    // Money.
+    (Icons.pie_chart_outline_rounded, 'What did I spend the most on last month?'),
+    (Icons.savings_outlined, 'Set a 5,000 birr monthly budget for eating out.'),
+    (Icons.receipt_long_outlined, 'Verify a Telebirr payment by its reference number.'),
+    (Icons.payments_outlined, 'Tell me whenever money comes into my bank account.'),
+    // Calls, screen time, the network and notifications.
+    (Icons.phone_callback_rounded, 'Which missed calls haven\'t I returned this week?'),
+    (Icons.call_rounded, 'Who do I talk to most on the phone, and when?'),
+    (Icons.hourglass_bottom_rounded, 'How much screen time did I have today? Which apps?'),
+    (Icons.lock_open_rounded, 'How many times did I unlock my phone today?'),
+    (Icons.speed_rounded, 'Run a speed test on my connection.'),
+    (Icons.sim_card_outlined, 'Which SIM am I using for data, and how strong is the signal?'),
+    (Icons.data_usage_rounded, 'Which apps used the most mobile data this week?'),
+    (Icons.notifications_active_outlined, 'What notifications did I get in the last hour?'),
+    // Pictures and QR codes.
+    (Icons.auto_fix_high_rounded, 'Remove the background from the photo I attached.'),
+    (Icons.photo_size_select_large_rounded, 'Resize my attached photo to 1080 px and compress it.'),
+    (Icons.qr_code_2_rounded, 'Make a QR code for my Wi-Fi network.'),
+    (Icons.qr_code_scanner_rounded, 'Read the QR code in the picture I attached.'),
+    // The Ethiopian calendar and the Bible.
+    (Icons.calendar_month_rounded, 'What\'s today\'s date in the Ethiopian calendar?'),
+    (Icons.celebration_outlined, 'When is Fasika this year? Is there a fast on now?'),
+    (Icons.auto_stories_rounded, 'What\'s the verse of the day?'),
+    (Icons.compare_rounded, 'Compare John 3:16 in three translations.'),
+    // Books, audiobooks, radio and podcasts.
+    (Icons.headphones_rounded, 'Find a free audiobook of Sherlock Holmes and play it.'),
+    (Icons.radio_rounded, 'Play a jazz radio station.'),
+    (Icons.podcasts_rounded, 'Find a good history podcast and play the latest episode.'),
+    // Markets, weather and travel.
+    (Icons.currency_bitcoin_rounded, 'What\'s Bitcoin at, and how did it do this week?'),
+    (Icons.show_chart_rounded, 'Chart Apple\'s stock over the last month.'),
+    (Icons.currency_exchange_rounded, 'Convert 100 US dollars to euros and birr.'),
+    (Icons.cloud_outlined, 'What\'s the weather in Addis Ababa this week?'),
+    (Icons.flight_rounded, 'Where is flight ET500 right now?'),
+    (Icons.beach_access_outlined, 'What are the next public holidays in Kenya?'),
+    // News, papers, sports and YouTube.
+    (Icons.whatshot_outlined, 'What\'s on the front page of Hacker News?'),
+    (Icons.reddit, 'What\'s top on r/FlutterDev this week?'),
+    (Icons.science_outlined, 'Find recent papers on small language models.'),
+    (Icons.sports_soccer_rounded, 'What are today\'s Premier League scores?'),
+    (Icons.leaderboard_outlined, 'Show me the La Liga table.'),
+    (Icons.sports_motorsports_outlined, 'Who won the last Formula 1 race?'),
+    (Icons.trending_up_rounded, 'What\'s trending on YouTube right now?'),
+    (Icons.smart_display_outlined, 'Compare MKBHD and Linus Tech Tips on YouTube.'),
+    // Lookups.
+    (Icons.inventory_outlined, 'What\'s the latest version of the dio package on pub.dev?'),
+    (Icons.dns_outlined, 'Who owns example.com, and when does it expire?'),
+    (Icons.sentiment_very_satisfied_outlined, 'Show me a random xkcd.'),
+    (Icons.diamond_outlined, 'What does gold cost per gram today?'),
+    (Icons.crisis_alert_rounded, 'Were there any big earthquakes today?'),
+    (Icons.restaurant_rounded, 'Give me a recipe for shakshuka.'),
+    (Icons.local_dining_outlined, 'How many calories are in a Snickers bar?'),
+    (Icons.air_rounded, 'How are the air quality and UV in Addis today?'),
+    (Icons.spellcheck_rounded, 'Define "serendipity" and use it in a sentence.'),
+    (Icons.article_outlined, 'Summarise the Wikipedia article on the Aksumite Empire.'),
+    (Icons.flag_outlined, 'Tell me about Ethiopia: capital, population, neighbours.'),
+    (Icons.rocket_launch_outlined, 'Show me NASA\'s picture of the day.'),
+    (Icons.catching_pokemon_rounded, 'Tell me about Pikachu and how it evolves.'),
+    // Routines.
+    (
+      Icons.playlist_play_rounded,
+      'Make a routine: every morning check the weather and my calendar, then send me a brief.',
+    ),
   ];
 
   List<(IconData, String)> get _suggestions {
@@ -655,8 +743,8 @@ class _EmptyState extends StatelessWidget {
     final general = [..._general]..shuffle(rnd);
     if (!telegram) return general.take(6).toList();
     final tg = [..._pool]..shuffle(rnd);
-    // Mostly Telegram, with a couple of the rest so they get noticed.
-    return [...tg.take(4), ...general.take(2)]..shuffle(rnd);
+    // Half Telegram, half the rest, so the other tools get noticed too.
+    return [...tg.take(3), ...general.take(3)]..shuffle(rnd);
   }
 
   @override
@@ -683,8 +771,8 @@ class _EmptyState extends StatelessWidget {
                   const SizedBox(height: Space.s),
                   Text(
                     telegram
-                        ? 'Ask about your chats, channels, email, apps, cloud and phone.'
-                        : 'Ask about your email, calendar, apps, cloud, code and phone. Connect Telegram any time in Settings.',
+                        ? 'Ask about your chats, channels, email, money, phone, the news and more.'
+                        : 'Ask about your email, calendar, money, phone, the news and more. Connect Telegram any time in Settings.',
                     style: context.text.bodyMedium?.copyWith(
                       color: AppColors.text2,
                     ),
@@ -796,6 +884,26 @@ const _generalHints = [
   'Make me an image of…',
   'Anything important in my email?',
   'Translate this into Amharic…',
+  'Where did my money go this month?',
+  'Verify a payment…',
+  'Who should I call back?',
+  'How\'s my screen time today?',
+  'Run a speed test…',
+  'Which apps ate my data?',
+  'Remove the background from…',
+  'Make a QR code for…',
+  'Today in the Ethiopian calendar?',
+  'Verse of the day…',
+  'Find a free audiobook…',
+  'Play some jazz radio…',
+  'What\'s Bitcoin at?',
+  'Convert 100 dollars to birr…',
+  'Weather this week in…',
+  'Today\'s football scores…',
+  'What\'s on Hacker News?',
+  'Find papers about…',
+  'A recipe for…',
+  'Define a word…',
 ];
 
 class _ComposerState extends ConsumerState<_Composer> {
@@ -1228,5 +1336,100 @@ class _RoundButton extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// A scroll controller for the reversed message list that keeps the reader's
+/// place while a reply streams in.
+///
+/// In a reversed list offset 0 is the newest message, so as the reply at the
+/// bottom grows every message above it moves up: someone who scrolled up to
+/// read would see the text slide away with each new token. When [hold] is
+/// true and the list isn't at the bottom, the position moves by however much
+/// the content grew, during layout, so nothing on screen moves. At the
+/// bottom it follows the reply as usual.
+class _HoldingScrollController extends ScrollController {
+  _HoldingScrollController({required this.hold});
+  final bool Function() hold;
+
+  @override
+  ScrollPosition createScrollPosition(ScrollPhysics physics, ScrollContext context, ScrollPosition? oldPosition) =>
+      _HoldingScrollPosition(holding: hold, physics: physics, context: context, oldPosition: oldPosition);
+}
+
+class _HoldingScrollPosition extends ScrollPositionWithSingleContext {
+  _HoldingScrollPosition({required this.holding, required super.physics, required super.context, super.oldPosition});
+  final bool Function() holding;
+
+  /// Within this of the newest message counts as "at the bottom".
+  static const _bottom = 80.0;
+
+  /// The newest messages seen so far, and growth not yet made up for.
+  final Set<Object> _seen = {};
+  double _grown = 0;
+
+  /// The newest message grew by [delta] since its last layout. That growth
+  /// moves everything above it, so it is what the position makes up for.
+  /// The list's own length isn't used: it is an estimate that changes as
+  /// older messages are built while scrolling up, and following it threw the
+  /// reader past the end, onto a blank screen.
+  void grew(double delta) => _grown += delta;
+
+  /// The newest message was laid out for the first time: all of it is new
+  /// when it was just added; built again after scrolling back, none is.
+  void appeared(Object id, double height) {
+    if (_seen.add(id) && _seen.length > 1) _grown += height;
+    if (_seen.length > 16) _seen.remove(_seen.first);
+  }
+
+  @override
+  bool applyContentDimensions(double minScrollExtent, double maxScrollExtent) {
+    final grew = _grown;
+    _grown = 0;
+    if (grew != 0 && hasPixels && pixels > _bottom && holding()) {
+      correctPixels((pixels + grew).clamp(minScrollExtent, maxScrollExtent));
+      super.applyContentDimensions(minScrollExtent, maxScrollExtent);
+      // Lay out again at the corrected place, so this frame already shows it.
+      return false;
+    }
+    return super.applyContentDimensions(minScrollExtent, maxScrollExtent);
+  }
+}
+
+/// Tells the list's position how tall the newest message is after each
+/// layout, so a reply growing below the reader doesn't move what they read.
+class _HeightReporter extends SingleChildRenderObjectWidget {
+  const _HeightReporter({super.key, required this.id, required super.child});
+  final Object id;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) => _RenderHeightReporter(id, Scrollable.maybeOf(context)?.position);
+
+  @override
+  void updateRenderObject(BuildContext context, _RenderHeightReporter r) => r
+    ..id = id
+    ..position = Scrollable.maybeOf(context)?.position;
+}
+
+class _RenderHeightReporter extends RenderProxyBox {
+  _RenderHeightReporter(this.id, this.position);
+  Object id;
+  ScrollPosition? position;
+
+  double? _last;
+
+  @override
+  void performLayout() {
+    super.performLayout();
+    final p = position;
+    if (p is _HoldingScrollPosition) {
+      final last = _last;
+      if (last == null) {
+        p.appeared(id, size.height);
+      } else if (size.height != last) {
+        p.grew(size.height - last);
+      }
+    }
+    _last = size.height;
   }
 }

@@ -23,7 +23,30 @@ class Track {
     required this.seconds,
     required this.voice,
     this.cover,
+    this.url,
+    this.artUrl,
+    this.live = false,
   });
+
+  /// Streams (radio, podcasts, audiobooks) play from [url] instead of a file.
+  final String? url;
+  final String? artUrl;
+
+  /// A live stream: no length, no seeking.
+  final bool live;
+
+  factory Track.stream({required String url, required String title, String subtitle = '', String? artUrl, bool live = false, int seconds = 0}) => Track(
+    chatId: 0,
+    messageId: 0,
+    identifier: 'url:$url',
+    title: title,
+    subtitle: subtitle,
+    seconds: seconds,
+    voice: false,
+    url: url,
+    artUrl: artUrl,
+    live: live,
+  );
 
   final int chatId;
   final int messageId;
@@ -136,6 +159,19 @@ class AudioCenter extends ChangeNotifier {
     error = null;
     playing = true;
     notifyListeners();
+    if (track.url != null) {
+      try {
+        await _player.setPlaybackRate(track.live ? 1 : speed);
+        await _player.play(UrlSource(track.url!));
+        if (current?.key == track.key) loading = false;
+      } catch (e) {
+        error = 'Could not play the stream: $e';
+        playing = false;
+        loading = false;
+      }
+      notifyListeners();
+      return;
+    }
     final path =
         track.localPath ??
         await _ref.read(fileLoaderProvider).download(track.file!, priority: 32);

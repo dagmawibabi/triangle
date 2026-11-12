@@ -23,6 +23,11 @@ import 'notifications.dart';
 import 'online_alerts.dart';
 import 'reminders.dart';
 import 'watches.dart';
+import 'untrusted.dart';
+import 'device_events.dart';
+import 'activity_log.dart';
+import '../routines/routine_runner.dart';
+import '../routines/routines.dart';
 import '../../infrastructure/telegram/td_compat.dart';
 
 /// What the engine has been doing, for the Watches screen.
@@ -161,6 +166,8 @@ class WatchEngine {
     _ref.listen(settingsProvider, (_, _) => _sync());
     unawaited(_ref.read(appNotifierProvider).init());
     _ref.read(reminderStoreProvider.notifier).runJob = _runJob;
+    _ref.listen(routineStoreProvider, (_, _) => unawaited(_syncKeepAlive()));
+    _ref.read(deviceEventsProvider).onAppOpened = _appOpened;
     status.value = status.value.copyWith(listening: true);
   }
 
@@ -278,6 +285,9 @@ class WatchEngine {
   Future<void> _sync() async {
     final s = _ref.read(settingsProvider);
     if (!s.loaded) return;
+    // A key arrived (added, or read once the keystore unlocked): an old
+    // "no key" problem is no longer true.
+    if (s.hasAnyKey && (status.value.error?.startsWith('No AI key') ?? false)) status.value = status.value.clearError();
     final active = _active;
     _dropInactive(active);
     final notifier = _ref.read(appNotifierProvider);
@@ -325,10 +335,14 @@ class WatchEngine {
         : 0;
     final notifier = _ref.read(appNotifierProvider);
     // Online alerts need the app alive too, to hear the status change.
-    final needed = active.isNotEmpty || jobs > 0 || s.mentionAlerts || _ref.read(onlineAlertStoreProvider).isNotEmpty;
+    final routines = s.proactive
+        ? _ref.read(routineStoreProvider).where((r) => r.enabled && r.trigger.kind != RoutineTriggerKind.manual).length
+        : 0;
+    final needed = active.isNotEmpty || jobs > 0 || routines > 0 || s.mentionAlerts || _ref.read(onlineAlertStoreProvider).isNotEmpty;
     await notifier.keepAlive(
       s.backgroundAlways || (s.keepAlive && needed),
-      watches: active.length + jobs,
+      watches: active.length + jobs + routines,
+      notice: s.backgroundNotice,
     );
     if (status.value.background != notifier.alive)
       status.value = status.value.copyWith(background: notifier.alive);
@@ -419,7 +433,7 @@ class WatchEngine {
       WatchScope.folder =>
         w.folderId != null &&
             (store.folderChats[w.folderId!]?.contains(m.chatId) ?? false),
-      WatchScope.schedule || WatchScope.app => false,
+      WatchScope.schedule || WatchScope.app || WatchScope.device => false,
     };
   }
 
@@ -591,6 +605,8 @@ class WatchEngine {
     unawaited(_ref.read(briefStoreProvider.notifier).tick());
     unawaited(_ref.read(reminderStoreProvider.notifier).tick());
     final now = DateTime.now();
+    _ref.read(routineRunnerProvider).tick(now);
+    unawaited(_pollDevice());
     for (final w in _active.where((w) => w.scope == WatchScope.schedule || w.scope == WatchScope.app)) {
       // Quiet at night: the run waits for the morning.
       if (w.quietAtNight && Watch.isNight(now)) continue;
@@ -613,6 +629,63 @@ class WatchEngine {
       if (due && !_running.contains(w.id))
         unawaited(_fire(w, const [], scheduled: true));
     }
+  }
+
+  // ---- phone triggers ------------------------------------------------------
+
+  bool _polling = false;
+
+  /// Watches and routines that start on something on the phone, as owners
+  /// for the device monitor: "w:<id>" and "r:<id>".
+  List<(String, DeviceCondition)> _deviceOwners({bool opened = false}) {
+    final s = _ref.read(settingsProvider);
+    if (!s.proactive) return const [];
+    bool wanted(DeviceCondition c) => opened == (c.kind == DeviceTriggerKind.appOpened);
+    return [
+      for (final w in _active)
+        if (w.scope == WatchScope.device && w.device != null && wanted(w.device!)) ('w:${w.id}', w.device!),
+      for (final r in _ref.read(routineStoreProvider))
+        if (r.enabled && r.trigger.kind == RoutineTriggerKind.device && r.trigger.device != null && wanted(r.trigger.device!))
+          ('r:${r.id}', r.trigger.device!),
+    ];
+  }
+
+  Future<void> _pollDevice() async {
+    if (_polling) return;
+    final owners = _deviceOwners();
+    if (owners.isEmpty) return;
+    _polling = true;
+    try {
+      for (final f in await _ref.read(deviceEventsProvider).poll(owners)) {
+        _deviceFired(f.ownerId, f.event, owners.firstWhere((o) => o.$1 == f.ownerId).$2);
+      }
+    } catch (e) {
+      debugPrint('[Watches] phone: $e');
+    } finally {
+      _polling = false;
+    }
+  }
+
+  void _appOpened() {
+    final monitor = _ref.read(deviceEventsProvider);
+    for (final (id, c) in _deviceOwners(opened: true)) {
+      if (monitor.openedMayFire(id, c)) _deviceFired(id, 'The user just opened the Triangle app.', c);
+    }
+  }
+
+  void _deviceFired(String owner, String event, DeviceCondition c) {
+    // Texts and caller names are other people's words.
+    final text = const {DeviceTriggerKind.newSms, DeviceTriggerKind.missedCall, DeviceTriggerKind.notification, DeviceTriggerKind.moneyIn, DeviceTriggerKind.moneyOut, DeviceTriggerKind.pageChanged, DeviceTriggerKind.youtubeUpload}.contains(c.kind)
+        ? fence(event, 'phone ${c.kind.label.toLowerCase()}')
+        : event;
+    if (owner.startsWith('r:')) {
+      _ref.read(routineRunnerProvider).fireDevice(owner.substring(2), text);
+      return;
+    }
+    final w = _active.where((x) => 'w:${x.id}' == owner).firstOrNull;
+    if (w == null || _running.contains(w.id)) return;
+    status.value = status.value.copyWith(last: '${w.name}: ${c.describe()} at ${DateFormat.Hm().format(DateTime.now())}');
+    unawaited(_fire(w, const [], scheduled: true, deviceEvent: text));
   }
 
   Future<void> _flush(String key) async {
@@ -640,6 +713,10 @@ class WatchEngine {
   /// Fires [w] now, with the newest matching message there is (or as a
   /// scheduled run), so the person can see it work.
   Future<String?> runNow(Watch w) async {
+    if (w.scope == WatchScope.device) {
+      await _fire(w, const [], scheduled: true, test: true, deviceEvent: '(Test, not a real event) ${w.device?.describe() ?? 'A phone event'}.');
+      return null;
+    }
     if (w.scope == WatchScope.schedule || w.scope == WatchScope.app) {
       await _fire(w, const [], scheduled: true, test: true);
       return null;
@@ -717,6 +794,7 @@ class WatchEngine {
     bool scheduled = false,
     bool test = false,
     String? account,
+    String? deviceEvent,
   }) async {
     final settings = _ref.read(settingsProvider);
     final notifier = _ref.read(appNotifierProvider);
@@ -740,6 +818,17 @@ class WatchEngine {
       final where = '${chats.length == 1 ? (store.chat(chats.first)?.title ?? 'a chat') : '${chats.length} chats'}'
           '${_accountSuffix(account)}';
 
+      if (w.mode == WatchMode.notify && deviceEvent != null) {
+        // A phone event, straight to the chat and the shade; no AI.
+        final shown = deviceEvent.replaceAll(RegExp(r'</?external[^>]*>'), '');
+        final placed = await controller.postNotice(w, '${test ? 'Test run · ' : ''}${w.device?.describe() ?? 'Phone event'}', shown, const []);
+        unawaited(_ref.read(activityLogProvider.notifier).recordRun(source: ActivitySource.watch, name: w.name, ok: true, text: 'Notified: $shown', conversationId: placed.conversationId));
+        if (settings.notifications && w.notify && !placed.seen) {
+          await notifier.show(w.name, shown.length > 400 ? '${shown.substring(0, 400)}…' : shown, conversationId: placed.conversationId);
+        }
+        return;
+      }
+
       if (w.mode == WatchMode.notify && !scheduled) {
         // Straight to the chat and the notification shade; no AI.
         final markdown = [
@@ -755,6 +844,7 @@ class WatchEngine {
         final placed = await controller.postNotice(w, event, markdown, [
           for (final m in messages) _snapshot(m, store, storeAccount),
         ]);
+        unawaited(_ref.read(activityLogProvider.notifier).recordRun(source: ActivitySource.watch, name: w.name, ok: true, text: 'Notified: $event', conversationId: placed.conversationId));
         if (settings.notifications && w.notify && !placed.seen) {
           final body = [
             for (final m in messages.take(6))
@@ -786,7 +876,9 @@ class WatchEngine {
       _aiRuns[w.id] = [...runs, DateTime.now()];
 
       final appName = w.app == null || w.app == 'any' ? 'the user\'s connected apps' : appLabel(w.app!);
-      final event = w.scope == WatchScope.app
+      final event = deviceEvent != null
+          ? '${test ? 'Test run · ' : ''}Phone event (${w.device?.describe() ?? 'on the phone'}): $deviceEvent'
+          : w.scope == WatchScope.app
           ? '${test ? 'Test run · ' : ''}App watch: check $appName for anything new${w.query.isEmpty ? '' : ' matching: ${w.query}'}'
                 '${w.lastRunAt == null || test ? ' (look at roughly the last day)' : ' since ${w.lastRunAt!.toIso8601String().substring(0, 16)}'}. '
                 'Read only with the app\'s tools; then follow the instructions for what you found. '
@@ -803,7 +895,7 @@ class WatchEngine {
                   '${switch (m.senderId) {
                     td.MessageSenderUser(:final userId) => ', from user_id $userId',
                     _ => '',
-                  }}): ${_line(m, store)}'].join('\n')}';
+                  }}): ${fence(_line(m, store), 'telegram message')}'].join('\n')}';
       // With several accounts, the run is told where the messages came from
       // and which accounts it may use.
       final accountsNote = !_several
@@ -816,6 +908,8 @@ class WatchEngine {
         '$event$accountsNote',
         accounts: w.runAccounts,
         account: account,
+        // Replies to these chats don't need approval after reading them.
+        sourceChats: scheduled || w.scope == WatchScope.app ? null : chats,
       );
       // The app may have shut down while the run went on.
       if (!_ref.mounted) return;

@@ -454,7 +454,7 @@ extension _CloudToolRuns on TelegramToolRunner {
         case 'e2b_download_file':
           final path = _arg(a, 'path');
           final bytes = await session.withSandbox((c, box) => c.readFile(box, path));
-          final file = await saveGeneratedBytes(path, bytes);
+          final file = await saveGeneratedBytes(path, bytes, folder: 'sandbox');
           final image = RegExp(r'\.(png|jpe?g|gif|webp)$', caseSensitive: false).hasMatch(file.path);
           return ToolOutput({
             'downloaded': true,
@@ -739,7 +739,7 @@ extension _CloudToolRuns on TelegramToolRunner {
           final key = _arg(a, 'key');
           final bytes = await cc.getObject(_bucket(a), key);
           if (bytes.length > 50 << 20) return const ToolOutput({'error': 'That object is over 50 MB.'});
-          final file = await saveGeneratedBytes(key, bytes);
+          final file = await saveGeneratedBytes(key, bytes, folder: 'downloads');
           final image = RegExp(r'\.(png|jpe?g|gif|webp)$', caseSensitive: false).hasMatch(file.path);
           return ToolOutput({'downloaded': true, 'key': key, 'size': bytes.length, 'created_files': [file.path], if (image) 'image_path': file.path});
         case 'r2_share_link':

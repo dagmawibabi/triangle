@@ -6,6 +6,7 @@ import 'package:handy_tdlib/api.dart' as td;
 import '../../../app/theme.dart';
 import '../../../infrastructure/telegram/telegram_client.dart';
 import '../../chat/data/chat_controller.dart';
+import '../data/content_filters.dart';
 import '../data/telegram_store.dart';
 import '../data/telegram_tools.dart';
 import 'chat_background.dart';
@@ -313,11 +314,29 @@ Future<void> showChatMenu(BuildContext context, WidgetRef ref, ChatInfo chat) {
               }
               try {
                 await runner.setBlocked(userId, true);
+                await ref.read(blockedSendersProvider.notifier).reload();
                 if (context.mounted) showSnack(context, 'Blocked ${chat.title}', icon: Icons.block_rounded);
               } catch (e) {
                 if (context.mounted) showSnack(context, 'Couldn\'t block: $e', icon: Icons.error_outline_rounded);
               }
             }),
+          if (kind == ChatKind.channel || kind == ChatKind.group)
+            if (ref.read(contentFiltersProvider).blockedChats.containsKey(chat.id))
+              tile(Icons.check_circle_outline_rounded, 'Unblock ${kind == ChatKind.channel ? 'channel' : 'group'}', () {
+                Navigator.pop(sheet);
+                ref.read(contentFiltersProvider.notifier).unblockChat(chat.id);
+                showSnack(context, 'Unblocked ${chat.title}');
+              })
+            else
+              tile(Icons.block_rounded, 'Block ${kind == ChatKind.channel ? 'channel' : 'group'}', danger: true, () {
+                Navigator.pop(sheet);
+                ref.read(contentFiltersProvider.notifier).blockChat(chat.id, chat.title);
+                showSnack(
+                  context,
+                  'Blocked ${chat.title}. Posts forwarded from it will be hidden.',
+                  icon: Icons.block_rounded,
+                );
+              }),
           tile(
             Icons.delete_forever_outlined,
             store.isCreator(chat) ? 'Delete for everyone' : 'Delete chat',

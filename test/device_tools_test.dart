@@ -3,7 +3,7 @@ import 'package:teleai/features/telegram/data/telegram_tools.dart';
 
 void main() {
   test('device tools sit under Device on the main Tools screen, reading ones run without asking', () {
-    const reads = ['device_info', 'device_battery', 'network_info', 'installed_apps', 'read_sms', 'call_log', 'phone_contacts', 'read_clipboard'];
+    const reads = ['device_info', 'device_battery', 'network_info', 'installed_apps', 'read_sms', 'phone_contacts', 'read_clipboard'];
     const acts = ['make_call', 'send_sms', 'flashlight', 'vibrate', 'set_alarm', 'set_timer', 'open_app', 'media_control', 'ringer_mode'];
     for (final name in [...reads, ...acts]) {
       final t = toolNamed(name)!;

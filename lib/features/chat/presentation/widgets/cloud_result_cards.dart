@@ -9,6 +9,7 @@ import 'package:open_filex/open_filex.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../app/theme.dart';
+import '../../../../core/widgets/net_image.dart';
 import '../../../../core/widgets/code_highlight.dart';
 import '../../../integrations/code_editor_screen.dart';
 import '../../../settings/data/settings.dart';
@@ -159,11 +160,11 @@ class _Head extends StatelessWidget {
         if (logo != null)
           ClipRRect(
             borderRadius: BorderRadius.circular(4),
-            child: Image.network(
+            child: NetImage(
               logo!,
               width: 18,
               height: 18,
-              errorBuilder: (_, _, _) => Icon(icon ?? Icons.cloud_outlined, size: 18, color: const Color(0xFFF38020)),
+              errorWidget: Icon(icon ?? Icons.cloud_outlined, size: 18, color: const Color(0xFFF38020)),
             ),
           )
         else

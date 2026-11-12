@@ -6,6 +6,7 @@ import '../../app/theme.dart';
 import '../../core/widgets/app_sheet.dart';
 import '../ai/data/ai.dart';
 import 'usage.dart';
+import 'spend_limits_screen.dart';
 
 enum _Period {
   today('Today'),
@@ -115,6 +116,11 @@ class _UsageScreenState extends ConsumerState<UsageScreen> {
         appBar: AppBar(
           title: const Text('Usage & cost'),
           actions: [
+            IconButton(
+              tooltip: 'Spending limits',
+              icon: const Icon(Icons.savings_outlined),
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SpendLimitsScreen())),
+            ),
             IconButton(
               tooltip: 'Clear history',
               icon: const Icon(Icons.delete_outline_rounded),

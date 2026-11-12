@@ -364,6 +364,8 @@ extension _WebTools on TelegramToolRunner {
     if (args['raw'] != true && WebFetcher.isHtml(r)) {
       final page = ReadablePage.parse(source, r.request?.url ?? url);
       out['title'] = page.title;
+      // For the link preview card: share image, site name, author, date.
+      out.addAll(pagePreviewMeta(source, r.request?.url ?? url));
       if (page.description case final d? when d.isNotEmpty)
         out['description'] = d;
       text = page.text;
@@ -524,6 +526,7 @@ extension _WebTools on TelegramToolRunner {
 
   Future<ToolOutput> _download(Map<String, dynamic> args) async {
     final url = WebFetcher.normalize('${args['url'] ?? ''}');
+    final clock = Stopwatch()..start();
     final file = await _web.download(url, name: args['name'] as String?);
     final size = await file.length();
     final name = file.path.split(RegExp(r'[\\/]')).last;
@@ -535,6 +538,10 @@ extension _WebTools on TelegramToolRunner {
       if (WebFetcher.isPicture(head)) 'image_path': file.path,
       'name': name,
       'size_kb': (size / 1024).ceil(),
+      'size': formatBytes(size),
+      'type': ?lookupMimeType(file.path, headerBytes: head),
+      'seconds': (clock.elapsedMilliseconds / 1000).toStringAsFixed(1),
+      'from': url.host,
       'note':
           'Saved on the phone. Send it with send_message by passing "$name" in files.',
     });

@@ -165,6 +165,7 @@ class AppNotifier {
   bool _alive = false;
   bool _asked = false;
   bool _taskReady = false;
+  bool? _taskMinimised;
 
   /// Whether the background service is running, as last checked.
   bool get alive => _alive;
@@ -177,21 +178,37 @@ class AppNotifier {
   /// alerts for what watches find. Android only keeps a background service
   /// running reliably when its ongoing notification may be shown and the
   /// app isn't battery-optimised, so both are asked for once here.
-  Future<void> keepAlive(bool on, {int watches = 0}) async {
+  ///
+  /// [notice] is how it shows: [BackgroundNotice.minimised] uses a channel
+  /// Android folds away without a status bar icon; [BackgroundNotice.off]
+  /// runs no service at all, so Android may stop the app in the background.
+  Future<void> keepAlive(bool on, {int watches = 0, BackgroundNotice notice = BackgroundNotice.shown}) async {
     final title = watches > 0 ? 'Triangle is watching' : 'Triangle is running';
     final text = watches > 0 ? '$watches watch${watches == 1 ? '' : 'es'} on' : 'Ready in the background';
     if (!Platform.isAndroid) return;
+    if (notice == BackgroundNotice.off) on = false;
+    final minimised = notice == BackgroundNotice.minimised;
     try {
+      // A channel's importance is fixed once made, so each look has its own.
+      if (_taskMinimised != minimised) {
+        if (_taskReady && await FlutterForegroundTask.isRunningService) {
+          await FlutterForegroundTask.stopService();
+          _alive = false;
+        }
+        _taskReady = false;
+      }
       if (!_taskReady) {
         _taskReady = true;
+        _taskMinimised = minimised;
         FlutterForegroundTask.init(
           androidNotificationOptions: AndroidNotificationOptions(
-            channelId: 'teleai_keep_alive',
-            channelName: 'Watching',
+            channelId: minimised ? 'teleai_keep_alive_min' : 'teleai_keep_alive',
+            channelName: minimised ? 'Running (minimised)' : 'Watching',
             channelDescription: 'Shown while Triangle watches your chats in the background',
-            channelImportance: NotificationChannelImportance.LOW,
-            priority: NotificationPriority.LOW,
+            channelImportance: minimised ? NotificationChannelImportance.MIN : NotificationChannelImportance.LOW,
+            priority: minimised ? NotificationPriority.MIN : NotificationPriority.LOW,
             onlyAlertOnce: true,
+            showWhen: false,
           ),
           iosNotificationOptions: const IOSNotificationOptions(showNotification: false),
           foregroundTaskOptions: ForegroundTaskOptions(

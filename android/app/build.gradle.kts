@@ -63,6 +63,9 @@ flutter {
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
+    // Background removal for the image tools, on the phone (the model comes
+    // through Google Play services on first use).
+    implementation("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")
 }
 
 /**

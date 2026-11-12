@@ -25,10 +25,28 @@ import '../../integrations/app_toolkits.dart';
 import '../../integrations/e2b_session.dart';
 import '../../integrations/integrations_store.dart';
 import '../../usage/usage.dart';
+import '../../usage/spend_limits.dart';
 import '../../assistant/notifications.dart';
 import '../../assistant/reminders.dart';
 import '../../assistant/online_alerts.dart';
 import '../../assistant/watches.dart';
+import '../../assistant/approval_rules.dart';
+import '../../assistant/untrusted.dart';
+import '../../assistant/activity_log.dart';
+import '../../assistant/device_events.dart';
+import '../../assistant/tool_allowlist.dart';
+import '../../routines/routine_runner.dart';
+import '../../routines/routines.dart';
+import '../../vault/vault.dart';
+import '../../vault/vault_guard.dart';
+import '../../bible/bible.dart';
+import '../../finance/finance_tools.dart';
+import '../../calls/call_history_tools.dart';
+import '../../info/info_tools.dart';
+import '../../telegram/data/safety_tools.dart';
+import '../../screen/screen_tools.dart';
+import '../../../core/files/download_progress.dart';
+import '../../media/audio_center.dart';
 
 import 'package:handy_tdlib/api.dart' as td;
 
@@ -105,6 +123,23 @@ const _localTools = {
   'update_reminder',
   'delete_reminder',
   'zip_files',
+  'vault_list',
+  'vault_get',
+  'vault_save',
+  'vault_delete',
+  'list_routines',
+  'run_routine',
+  'create_routine',
+  'update_routine',
+  'delete_routine',
+  'bible_passage',
+  'bible_chapter',
+  'bible_compare',
+  'bible_verse_of_the_day',
+  'bible_versions',
+  'bible_books',
+  'bible_search',
+  'play_audio',
 };
 
 /// Runs conversations as omni_ai agent runs: the model streams, the app's
@@ -123,6 +158,35 @@ class ChatController extends Notifier<ChatState> {
   final Map<String, Conversation> _live = {};
 
   ChatRepository get _repo => ref.read(chatRepositoryProvider);
+
+  /// Conversations whose current turn has read text other people wrote
+  /// (see untrusted.dart): from then on its actions wait for the user,
+  /// unless a rule, a reply in the chat that woke a watch, or a harmless
+  /// tool covers them.
+  final Set<String> _tainted = {};
+
+  /// Conversations a watch, job or routine is running in now, and which.
+  final Set<String> _automatic = {};
+  final Map<String, String> _runningAs = {};
+
+  /// The chats whose new messages woke a watch's current turn, by
+  /// conversation.
+  final Map<String, Set<int>> _sourceChats = {};
+
+  /// Calls held for approval only because their turn read outside text.
+  final Set<String> _heldForSafety = {};
+
+  /// Whether [callId] waits for approval because its turn read text other
+  /// people wrote, rather than because of the approval setting.
+  bool heldForSafety(String callId) => _heldForSafety.contains(callId);
+
+  /// Calls held because what they send holds vault items, by call: the
+  /// items' labels.
+  final Map<String, List<String>> _heldForVault = {};
+
+  /// The labels of the vault items [callId] would send, when that is why
+  /// it waits; empty otherwise.
+  List<String> heldForVault(String callId) => _heldForVault[callId] ?? const [];
 
   /// The accounts a running automatic turn (watch, job, brief) may use, by
   /// conversation: limited to the ones it covers, defaulting to the account
@@ -204,12 +268,23 @@ class ChatController extends Notifier<ChatState> {
       _observed.add(c.id);
       onStart(c);
     }
+    final started = DateTime.now();
     try {
       await _withAccounts(c, accounts, null, () => _runTurn(c, reply));
     } finally {
       reply.done = true;
       _observed.remove(c.id);
     }
+    unawaited(
+      ref.read(activityLogProvider.notifier).recordRun(
+        source: ActivitySource.brief,
+        name: title,
+        ok: reply.error == null,
+        text: reply.error ?? reply.steps.map((s) => s.text).where((t) => t.trim().isNotEmpty).join('\n').trim(),
+        model: reply.model,
+        durationMs: DateTime.now().difference(started).inMilliseconds,
+      ),
+    );
     return c;
   }
 
@@ -239,6 +314,8 @@ class ChatController extends Notifier<ChatState> {
   /// The app was opened: the last chat the person had open, or a new one,
   /// as Settings → Appearance says.
   Future<void> appOpened() async {
+    // Watches and routines that start when the app is opened.
+    ref.read(deviceEventsProvider).appOpened();
     if (!ref.read(settingsProvider).openLastChat) return freshStart();
     final id = (await SharedPreferences.getInstance()).getString(_lastChatKey);
     final history = state.history.isEmpty ? await _repo.list() : state.history;
@@ -809,28 +886,37 @@ class ChatController extends Notifier<ChatState> {
     String event, {
     List<String>? accounts,
     String? account,
+    Set<int>? sourceChats,
   }) async {
     // Keys load from secure storage a moment after start (or a restore):
     // a watch firing then waits for them instead of reporting none.
     for (var i = 0; i < 40 && !ref.read(settingsProvider).loaded; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 250));
     }
+    // Keys read while the keystore was locked come back empty: try again.
+    if (!ref.read(settingsProvider).hasAnyKey && !await ref.read(settingsProvider.notifier).reloadAiKeys()) return null;
     final settings = ref.read(settingsProvider);
-    if (!settings.hasAnyKey) return null;
     final c = await _targetFor(watch);
     // One turn at a time per conversation: wait for one under way.
     for (var i = 0; i < 120 && _live.containsKey(c.id); i++) {
       await Future<void>.delayed(const Duration(seconds: 1));
     }
+    final started = DateTime.now();
     c.entries.add(UserEntry(id: _uuid.v4(), text: event, event: watch.name));
     final reply = AssistantEntry(id: _uuid.v4(), model: settings.model);
     c.entries.add(reply);
     _live[c.id] = c;
     if (_onScreen(c)) state = state.copyWith(busy: true);
     unawaited(_persist(c));
+    if (sourceChats != null && sourceChats.isNotEmpty) _sourceChats[c.id] = sourceChats;
+    _automatic.add(c.id);
+    _runningAs[c.id] = watch.id;
     try {
       await _withAccounts(c, accounts, account, () => _runTurn(c, reply, watch: watch));
     } finally {
+      _automatic.remove(c.id);
+      _runningAs.remove(c.id);
+      _sourceChats.remove(c.id);
       _live.remove(c.id);
       if (ref.mounted && _onScreen(c)) state = state.copyWith(busy: false);
     }
@@ -845,6 +931,23 @@ class ChatController extends Notifier<ChatState> {
         .where((t) => t.trim().isNotEmpty)
         .join('\n')
         .trim();
+    // Routines log their whole run themselves.
+    if (!watch.id.startsWith('routine-')) {
+      final tools = [for (final st in reply.steps) for (final t in st.tools) t.name];
+      unawaited(
+        ref.read(activityLogProvider.notifier).recordRun(
+          source: _sourceOf(watch),
+          name: watch.name,
+          ok: reply.error == null,
+          text: reply.error ?? text,
+          conversationId: c.id,
+          model: reply.model,
+          trigger: event.length > 600 ? '${event.substring(0, 600)}…' : event,
+          durationMs: DateTime.now().difference(started).inMilliseconds,
+          details: {if (tools.isNotEmpty) 'tools_used': tools},
+        ),
+      );
+    }
     return (text: reply.error ?? text, conversationId: c.id, seen: seen);
   }
 
@@ -856,7 +959,10 @@ class ChatController extends Notifier<ChatState> {
     final settings = ref.read(settingsProvider);
     final ai = ref.read(aiProvider);
     await ref.read(decisionSettingsProvider.notifier).ready;
-    final model = canonicalModelId(settings.model);
+    // Watches and routines run on their own (usually cheaper) model; one
+    // that fails on it is retried on the chat's model.
+    final model = watch == null ? canonicalModelId(settings.model) : automationModel(ai, settings, watch.model);
+    if (watch != null) reply.model = model;
     _stopping.remove(c.id);
     final runner = ref.read(toolRunnerProvider);
     final connected = ref.read(integrationsProvider).connected;
@@ -880,42 +986,75 @@ class ChatController extends Notifier<ChatState> {
               connected: connected,
               modelSeesImages: _modelSees(),
               decisionsReady: ref.read(decisionsReadyProvider),
-            ).isEmpty)
+            ).isEmpty &&
+            // A watch or routine picked its tools: only those.
+            (watch?.tools?.allows(t) ?? true))
           t,
     ];
     bool stopped() => _stopping.contains(c.id);
 
-    final agent = ai.agent(
-      name: 'triangle',
-      instructions:
-          '${_systemPrompt(c.id, watch: watch)}\n${c.id == voiceConversationId ? '$_voiceGuidance\n' : ''}${await ai.memory.prompt() ?? ''}\n'
-          '${await _capabilityGuidance(offered)}',
-      model: model,
-      // Every tool, omni_ai's included, is the app's: switches, approval
-      // cards and read-only rules apply the same way.
-      toolkits: const [],
-      useInstalledSkills: false,
-      tools: [for (final t in offered) _asTool(t, c, runner, watch)],
-      // Memory tools use the same per-call read-only and approval guards.
-      limits: omni.AgentLimits(maxSteps: settings.maxSteps.clamp(2, 40)),
-      reasoning: reasoningFor(settings.thinking),
-      onToolApproval: (call) => _approve(call, c, watch),
-      // One at a time: Telegram rate-limits, and approval cards come in order.
-      parallelToolCalls: false,
-    );
+    // A turn starts untainted, unless what woke it (a watch's new messages)
+    // is already text other people wrote.
+    _tainted.remove(c.id);
+    final asked = c.entries.whereType<UserEntry>().lastOrNull?.text ?? '';
+    if (watch != null && asked.contains('<external')) _tainted.add(c.id);
+
+    // Spending limits: none left stops the run before it starts; otherwise
+    // the run may spend at most what is left.
+    for (var i = 0; i < 20 && !ref.read(spendLimitsProvider).loaded; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    final limits = ref.read(spendLimitsProvider);
+    final budget = budgetFor(limits, ref.read(usageProvider), conversationId: c.id, automatic: watch != null);
+    if (budget.blocked != null) {
+      reply
+        ..error = '${budget.blocked} Raise it under Settings → Spending limits, or wait for it to reset.'
+        ..done = true;
+      _touch(c);
+      if (watch != null && settings.notifications) {
+        unawaited(ref.read(appNotifierProvider).show('Spending limit · ${watch.name}', budget.blocked!, conversationId: c.id));
+      }
+      if (ref.mounted) await _persist(c);
+      return;
+    }
+
     ModelStep? s;
     DateTime? thinkingStart;
     var lastPaint = DateTime.now();
     void endThinking() {
       final step = s;
-      if (thinkingStart != null && step != null && step.thinkingMs == null) {
+      final start = thinkingStart;
+      if (start != null && step != null && step.thinkingMs == null) {
         step.thinkingMs = DateTime.now()
-            .difference(thinkingStart)
+            .difference(start)
             .inMilliseconds;
       }
     }
 
-    try {
+    Future<void> attempt(String model) async {
+      final agent = ai.agent(
+        name: 'triangle',
+        instructions:
+            '${_systemPrompt(c.id, watch: watch)}\n${c.id == voiceConversationId ? '$_voiceGuidance\n' : ''}${await ai.memory.prompt() ?? ''}\n'
+            '${await _vaultPrompt(offered)}'
+            '${await _capabilityGuidance(offered)}',
+        model: model,
+        // Every tool, omni_ai's included, is the app's: switches, approval
+        // cards and read-only rules apply the same way.
+        toolkits: const [],
+        useInstalledSkills: false,
+        tools: [for (final t in offered) _asTool(t, c, runner, watch)],
+        // Memory tools use the same per-call read-only and approval guards.
+        limits: omni.AgentLimits(
+          maxSteps: settings.maxSteps.clamp(2, 40),
+          // What the spending limits leave for this run.
+          maxCostUsd: budget.remaining,
+        ),
+        reasoning: reasoningFor(settings.thinking),
+        onToolApproval: (call) => _approve(call, c, watch),
+        // One at a time: Telegram rate-limits, and approval cards come in order.
+        parallelToolCalls: false,
+      );
       final session = agent.session(history: await _history(c, model));
       final run = _runs[c.id] = session.respond();
       // A stop pressed while the history was being read.
@@ -995,6 +1134,38 @@ class ChatController extends Notifier<ChatState> {
           _touch(c);
         }
       }
+    }
+
+    try {
+      try {
+        await attempt(model);
+      } catch (e) {
+        // The chosen model failed before doing anything that can't be
+        // repeated: the fallback answers instead.
+        final main = canonicalModelId(settings.model);
+        final fallback = stopped() || !worthFallback(e) || _acted(reply)
+            ? null
+            // A watch on a cheaper model moves up to the chat's model.
+            : (watch != null && model != main ? main : fallbackChatModel(ai, settings, model));
+        if (fallback == null) rethrow;
+        debugPrint('[Chat] $model failed ($e); trying $fallback');
+        reply.steps.clear();
+        s = null;
+        reply.model = fallback;
+        reply.notice = '${modelLabel(model)} failed (${aiErrorText(e)}), so ${modelLabel(fallback)} answered instead.';
+        _touch(c);
+        await attempt(fallback);
+      }
+      // The run used up what the limits left: say why it stopped.
+      final why = limits.any
+          ? budgetFor(limits, ref.read(usageProvider), conversationId: c.id, automatic: watch != null).blocked
+          : null;
+      if (why != null) {
+        reply.notice = [?reply.notice, 'Stopped at the spending limit: $why'].join(' ');
+        if (watch != null && settings.notifications) {
+          unawaited(ref.read(appNotifierProvider).show('Spending limit · ${watch.name}', why, conversationId: c.id));
+        }
+      }
       if (stopped() &&
           reply.steps.isNotEmpty &&
           reply.steps.last.text.isEmpty) {
@@ -1030,6 +1201,16 @@ class ChatController extends Notifier<ChatState> {
     }
   }
 
+  /// Whether [reply] already did something a retry would do twice: a call
+  /// that changes something ran (or started).
+  static bool _acted(AssistantEntry reply) => reply.steps.any(
+    (s) => s.tools.any(
+      (t) =>
+          (toolNamed(t.name)?.modifiesData ?? true) &&
+          (t.status == ToolStatus.done || t.status == ToolStatus.running || t.status == ToolStatus.error && t.result != null),
+    ),
+  );
+
   static ToolPart? _partIn(ModelStep s, String callId) =>
       s.tools.where((t) => t.callId == callId).firstOrNull;
 
@@ -1054,12 +1235,50 @@ class ChatController extends Notifier<ChatState> {
     if (tool.destructive || tool.alwaysAsk) return true;
     // An account can have its own approval mode for actions in it.
     final view = _accountsFor(c.id);
-    final account = isAccountTool(tool) ? view.byId(accountForCall(view, input)) : null;
+    final accountId = isAccountTool(tool) ? accountForCall(view, input) : null;
+    final account = accountId == null ? null : view.byId(accountId);
+    // A standing rule the user made ("always allow replies in chat X").
+    if (_ruleFor(tool, input, accountId) != null) return false;
     return switch (approvalModeFor(ref.read(settingsProvider), account)) {
       ApprovalMode.ask => true,
       ApprovalMode.watches => watch == null,
       ApprovalMode.never => false,
     };
+  }
+
+  ApprovalRule? _ruleFor(TelegramTool tool, Map<String, dynamic> input, String? accountId) {
+    if (tool.destructive || tool.alwaysAsk) return null;
+    return ref.read(approvalRulesProvider.notifier).match(tool.name, input, accountId: accountId);
+  }
+
+  /// Whether a call that would otherwise run on its own must wait because
+  /// this turn has read text other people wrote. Harmless tools, replies in
+  /// the chats that woke a watch, and rules scoped to the call's chat still
+  /// go ahead; a rule for "anywhere" doesn't, since injected text could aim
+  /// it at any chat.
+  bool _heldByTaint(TelegramTool tool, Conversation c, Map<String, dynamic> input) {
+    if (!tool.modifiesData || !_tainted.contains(c.id)) return false;
+    if (taintSafeTools.contains(tool.name)) return false;
+    final chats = chatsOfCall(input);
+    final source = _sourceChats[c.id];
+    if (source != null && replyTools.contains(tool.name) && chats.isNotEmpty && chats.every(source.contains)) return false;
+    final view = _accountsFor(c.id);
+    final rule = _ruleFor(tool, input, isAccountTool(tool) ? accountForCall(view, input) : null);
+    if (rule != null && !rule.anywhere) return false;
+    return true;
+  }
+
+  /// The vault items an outgoing call would send to other people, unless
+  /// approvals are set to "Never ask" for where it acts (then nothing holds
+  /// it). Standing rules don't cover these: a rule allows a kind of action,
+  /// not sharing what's in the vault.
+  List<VaultItem> _vaultIn(TelegramTool tool, Conversation c, Map<String, dynamic> input) {
+    if (!tool.modifiesData || !outgoingTools.contains(tool.name)) return const [];
+    final view = _accountsFor(c.id);
+    final accountId = isAccountTool(tool) ? accountForCall(view, input) : null;
+    final account = accountId == null ? null : view.byId(accountId);
+    if (approvalModeFor(ref.read(settingsProvider), account) == ApprovalMode.never) return const [];
+    return vaultItemsIn(tool.name, input, ref.read(vaultProvider));
   }
 
   /// One of the app's tools as an omni_ai tool. The agent asks [_approve]
@@ -1075,18 +1294,564 @@ class ChatController extends Notifier<ChatState> {
     // With several accounts, Telegram tools take an `account` to act in.
     parametersJson: parametersWithAccount(t, _accountsFor(c.id), ref.read(settingsProvider)),
     label: t.label,
-    approval: !t.requiresApproval
+    approval: !t.requiresApproval && !t.modifiesData
         ? omni.ApprovalPolicy.never
         // Brief runs never act, so every acting call goes to _approve,
         // which refuses it.
         : omni.ApprovalPolicy.when(
             (input) =>
                 _hidden.contains(c.id) ||
-                (_mustAsk(t, watch, c, input) && callNeedsApproval(t, input)),
+                (_mustAsk(t, watch, c, input) && callNeedsApproval(t, input)) ||
+                _heldByTaint(t, c, input) ||
+                _vaultIn(t, c, input).isNotEmpty,
           ),
     execute: (input) =>
         _execute(t, omni.ToolContext.current!.call.id, c, runner, watch: watch),
   );
+
+  /// Plays a stream or audio link in the app's player.
+  Future<ToolOutput> _playAudio(Map<String, dynamic> a) async {
+    final url = '${a['url'] ?? ''}'.trim();
+    if (!url.startsWith('http')) return const ToolOutput({'error': 'Give an http(s) audio link.'});
+    final title = '${a['title'] ?? 'Audio'}'.trim();
+    await ref.read(audioCenterProvider).play(
+      Track.stream(url: url, title: title, subtitle: '${a['subtitle'] ?? ''}'.trim(), live: a['live'] == true),
+    );
+    final c = ref.read(audioCenterProvider);
+    return c.error == null
+        ? ToolOutput({'playing': true, 'title': title})
+        : ToolOutput({'error': 'Could not play it: ${c.error}'});
+  }
+
+  /// The Bible tools, through YouVersion's API.
+  Future<ToolOutput> _bibleTool(String name, Map<String, dynamic> a) async {
+    final bible = ref.read(bibleServiceProvider);
+    String str(String k) => '${a[k] ?? ''}'.trim();
+    Map<String, dynamic> version(BibleVersion v) => {
+      'version_id': v.id,
+      'abbreviation': v.short,
+      'title': v.name,
+      'language': v.languageTag,
+    };
+    String? copyright(BibleVersion v) {
+      final c = (v.copyright ?? '').trim();
+      return c.isEmpty ? null : (c.length > 300 ? '${c.substring(0, 300)}…' : c);
+    }
+
+    Future<Map<String, dynamic>> read(BibleRef r, BibleVersion v, {bool art = false}) async {
+      final p = await bible.read(v, r);
+      final pics = art && !r.wholeChapter && !r.crossesChapters ? await bible.images(r.passageId, max: 4) : const <({String url, String attribution})>[];
+      return {
+        'reference': p.reference,
+        'passage_id': r.passageId,
+        'text': p.text,
+        'version': version(v),
+        'link': BibleService.link(v, r.passageId),
+        'copyright': ?copyright(v),
+        if (pics.isNotEmpty) 'images': [for (final i in pics) {'url': i.url, 'attribution': i.attribution}],
+      };
+    }
+
+    try {
+      switch (name) {
+        case 'bible_passage':
+          final r = BibleRef.parse(str('reference'));
+          if (r == null) return ToolOutput({'error': 'Couldn\'t read "${str('reference')}" as a Bible reference. Use a form like "John 3:16" or "Psalm 23".'});
+          final v = await bible.version(str('version'), book: r.book.code);
+          return ToolOutput({
+            ...await read(r, v, art: a['images'] != false),
+            if (r.wholeChapter && r.endChapter == null) ...{
+              if (r.nextChapter != null) 'next': r.nextChapter!.label,
+              if (r.previousChapter != null) 'previous': r.previousChapter!.label,
+            },
+          });
+        case 'bible_chapter':
+          final book = findBook(str('book'));
+          if (book == null) return ToolOutput({'error': 'No book of the Bible called "${str('book')}".'});
+          final ch = ((a['chapter'] as num?)?.toInt() ?? 1);
+          if (ch < 1 || ch > book.chapters) return ToolOutput({'error': '${book.name} has ${book.chapters} chapters.'});
+          final r = BibleRef(book, ch);
+          final v = await bible.version(str('version'), book: book.code);
+          return ToolOutput({
+            ...await read(r, v),
+            'book': book.name,
+            'chapter': ch,
+            'chapters_in_book': book.chapters,
+            if (r.nextChapter != null) 'next': r.nextChapter!.label,
+            if (r.previousChapter != null) 'previous': r.previousChapter!.label,
+          });
+        case 'bible_compare':
+          final r = BibleRef.parse(str('reference'));
+          if (r == null) return ToolOutput({'error': 'Couldn\'t read "${str('reference')}" as a Bible reference.'});
+          final names = [for (final x in (a['versions'] as List? ?? const [])) '$x'.trim()].where((x) => x.isNotEmpty).take(5).toList();
+          if (names.length < 2) return const ToolOutput({'error': 'Give at least two versions to compare.'});
+          final out = <Map<String, dynamic>>[];
+          final failed = <String>[];
+          for (final n in names) {
+            try {
+              final v = await bible.version(n, book: r.book.code);
+              final p = await bible.read(v, r);
+              out.add({...version(v), 'text': p.text, 'link': BibleService.link(v, r.passageId)});
+            } catch (e) {
+              failed.add('$n: ${BibleService.explain(e)}');
+            }
+          }
+          return ToolOutput({
+            'reference': r.label,
+            'passage_id': r.passageId,
+            'translations': out,
+            if (failed.isNotEmpty) 'failed': failed,
+          });
+        case 'bible_search':
+          final q = str('query');
+          if (q.isEmpty) return const ToolOutput({'error': 'Give query.'});
+          final v = await bible.version(str('version'));
+          final found = await bible.search(v, q, limit: ((a['limit'] as num?)?.toInt() ?? 8).clamp(1, 20));
+          final results = <Map<String, dynamic>>[];
+          await Future.wait([
+            for (final (i, refText) in found.references.indexed)
+              () async {
+                final r = BibleRef.parse(refText);
+                if (r == null) return;
+                try {
+                  final p = await bible.read(v, r);
+                  results.add({'rank': i + 1, 'reference': p.reference, 'passage_id': r.passageId, 'text': p.text});
+                } catch (_) {}
+              }(),
+          ]);
+          results.sort((x, y) => (x['rank'] as int).compareTo(y['rank'] as int));
+          return ToolOutput({
+            'query': q,
+            'version': version(v),
+            'results': results,
+            if (found.didYouMean.isNotEmpty) 'did_you_mean': found.didYouMean,
+          });
+        case 'bible_verse_of_the_day':
+          final day = DateTime.tryParse(str('date')) ?? DateTime.now();
+          final votd = await bible.verseOfTheDay(day);
+          final r = BibleRef.parse(votd.passageId) ?? BibleRef.parse(verseOfTheDayFallback(day))!;
+          final v = await bible.version(str('version'), book: r.book.code);
+          return ToolOutput({
+            'date': day.toIso8601String().substring(0, 10),
+            ...await read(r, v),
+            'image': ?votd.image,
+          });
+        case 'bible_versions':
+          final lang = str('language');
+          final q = str('query').toLowerCase();
+          final everything = a['include_unlicensed'] == true;
+          final list = (await bible.versions(language: lang.isEmpty ? null : lang, everything: everything))
+              .where((b) => q.isEmpty || '${b.abbreviation} ${b.short} ${b.title} ${b.name}'.toLowerCase().contains(q))
+              .toList();
+          final limit = ((a['limit'] as num?)?.toInt() ?? 25).clamp(1, 80);
+          return ToolOutput({
+            'language': lang.isEmpty ? ref.read(bibleSettingsProvider).language : lang,
+            'count': list.length,
+            'readable': list.where((b) => b.licensed).length,
+            'versions': [for (final b in list.take(limit)) b.describe()],
+            'default_version_id': ?ref.read(bibleSettingsProvider).versionId,
+            if (!everything) 'note': 'Only versions licensed to the user\'s YouVersion app. include_unlicensed lists every version (NIV and others need their license accepted on platform.youversion.com).',
+          });
+        case 'bible_books':
+          final v = await bible.version(str('version'));
+          final books = await bible.books(v);
+          final known = {for (final b in bibleBooks) b.code: b};
+          Map<String, dynamic> row(({String code, String name, int chapters, String canon}) b) => {'code': b.code, 'name': b.name, 'chapters': b.chapters};
+          bool ot(({String code, String name, int chapters, String canon}) b) =>
+              known[b.code]?.oldTestament ?? b.canon.toLowerCase().startsWith('old');
+          bool nt(({String code, String name, int chapters, String canon}) b) =>
+              known[b.code] != null ? !known[b.code]!.oldTestament : b.canon.toLowerCase().startsWith('new');
+          return ToolOutput({
+            'version': version(v),
+            'old_testament': [for (final b in books) if (ot(b)) row(b)],
+            'new_testament': [for (final b in books) if (nt(b)) row(b)],
+            'other': [for (final b in books) if (!ot(b) && !nt(b)) row(b)],
+          });
+      }
+    } catch (e) {
+      return ToolOutput({'error': BibleService.explain(e)});
+    }
+    return ToolOutput({'error': 'Unknown tool $name'});
+  }
+
+  /// A `tools` argument: null when absent (every tool).
+  static ToolAllowlist? _toolsArgument(Object? raw, List<String> unknown) {
+    if (raw is! List || raw.isEmpty) return null;
+    final list = ToolAllowlist.parse(raw, unknown: unknown);
+    return list.isEmpty ? null : list;
+  }
+
+  Future<ToolOutput> _vaultTool(String name, Map<String, dynamic> a, Conversation c) async {
+    final vault = ref.read(vaultProvider.notifier);
+    await vault.ready;
+    String str(String k) => '${a[k] ?? ''}'.trim();
+    // Sensitive values stay out of runs another person's words could steer,
+    // and out of watches and routines.
+    final reveal = !_tainted.contains(c.id) && !_automatic.contains(c.id);
+    switch (name) {
+      case 'vault_list':
+        final cat = VaultCategory.values.asNameMap()[str('category')];
+        final items = vault.find(str('query')).where((i) => cat == null || i.category == cat).toList();
+        return ToolOutput({
+          'count': items.length,
+          'items': [
+            for (final i in items) {...i.describe(reveal: false), if (i.sensitive) 'value': i.masked},
+          ],
+          if (ref.read(vaultProvider).isEmpty) 'note': 'The vault is empty. The user adds items under Settings → Vault, or tells you to save them.',
+        });
+      case 'vault_get':
+        final byId = str('item_id').isEmpty ? null : vault.byId(str('item_id'));
+        final matches = byId != null ? [byId] : (str('query').isEmpty ? const <VaultItem>[] : vault.find(str('query')));
+        if (matches.isEmpty) return const ToolOutput({'error': 'Nothing in the vault matches. vault_list shows what is there.'});
+        final first = matches.first;
+        return ToolOutput({
+          ...first.describe(reveal: reveal),
+          if (first.sensitive && !reveal)
+            'withheld_because': 'This run read text from other people, or was started by a watch or routine. Ask the user in a chat of their own.',
+          if (matches.length > 1) 'matches': [for (final m in matches.skip(1).take(5)) {'item_id': m.id, 'label': m.label}],
+        });
+      case 'vault_save':
+        final cat = VaultCategory.values.asNameMap()[str('category')];
+        final lower = '${str('label')} ${str('value')}'.toLowerCase();
+        if (RegExp(r'password|passcode|\bpin\b|cvv|cvc|security code').hasMatch(lower) ||
+            RegExp(r'\b(?:\d[ -]?){13,19}\b').hasMatch(str('value')) && cat != VaultCategory.identity && cat != VaultCategory.account) {
+          return const ToolOutput({'error': 'The vault doesn\'t keep passwords, PINs, card numbers or security codes. Tell the user to use a password manager.'});
+        }
+        final id = str('item_id');
+        if (id.isNotEmpty) {
+          final updated = await vault.update(
+            id,
+            (i) => i.copyWith(
+              label: a['label'] == null ? null : str('label'),
+              value: a['value'] == null ? null : str('value'),
+              category: cat,
+              note: a['note'] == null ? null : str('note'),
+              sensitive: a['sensitive'] is bool ? a['sensitive'] as bool : null,
+            ),
+          );
+          if (updated == null) return const ToolOutput({'error': 'No vault item with that id.'});
+          return ToolOutput({'saved': true, 'created': false, ...updated.describe(reveal: false)..remove('value')});
+        }
+        if (str('label').isEmpty || str('value').isEmpty) return const ToolOutput({'error': 'Give label and value.'});
+        final item = await vault.add(
+          label: str('label'),
+          value: str('value'),
+          category: cat ?? VaultCategory.other,
+          note: str('note'),
+          sensitive: a['sensitive'] == true,
+          byAssistant: true,
+        );
+        return ToolOutput({'saved': true, 'created': true, ...item.describe(reveal: false)..remove('value')});
+      case 'vault_delete':
+        return await vault.remove(str('item_id'))
+            ? const ToolOutput({'deleted': true})
+            : const ToolOutput({'error': 'No vault item with that id.'});
+    }
+    return ToolOutput({'error': 'Unknown tool $name'});
+  }
+
+  Future<ToolOutput> _routineTool(String name, Map<String, dynamic> a, Conversation c) async {
+    final store = ref.read(routineStoreProvider.notifier);
+    await store.ready;
+    String str(String k) => '${a[k] ?? ''}'.trim();
+    switch (name) {
+      case 'list_routines':
+        final all = ref.read(routineStoreProvider);
+        return ToolOutput({
+          'count': all.length,
+          'routines': [for (final r in all) r.describe()],
+          if (all.isEmpty) 'note': 'No routines yet. The user builds them under Settings → Routines, or you can with create_routine.',
+        });
+      case 'run_routine':
+        final r = store.byId(str('routine_id'));
+        if (r == null) return const ToolOutput({'error': 'No routine with that id.'});
+        if (_automatic.contains(c.id) && r.runId == _runningAs[c.id]) {
+          return const ToolOutput({'error': 'A routine can\'t run itself.'});
+        }
+        final run = await ref.read(routineRunnerProvider).run(r, trigger: 'Asked in chat');
+        return ToolOutput({
+          'routine': r.name,
+          'ok': run.ok,
+          'steps': [for (final s in run.steps) s.toJson()..remove('step')],
+          'error': ?run.error,
+          if (run.stoppedEarly) 'stopped_early': true,
+        });
+      case 'create_routine':
+        final trigger = switch (str('trigger')) {
+          'daily' => RoutineTriggerKind.daily,
+          'interval' => RoutineTriggerKind.interval,
+          'phone' => RoutineTriggerKind.device,
+          _ => RoutineTriggerKind.manual,
+        };
+        final phone = trigger == RoutineTriggerKind.device ? phoneConditionFrom(a) : null;
+        if (phone?.error != null) return ToolOutput({'error': phone!.error});
+        final unknown = <String>[];
+        final tools = _toolsArgument(a['tools'], unknown);
+        if (unknown.isNotEmpty) return ToolOutput({'error': 'Unknown tools or categories: ${unknown.join(', ')}.'});
+        final steps = <RoutineStep>[];
+        for (final (i, raw) in (a['steps'] as List? ?? const []).indexed) {
+          if (raw is! Map) continue;
+          final j = Map<String, dynamic>.from(raw);
+          j['test'] = switch ('${j['test'] ?? ''}') {
+            'not_contains' => 'notContains',
+            'is_empty' => 'isEmpty',
+            'not_empty' => 'notEmpty',
+            final t => t,
+          };
+          if (j['otherwise'] == 'skip_next') j['otherwise'] = 'skipNext';
+          final s = RoutineStep.fromJson({...j, 'id': RoutineStore.newStepId()});
+          if (s.kind == RoutineStepKind.tool) {
+            final t = toolNamed(s.tool);
+            if (t == null) return ToolOutput({'error': 'Step ${i + 1}: no tool named "${s.tool}".'});
+            if (t.destructive || t.alwaysAsk) {
+              return ToolOutput({'error': 'Step ${i + 1}: ${t.name} deletes or spends, so it can\'t be a tool step. Use an ask step.'});
+            }
+          }
+          steps.add(s);
+        }
+        if (steps.isEmpty) return const ToolOutput({'error': 'Give at least one step.'});
+        final days = {for (final d in (a['days'] as List? ?? const [])) if (d is num && d >= 1 && d <= 7) d.toInt()};
+        final r = await store.add(
+          (id) => Routine(
+            id: id,
+            name: str('name').isEmpty ? 'Routine' : str('name'),
+            description: str('description'),
+            createdAt: DateTime.now(),
+            trigger: RoutineTrigger(
+              kind: trigger,
+              at: RegExp(r'^\d{1,2}:\d{2}$').hasMatch(str('at')) ? str('at').padLeft(5, '0') : '08:00',
+              days: days.isEmpty ? const {1, 2, 3, 4, 5, 6, 7} : days,
+              everyMinutes: ((a['every_minutes'] as num?)?.toInt() ?? 60).clamp(15, 7 * 24 * 60),
+              device: phone?.condition,
+            ),
+            steps: steps,
+            model: str('model').isEmpty ? WatchModel.free : str('model'),
+            tools: tools,
+            conversationId: c.entries.isEmpty || _hidden.contains(c.id) ? null : c.id,
+          ),
+        );
+        return ToolOutput({
+          'created': true,
+          ...r.describe(),
+          if (!ref.read(settingsProvider).proactive && trigger != RoutineTriggerKind.manual)
+            'note': 'Proactivity is off in Settings, so it won\'t start on its own until the user turns it on.',
+        });
+      case 'update_routine':
+        final r = await store.update(
+          str('routine_id'),
+          (r) => r.copyWith(enabled: a['enabled'] is bool ? a['enabled'] as bool : null, name: str('name').isEmpty ? null : str('name')),
+        );
+        return r == null
+            ? const ToolOutput({'error': 'No routine with that id.'})
+            : ToolOutput({'updated': true, 'routine_id': r.id, 'name': r.name, 'enabled': r.enabled});
+      case 'delete_routine':
+        return await store.remove(str('routine_id'))
+            ? const ToolOutput({'deleted': true})
+            : const ToolOutput({'error': 'No routine with that id.'});
+    }
+    return ToolOutput({'error': 'Unknown tool $name'});
+  }
+
+  /// The vault's items for the instructions, when the vault tools are on.
+  Future<String> _vaultPrompt(List<TelegramTool> offered) async {
+    if (!offered.any((t) => t.category == ToolCategory.vault)) return '';
+    await ref.read(vaultProvider.notifier).ready;
+    final p = ref.read(vaultProvider.notifier).prompt();
+    return p == null ? '' : '$p\n';
+  }
+
+  static ActivitySource _sourceOf(Watch? watch) => watch == null
+      ? ActivitySource.chat
+      : watch.id.startsWith('job-')
+      ? ActivitySource.job
+      : watch.id.startsWith('routine-')
+      ? ActivitySource.routine
+      : ActivitySource.watch;
+
+  /// Writes an action (or an attempt) to the activity log.
+  void _logAction(
+    TelegramTool tool,
+    ToolPart part,
+    Conversation c,
+    Watch? watch, {
+    required ActivityApproval approval,
+    required ActivityOutcome outcome,
+    String? account,
+    Map<String, dynamic> result = const {},
+    List<PostSnapshot> posts = const [],
+    ActivitySource? source,
+    ActivityKind? kind,
+  }) {
+    final chat = result['chat'] ?? (posts.isEmpty ? null : posts.first.chatTitle);
+    final error = result['error'];
+    final summary = [
+      tool.label,
+      if (chat is String && chat.isNotEmpty) 'in $chat',
+      if (posts.length > 1 && sendsMessages(tool.name)) '(${posts.length} messages)',
+      if (outcome == ActivityOutcome.failed && error != null) '— failed: $error',
+    ].join(' ');
+    final undo = outcome == ActivityOutcome.done
+        ? undoFor(tool.name, part.args, result, [for (final p in posts) (p.chatId, p.messageId)])
+        : null;
+    unawaited(
+      ref.read(activityLogProvider.notifier).record(
+        tool: tool.name,
+        toolLabel: tool.label,
+        source: source ?? _sourceOf(watch),
+        sourceName: watch?.name,
+        // Briefs and routine tool steps run in conversations nobody can open.
+        conversationId: _hidden.contains(c.id) || c.id.startsWith('routine-step-') ? null : c.id,
+        account: account,
+        approval: approval,
+        outcome: outcome,
+        arguments: part.arguments,
+        result: result.isEmpty ? (part.result ?? '') : jsonEncode(result),
+        summary: summary,
+        durationMs: part.durationMs,
+        undo: undo,
+        destructive: tool.destructive,
+        kind: kind,
+      ),
+    );
+  }
+
+  /// Reading tools whose calls the activity log keeps as data access: the
+  /// phone's texts, calls, contacts and clipboard, money, connected apps
+  /// (email, calendar, docs…) and the vault. Reading Telegram isn't logged:
+  /// it's what almost every question does.
+  static bool _readsPersonalData(TelegramTool t) => switch (t.category) {
+    ToolCategory.finance ||
+    ToolCategory.callHistory ||
+    ToolCategory.gmail ||
+    ToolCategory.outlook ||
+    ToolCategory.calendar ||
+    ToolCategory.googleDocs ||
+    ToolCategory.slack ||
+    ToolCategory.notion ||
+    ToolCategory.githubAccount ||
+    ToolCategory.linear ||
+    ToolCategory.todoist ||
+    ToolCategory.apps ||
+    ToolCategory.vault ||
+    ToolCategory.finance ||
+    ToolCategory.callHistory => true,
+    ToolCategory.device => const {'read_sms', 'call_log', 'phone_contacts', 'read_clipboard'}.contains(t.name),
+    _ => false,
+  };
+
+  /// Takes back what [e] did, when it can be. Returns why not, or null.
+  Future<String?> undoActivity(ActivityEntry e) async {
+    final u = e.undo;
+    if (u == null || !e.canUndo) return 'This can\'t be undone.';
+    final log = ref.read(activityLogProvider.notifier);
+    String? problem;
+    try {
+      switch (u.kind) {
+        case UndoKind.deleteMessages:
+          final account = e.account ?? defaultAiAccount(ref.read(accountsProvider));
+          final byChat = <int, List<int>>{};
+          for (final (chat, id) in u.messages) {
+            (byChat[chat] ??= []).add(id);
+          }
+          for (final MapEntry(key: chat, value: ids) in byChat.entries) {
+            await ref.read(telegramClientFamily(account)).send<td.Ok>(td.DeleteMessages(chatId: chat, messageIds: ids, revoke: true));
+          }
+        case UndoKind.rerunTool:
+          final account = e.account ?? defaultAiAccount(ref.read(accountsProvider));
+          final out = await ref.read(toolRunnerFamily(account)).run(u.tool!, withoutAccount(u.args));
+          if (out.json['error'] != null) problem = '${out.json['error']}';
+        case UndoKind.removeLocal:
+          final id = u.localId ?? '';
+          final ok = switch (u.localKind) {
+            'watch' => await ref.read(watchStoreProvider.notifier).remove(id),
+            'reminder' => await ref.read(reminderStoreProvider.notifier).remove(id),
+            'vault' => await ref.read(vaultProvider.notifier).remove(id),
+            'routine' => await ref.read(routineStoreProvider.notifier).remove(id),
+            'memory' => await () async {
+              final forget = (await ref.read(aiProvider).memory.tools()).where((t) => t.name == 'forget_memory').firstOrNull;
+              if (forget == null) return false;
+              final r = await forget.execute!({'memory_id': id});
+              return !(r is Map && r['error'] != null);
+            }(),
+            _ => false,
+          };
+          if (!ok) problem = 'It was already gone.';
+      }
+    } catch (err) {
+      problem = '$err';
+    }
+    await log.markUndone(e.id, error: problem);
+    return problem;
+  }
+
+  /// Runs one tool for a routine's "run a tool" step: no AI, no approval
+  /// card (the user set the step up themselves), but the tool switches,
+  /// read-only mode and the activity log apply as for any call. Tools that
+  /// delete or spend can't be routine steps.
+  Future<Map<String, dynamic>> runRoutineTool(String name, Map<String, dynamic> args, {required Routine routine}) async {
+    final tool = toolNamed(name);
+    if (tool == null) return {'error': 'No tool named $name.'};
+    if (tool.destructive || tool.alwaysAsk) {
+      return {'error': '${tool.label} deletes or spends, so it can\'t be a routine step. Use an "Ask the assistant" step, which asks you first.'};
+    }
+    final settings = ref.read(settingsProvider);
+    if (!tool.isOn(settings)) {
+      return {
+        'error': settings.readOnlyMode && tool.modifiesData
+            ? 'Read-only mode is on in Settings: nothing can be sent or changed.'
+            : '${tool.label} is turned off in Settings → Tools.',
+      };
+    }
+    if (_memoryTools.contains(name) || capabilityToolNames.contains(name) || name == 'run_routine') {
+      return {'error': '${tool.label} can only run inside an "Ask the assistant" step.'};
+    }
+    final job = Watch(
+      id: routine.runId,
+      name: routine.name,
+      scope: WatchScope.schedule,
+      mode: WatchMode.act,
+      createdAt: routine.createdAt,
+    );
+    final c = Conversation(id: 'routine-step-${_uuid.v4()}', title: routine.name);
+    final accounts = ref.read(accountsProvider);
+    final account = isAccountTool(tool) ? accountForCall(accounts, args) : defaultAiAccount(accounts);
+    final part = ToolPart(callId: _uuid.v4(), name: name, arguments: jsonEncode(args));
+    final clock = Stopwatch()..start();
+    ToolOutput out;
+    try {
+      if (_localTools.contains(name) || financeToolNames.contains(name) || callHistoryToolNames.contains(name) || infoToolNames.contains(name) || safetyToolNames.contains(name) || screenToolNames.contains(name)) {
+        out = await _runLocalTool(name, withoutAccount(args), c, account: account);
+      } else if (canvasToolNames.contains(name)) {
+        out = await runCanvasTool(ref, name, withoutAccount(args), account: account);
+      } else if (name == generateImageTool.name) {
+        out = await _generateImage(args, c);
+      } else {
+        out = await ref.read(toolRunnerFamily(account)).run(name, withoutAccount(args));
+      }
+    } on ArgumentError catch (e) {
+      out = ToolOutput({'error': '${e.message}'});
+    } catch (e) {
+      out = ToolOutput({'error': 'The tool failed: $e'});
+    }
+    part
+      ..result = out.encode()
+      ..durationMs = clock.elapsedMilliseconds;
+    if (tool.modifiesData || _readsPersonalData(tool)) {
+      _logAction(
+        tool,
+        part,
+        c,
+        job,
+        approval: tool.modifiesData ? ActivityApproval.routineStep : ActivityApproval.notNeeded,
+        outcome: out.json.containsKey('error') ? ActivityOutcome.failed : ActivityOutcome.done,
+        account: isAccountTool(tool) ? account : null,
+        result: out.json,
+        posts: out.posts,
+        kind: tool.modifiesData ? null : ActivityKind.access,
+      );
+    }
+    return out.json;
+  }
 
   /// What the model should know about installed skills and MCP servers,
   /// when their tools are offered.
@@ -1337,6 +2102,13 @@ class ChatController extends Notifier<ChatState> {
         ..result = jsonEncode({'error': why});
       return const omni.ToolApprovalDecision.deny(why);
     }
+    // Say on the card when it waits only because of outside text.
+    if (!(_mustAsk(tool, watch, c, part.args) && callNeedsApproval(tool, part.args)) && _heldByTaint(tool, c, part.args)) {
+      _heldForSafety.add(part.callId);
+    }
+    // And when it would send something from the vault.
+    final shared = _vaultIn(tool, c, part.args);
+    if (shared.isNotEmpty) _heldForVault[part.callId] = [for (final i in shared) i.label];
     part.status = ToolStatus.awaitingApproval;
     final decision = _approvals[part.callId] = Completer<bool>();
     _touch(c);
@@ -1346,18 +2118,32 @@ class ChatController extends Notifier<ChatState> {
             .read(appNotifierProvider)
             .show(
               'Approval needed · ${watch.name}',
-              '${tool.label}. Open to approve or decline.',
+              _heldForVault.containsKey(part.callId)
+                  ? '${tool.label}, with ${_heldForVault[part.callId]!.join(', ')} from your vault. Open to check it.'
+                  : _heldForSafety.contains(part.callId)
+                  ? '${tool.label}, after reading messages from other people. Open to check it.'
+                  : '${tool.label}. Open to approve or decline.',
               conversationId: c.id,
             ),
       );
     }
     if (!await decision.future) {
+      _heldForVault.remove(part.callId);
       const why =
           'The user declined. Nothing was done. Don\'t retry unless they ask.';
       part
         ..status = ToolStatus.denied
         ..result = jsonEncode({'error': why});
       _touch(c);
+      _logAction(
+        tool,
+        part,
+        c,
+        watch,
+        approval: ActivityApproval.declined,
+        outcome: ActivityOutcome.declined,
+        account: isAccountTool(tool) ? accountForCall(_accountsFor(c.id), part.args) : null,
+      );
       return const omni.ToolApprovalDecision.deny(why);
     }
     final edit = _approvalEdits.remove(part.callId);
@@ -1468,10 +2254,23 @@ class ChatController extends Notifier<ChatState> {
       part
         ..status = ToolStatus.error
         ..result = jsonEncode(out);
+      if (tool.modifiesData) {
+        _logAction(tool, part, c, watch, approval: ActivityApproval.blocked, outcome: ActivityOutcome.blocked, account: accountId, result: out);
+      }
       return omni.ToolOutput(out);
     }
-    if (tool.requiresApproval && !_asked.remove(callId))
+    final tapped = _asked.remove(callId);
+    if (!tapped && tool.requiresApproval)
       part.autoApproved = true;
+    final approval = tapped
+        ? ActivityApproval.tapped
+        : _ruleFor(tool, part.args, accountId) != null
+        ? ActivityApproval.rule
+        : tool.requiresApproval && callNeedsApproval(tool, part.args)
+        ? ActivityApproval.setting
+        : ActivityApproval.notNeeded;
+    _heldForSafety.remove(callId);
+    _heldForVault.remove(callId);
     part.status = ToolStatus.running;
     _touch(c);
     _resolveFiles(part, c);
@@ -1494,7 +2293,7 @@ class ChatController extends Notifier<ChatState> {
         return _generateCreativeAudio(part.args, music: false);
       if (part.name == generateMusicTool.name)
         return _generateCreativeAudio(part.args, music: true);
-      if (_localTools.contains(part.name))
+      if (_localTools.contains(part.name) || financeToolNames.contains(part.name) || callHistoryToolNames.contains(part.name) || infoToolNames.contains(part.name) || safetyToolNames.contains(part.name) || screenToolNames.contains(part.name))
         return _runLocalTool(part.name, withoutAccount(part.args), c, account: runAccount);
       if (capabilityToolNames.contains(part.name))
         return _runCapability(part.name, part.args, c);
@@ -1514,7 +2313,8 @@ class ChatController extends Notifier<ChatState> {
     final cancel = _toolCancels[part.callId] = Completer<ToolOutput>();
     ToolOutput out;
     try {
-      out = await Future.any([work(), cancel.future]);
+      // Tagged with the call, so a download shows its progress on this card.
+      out = await Future.any([runForToolCall(part.callId, work), cancel.future]);
     } catch (e) {
       // A tool that fails unexpectedly fails alone, not the whole answer.
       out = ToolOutput({
@@ -1522,6 +2322,8 @@ class ChatController extends Notifier<ChatState> {
       });
     } finally {
       _toolCancels.remove(part.callId);
+      // A stopped tool's download or upload stops too.
+      unawaited(DownloadProgress.cancelFor(part.callId));
     }
     for (final p in out.posts) {
       c.posts[p.key] = p;
@@ -1534,7 +2336,25 @@ class ChatController extends Notifier<ChatState> {
           : ToolStatus.done
       ..durationMs = timer.elapsedMilliseconds;
     _touch(c);
-    return omni.ToolOutput(out.json, modelFiles: await _imagesFor(out.json));
+    if (tool.modifiesData || _readsPersonalData(tool)) {
+      _logAction(
+        tool,
+        part,
+        c,
+        watch,
+        approval: approval,
+        outcome: out.json.containsKey('error') ? ActivityOutcome.failed : ActivityOutcome.done,
+        account: accountId,
+        result: out.json,
+        posts: out.posts,
+        kind: tool.modifiesData ? null : ActivityKind.access,
+      );
+    }
+    // The model sees other people's words fenced off, and the turn is
+    // tainted from here on.
+    final view = fenceToolResult(tool.name, out.json);
+    if (view.external) _tainted.add(c.id);
+    return omni.ToolOutput(view.json, modelFiles: await _imagesFor(out.json));
   }
 
   /// A tool's complete response as stored with the conversation; very large
@@ -1607,8 +2427,16 @@ class ChatController extends Notifier<ChatState> {
           'folder' => WatchScope.folder,
           'schedule' => WatchScope.schedule,
           'app' => WatchScope.app,
+          'phone' => WatchScope.device,
           _ => WatchScope.chats,
         };
+        final phone = scope == WatchScope.device ? phoneConditionFrom(a) : null;
+        if (phone != null && phone.error != null) return ToolOutput({'error': phone.error});
+        final unknownTools = <String>[];
+        final picked = _toolsArgument(a['tools'], unknownTools);
+        if (unknownTools.isNotEmpty) {
+          return ToolOutput({'error': 'Unknown tools or categories: ${unknownTools.join(', ')}. Use tool names, categories or areas (Telegram, Apps & web, Device).'});
+        }
         if (scope.needsTelegram && allAccounts.signedIn.isEmpty &&
             ref.read(telegramClientProvider).authState
                 is! td.AuthorizationStateReady) {
@@ -1660,6 +2488,9 @@ class ChatController extends Notifier<ChatState> {
             folderAccountId: scope == WatchScope.folder
                 ? (scopeAccounts?.length == 1 ? scopeAccounts!.first : account)
                 : null,
+            device: phone?.condition,
+            tools: picked,
+            model: str('model').isEmpty ? WatchModel.free : str('model'),
           ),
         );
         final settings = ref.read(settingsProvider);
@@ -1679,6 +2510,12 @@ class ChatController extends Notifier<ChatState> {
           ],
         });
       case 'update_watch':
+        final unknownTools = <String>[];
+        final allTools = a['tools'] is List && (a['tools'] as List).any((t) => '$t'.trim().toLowerCase() == 'all');
+        final picked = allTools ? null : _toolsArgument(a['tools'], unknownTools);
+        if (unknownTools.isNotEmpty) {
+          return ToolOutput({'error': 'Unknown tools or categories: ${unknownTools.join(', ')}.'});
+        }
         final w = await watches.update(
           str('watch_id'),
           (w) => w.copyWith(
@@ -1697,6 +2534,9 @@ class ChatController extends Notifier<ChatState> {
             notify: a['notify'] is bool ? a['notify'] as bool : null,
             accountIds: scopeAccounts,
             allAccounts: a.containsKey('accounts') && scopeAccounts == null,
+            tools: picked,
+            allTools: allTools,
+            model: str('model').isEmpty ? null : str('model'),
           ),
         );
         return w == null
@@ -1753,6 +2593,24 @@ class ChatController extends Notifier<ChatState> {
           'list_widgets' ||
           'delete_widget':
         return _widgetTool(name, a);
+      case _ when financeToolNames.contains(name):
+        return runFinanceTool(ref, name, a);
+      case _ when callHistoryToolNames.contains(name):
+        return runCallHistoryTool(name, a);
+      case _ when infoToolNames.contains(name):
+        return runInfoTool(name, a);
+      case _ when safetyToolNames.contains(name):
+        return runSafetyTool(ref.read, name, a, account: account);
+      case _ when screenToolNames.contains(name):
+        return runScreenTool(name, a);
+      case 'bible_passage' || 'bible_chapter' || 'bible_compare' || 'bible_verse_of_the_day' || 'bible_versions' || 'bible_books' || 'bible_search':
+        return _bibleTool(name, a);
+      case 'play_audio':
+        return _playAudio(a);
+      case 'vault_list' || 'vault_get' || 'vault_save' || 'vault_delete':
+        return _vaultTool(name, a, c);
+      case 'list_routines' || 'run_routine' || 'create_routine' || 'update_routine' || 'delete_routine':
+        return _routineTool(name, a, c);
       case 'delete_watch':
         if (watches.byId(str('watch_id'))?.builtIn ?? false) {
           return const ToolOutput({
@@ -2049,10 +2907,7 @@ class ChatController extends Notifier<ChatState> {
           : 'files.zip';
     if (!name.toLowerCase().endsWith('.zip')) name = '$name.zip';
     name = name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
-    final dir = Directory(
-      '${(await getApplicationSupportDirectory()).path}/generated',
-    );
-    if (!await dir.exists()) await dir.create(recursive: true);
+    final dir = await generatedDir(folder: 'exports');
     final out = '${dir.path}/${_uuid.v4().substring(0, 8)}_$name';
     final known = sendableFiles(c);
     final encoder = ZipFileEncoder()..create(out);
@@ -2587,8 +3442,15 @@ class ChatController extends Notifier<ChatState> {
   }
 
   static const _deviceNote =
-      '- The phone itself (Device tools): device_info, device_battery, network_info, installed_apps, read_sms (verification codes, bank and delivery texts), call_log and phone_contacts read; make_call, send_sms, flashlight, vibrate, device_volume, ringer_mode, media_control, set_alarm, set_timer, open_app, open_device_settings, write_clipboard ask first. '
+      '- The phone itself (Device tools): device_info, device_battery, network_info, installed_apps, read_sms (verification codes, bank and delivery texts) and phone_contacts read (the call log is under Call history: call_history_calls); make_call, send_sms, flashlight, vibrate, device_volume, ringer_mode, media_control, set_alarm, set_timer, open_app, open_device_settings, write_clipboard ask first. '
       'Find a number with phone_contacts before calling or texting someone by name. Android asks the user for permission the first time a tool needs one; if it was refused, say how to allow it (Settings → Permissions).\n';
+
+  static const _financeNote =
+      '- Money (finance tools, after the Totals app): finance_sync_sms reads bank and wallet texts (CBE, Telebirr, Awash, BOA, Dashen, M-Pesa and more) into transactions and balances; finance_overview, finance_accounts, finance_transactions, finance_summary (charts by period, categories, payees, balance over time), finance_insights (health score, recurring, unusual spending, projection), finance_budgets read; accounts, transactions, budgets and categories can be added and changed. '
+      'Every finance call shows the user a card, so make one call that answers exactly what was asked, filtered to it: one account is finance_accounts with account_id; spending is finance_summary view spending, or finance_transactions with type expense for the list; '
+      'categories, payees, income and balance are their own finance_summary views; recurring, unusual and next month are finance_insights views. Use finance_overview or view "all" only when the user asks for the whole picture, and don\'t add cards they didn\'t ask for. '
+      'Answer with the few numbers that matter rather than repeating the card. Sync first when the last sync is old. '
+      'Call history (Android): call_history_summary with view overview, missed, people or patterns; call_history_person for one contact; call_history_calls for a filtered list. Pick the narrowest one, as with money. Amounts are in the currency the tools return (ETB by default).\n';
 
   /// What the model should know about the user's Cloudflare and E2B.
   String _cloudNote(AppSettings s) => [
@@ -2660,6 +3522,7 @@ You are Triangle, an assistant that explores and helps manage the user's own Tel
 User: ${me == null ? 'unknown' : '${me.firstName} ${me.lastName}'.trim()}${me == null ? '' : ' (user id ${me.id}; their Saved Messages chat_id is ${me.id})'}. Local time now: ${now.toIso8601String().substring(0, 16)} (${now.timeZoneName}).$accountsNote
 ${custom.isEmpty ? '' : '\nThe user\'s standing instructions (follow them):\n$custom\n'}
 How to work:
+$externalContentRule
 - Use tools to answer; never invent chats, counts or messages. Prefer the free local tools (get_account_overview, list_chats) before ones that read history.
 - Questions about which AI model is selected for chat, decisions, images, video or audio: call get_model_settings. The user picks them under Settings > AI & models.
 - "Today" means since local midnight, ${(now.hour + now.minute / 60).toStringAsFixed(1)} hours ago. Pick since_hours accordingly.
@@ -2686,13 +3549,14 @@ ${dangerOn.isEmpty ? "- Deleting, leaving, blocking and banning are turned off. 
 - Member tags: promote_member's title and set_member_tag set the tag shown by a member's name; member lists and messages show tags (sender_tag).
 - Welcome messages for people joining a group or channel: list_welcome_messages, set_welcome_message, delete_welcome_message.
 - Private notes on contacts, seen only by the user in Telegram: set_private_note, get_private_note (get_chat_info shows them too). Offer to save one when the user tells you something worth remembering about a person.
+- Long-term memory: you may save with remember without being asked, but only what will clearly help in later conversations (a lasting preference, who someone is to the user, a standing request, a correction to how you work). Skip one-off details and anything already saved; say so in a few words when you save.
 - Profile music: get_profile_music (anyone's), add_profile_music / remove_profile_music (the user's).
 - Ephemeral messages: get_bot_commands shows a bot's ephemeral commands; send_ephemeral_command sends one so only the bot sees it and only the user sees its answer. Messages marked "only you can see this" are ephemeral.
 - Bots that stream their answers show it live in the chat; stop_bot_reply stops one that is still writing.
-- Account: list_blocked (unblock with block_user when on), add_contact, get_stories, set_draft (leaves text in a chat's box without sending), start_bot.
+- Account: list_blocked (unblock with block_user when on), add_contact, list_stories, set_draft (leaves text in a chat's box without sending), start_bot.
 - Content Canvas (the user's own folders of saved posts, on the phone): canvas_overview first, then canvas_create_folder, canvas_add (refs from earlier results; one call per folder when classifying), canvas_add_note, canvas_move, canvas_remove, canvas_update_folder, canvas_delete_folder, canvas_export (a folder as JSON, Markdown, HTML or PDF; send the file with send_message). To "organise posts into folders", read them, decide the categories, then file each group.
 - Briefs: list_briefs and read_brief show the morning, night and on-demand briefs already written.
-${me == null ? '- Telegram is not connected, so there are no Telegram tools. If the user asks about their chats, say they can connect Telegram under Settings → Apps & web → Telegram; meanwhile help with everything else.\n' : ''}${_appsNote(settings)}${_cloudNote(settings)}${Platform.isAndroid ? _deviceNote : ''}- forward_message can send to several chats at once with to_chat_ids.
+${me == null ? '- Telegram is not connected, so there are no Telegram tools. If the user asks about their chats, say they can connect Telegram under Settings → Apps & web → Telegram; meanwhile help with everything else.\n' : ''}${_appsNote(settings)}${_cloudNote(settings)}${Platform.isAndroid ? _deviceNote : ''}${_financeNote}- forward_message can send to several chats at once with to_chat_ids.
 - Files and voice in Telegram messages: download_message_file gets any document, PDF, photo, video, sticker or GIF a message carries (text files come back as text, pictures are shown to you); transcribe_message says what a voice note, audio or video says. Never say you can't open or hear them.
 - Stickers and GIFs: view_stickers_and_gifs shows you stickers and GIFs from the sticker and GIF tools before you pick one to send with send_sticker or send_gif; view_image shows one inside a message.
 - The user may send voice messages: you get a transcript or the audio itself. Act on what they say; the recording can also be sent on to a chat with send_voice_message.
@@ -2712,9 +3576,11 @@ ${me == null ? '- Telegram is not connected, so there are no Telegram tools. If 
 - Account: list_sessions / end_session (log out unknown devices), set_session_options, get_privacy / set_privacy, get_profile / edit_profile, account_health (a security check-up: run it when asked if the account is safe).
 - t.me links: open_telegram_link resolves any Telegram link (chat, message, invite, story, bot) to ids the other tools use. search_all_chats finds photos, files, links, music, voice… across every chat. inline_bot_query + send_inline_result use inline bots (@gif, @wiki…). list_message_effects + send_message(effect_id) send with an animated effect.
 - This phone: storage_report / clean_storage (Telegram's cache), data_usage.
+- Markets, weather and travel: crypto_prices, crypto_coin, crypto_trending, stock_quote, stock_search, currency_convert, weather, flight_status, flight_search, public_holidays. Each shows the user a card with charts, so keep your answer short and add what the card doesn't say. Never give investment advice; say prices may be delayed.
 - Books: search_books, book_details (shows the cover), find_free_copy, download_book. Only legal sources: Open Library, Project Gutenberg, Standard Ebooks, Internet Archive public-domain scans, Google Books free ebooks. Never look for or link pirated copies (Z-Library, Library Genesis, Anna's Archive and the like); for books under copyright, point to libraries, borrowing on Open Library, or shops.
 - Read receipts: message_read_status says whether the user's messages were read (and when, in private chats; who viewed them, in small groups). Telegram never reveals whether someone opened a chat, or whether they blocked the user: say so rather than guess. online_alert / list_online_alerts notify the user when someone comes online.
 - Music: music_search (songs, albums or artists, with 30-second previews), music_album (tracks), music_artist (bio, origin, albums). Movies: movie_search, movie_details (synopsis, director, rating, trailer, Wikipedia summary). TV: tv_search, tv_show (seasons, cast, next episode; season for its episodes). Free public catalogues; nothing is downloaded. Don't quote song lyrics.
+- Research papers (ScholarXIV): paper_search (arXiv: topics, titles, authors, categories like cs.CL; sort newest for recent work), paper_search_everywhere (eleven sources incl. PubMed, OpenAlex, Semantic Scholar, Crossref; journal articles, medicine, citation counts), paper_details, paper_recommendations, paper_author and paper_venue take a paper's id from those results or any arXiv id, DOI or link. The user sees paper cards with abstracts and links, so answer with a short synthesis instead of re-listing every paper; never invent papers or citations.
 - YouTube: youtube_search, youtube_video (details, description, chapters, thumbnail), youtube_transcript (often refused by YouTube; then work from the description), youtube_channel, youtube_playlist. Videos aren't downloaded.
 - X (Twitter): x_post and x_profile read public posts and profiles without an account. Timelines, search and posting need the user signed in to x.com in the app's browser (browser_open).
 - Some tools may be turned off by the user. Work with the ones you have.
@@ -2791,9 +3657,10 @@ How to answer:
                   omni.ToolResultPart(
                     toolCallId: t.callId,
                     toolName: t.name,
-                    output: old && t.result!.length > 6000
-                        ? '${t.result!.substring(0, 6000)}… [trimmed]'
-                        : t.result!,
+                    output: () {
+                      final text = fenceToolResultText(t.name, t.result!);
+                      return old && text.length > 6000 ? '${text.substring(0, 6000)}… [trimmed]' : text;
+                    }(),
                   ),
               ]),
             );

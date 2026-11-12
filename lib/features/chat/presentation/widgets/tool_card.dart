@@ -11,6 +11,7 @@ import 'package:handy_tdlib/api.dart' as td;
 import 'package:image_picker/image_picker.dart';
 
 import '../../../../app/theme.dart';
+import '../../../../core/files/download_progress.dart';
 import '../../../telegram/data/telegram_store.dart';
 import '../../../telegram/presentation/message_tile.dart';
 import '../../../telegram/data/telegram_tools.dart';
@@ -23,9 +24,13 @@ import 'json_tree.dart';
 import 'rich_results.dart';
 import 'tool_controls.dart';
 import 'tool_result_view.dart';
+import '../../../assistant/approval_rules.dart';
+import '../../../assistant/untrusted.dart';
+import '../../../../core/widgets/app_sheet.dart';
 import '../../../../infrastructure/telegram/accounts.dart';
 import '../../../account/account_switcher.dart';
 import '../../../telegram/data/account_tools.dart';
+import 'utility_result_cards.dart' show SpeedTestPanel;
 
 IconData toolIcon(String name) => switch (name) {
   'jev_box' => Icons.crop_free_rounded,
@@ -57,6 +62,24 @@ IconData toolIcon(String name) => switch (name) {
   'search_messages' => Icons.search_rounded,
   'get_message' => Icons.chat_bubble_outline_rounded,
   'send_message' => Icons.send_rounded,
+  'finance_verify_payment' => Icons.verified_outlined,
+  'retro_games_search' => Icons.sports_esports_rounded,
+  'retro_game_details' => Icons.videogame_asset_rounded,
+  'retro_game_download' => Icons.download_for_offline_outlined,
+  'youtube_comments' => Icons.mode_comment_outlined,
+  'youtube_trending' => Icons.trending_up_rounded,
+  'youtube_live' => Icons.sensors_rounded,
+  'youtube_channel_videos' => Icons.video_library_outlined,
+  'youtube_compare_channels' => Icons.compare_arrows_rounded,
+  'youtube_new_uploads' => Icons.fiber_new_outlined,
+  'ethiopian_date' || 'ethiopian_calendar' => Icons.calendar_month_outlined,
+  'ethiopian_holidays' => Icons.celebration_outlined,
+  'qr_generate' => Icons.qr_code_2_rounded,
+  'qr_read' || 'qr_scan' => Icons.qr_code_scanner_rounded,
+  'sim_cards' => Icons.sim_card_outlined,
+  'speed_test' => Icons.speed_rounded,
+  'phone_data_usage' => Icons.data_usage_rounded,
+  'phone_notifications' => Icons.notifications_none_rounded,
   'send_voice_message' => Icons.mic_none_rounded,
   'list_contacts' => Icons.contacts_outlined,
   'list_chat_folders' => Icons.folder_outlined,
@@ -117,6 +140,84 @@ IconData toolIcon(String name) => switch (name) {
   'music_artist' => Icons.mic_external_on_outlined,
   'movie_search' || 'movie_details' => Icons.movie_outlined,
   'tv_search' || 'tv_show' => Icons.live_tv_rounded,
+  'reddit_posts' || 'reddit_search' || 'reddit_post' || 'reddit_subreddit' => Icons.reddit_rounded,
+  'hn_stories' || 'hn_search' || 'hn_item' || 'hn_user' => Icons.whatshot_outlined,
+  'bible_passage' || 'bible_chapter' || 'bible_compare' || 'bible_versions' || 'bible_books' || 'bible_verse_of_the_day' || 'bible_search' => Icons.menu_book_rounded,
+  'finance_sync_sms' => Icons.sync_rounded,
+  'call_history_summary' => Icons.insights_rounded,
+  'call_history_person' => Icons.person_search_rounded,
+  'call_history_calls' => Icons.call_outlined,
+  'finance_update_patterns' => Icons.cloud_download_outlined,
+  'finance_parse_sms' => Icons.sms_outlined,
+  'finance_overview' || 'finance_accounts' => Icons.account_balance_wallet_outlined,
+  'finance_add_account' || 'finance_update_account' || 'finance_delete_account' || 'finance_banks' => Icons.account_balance_outlined,
+  'finance_transactions' || 'finance_add_transaction' || 'finance_update_transaction' || 'finance_delete_transaction' => Icons.receipt_long_outlined,
+  'finance_summary' => Icons.insights_rounded,
+  'finance_insights' => Icons.health_and_safety_outlined,
+  'finance_budgets' || 'finance_set_budget' => Icons.savings_outlined,
+  'finance_categories' || 'finance_categorize' => Icons.sell_outlined,
+  'ebook_search' || 'ebook_details' || 'ebook_download' || 'book_search' => Icons.auto_stories_rounded,
+  'audiobook_search' || 'audiobook_chapters' || 'audio_download' => Icons.headphones_rounded,
+  'radio_search' => Icons.radio_rounded,
+  'podcast_search' || 'podcast_top' || 'podcast_episodes' => Icons.podcasts_rounded,
+  'play_audio' => Icons.play_circle_outline_rounded,
+  'country_info' || 'countries_list' => Icons.public_rounded,
+  'nasa_apod' => Icons.auto_awesome_rounded,
+  'pokemon_search' || 'pokemon_info' => Icons.catching_pokemon,
+  'paper_search' || 'paper_search_everywhere' || 'paper_details' => Icons.article_outlined,
+  'paper_recommendations' => Icons.auto_awesome_motion_outlined,
+  'paper_author' => Icons.person_search_outlined,
+  'paper_venue' => Icons.account_balance_outlined,
+  'screen_time' || 'app_usage' => Icons.hourglass_bottom_rounded,
+  'system_check' => Icons.health_and_safety_outlined,
+  'screen_status' => Icons.touch_app_outlined,
+  'screen_read' => Icons.view_quilt_outlined,
+  'screen_screenshot' => Icons.screenshot_monitor_rounded,
+  'screen_wait' => Icons.hourglass_top_rounded,
+  'screen_tap' => Icons.touch_app_rounded,
+  'screen_type' => Icons.keyboard_rounded,
+  'screen_scroll' => Icons.swipe_vertical_rounded,
+  'screen_swipe' => Icons.swipe_rounded,
+  'screen_press' => Icons.radio_button_checked_rounded,
+  'list_hidden' || 'block_mute_settings' => Icons.shield_outlined,
+  'block_chat' => Icons.block_rounded,
+  'unblock_chat' => Icons.check_circle_outline_rounded,
+  'mute_words' => Icons.volume_off_outlined,
+  'unmute_words' => Icons.volume_up_outlined,
+  'image_info' => Icons.photo_outlined,
+  'image_resize' => Icons.photo_size_select_large_rounded,
+  'image_crop' => Icons.crop_rounded,
+  'image_compress' => Icons.compress_rounded,
+  'image_convert' => Icons.transform_rounded,
+  'image_remove_background' => Icons.auto_fix_high_rounded,
+  'package_info' || 'package_search' => Icons.inventory_2_outlined,
+  'domain_lookup' => Icons.dns_outlined,
+  'xkcd' => Icons.draw_outlined,
+  'metal_prices' => Icons.diamond_outlined,
+  'fuel_prices' => Icons.local_gas_station_outlined,
+  'earthquakes' => Icons.ssid_chart_rounded,
+  'disasters' => Icons.warning_amber_rounded,
+  'air_quality' => Icons.air_rounded,
+  'recipe_search' || 'recipe_details' => Icons.restaurant_menu_rounded,
+  'food_nutrition' => Icons.qr_code_scanner_rounded,
+  'define_word' => Icons.menu_book_outlined,
+  'translate_text' => Icons.translate_rounded,
+  'wikipedia_search' || 'wikipedia_summary' => Icons.public_rounded,
+  'wikipedia_on_this_day' => Icons.history_edu_rounded,
+  'sports_scores' || 'sports_match' => Icons.scoreboard_outlined,
+  'sports_standings' => Icons.leaderboard_rounded,
+  'sports_team' => Icons.shield_outlined,
+  'sports_player' => Icons.sports_handball_rounded,
+  'sports_news' => Icons.newspaper_rounded,
+  'sports_top_scorers' => Icons.sports_soccer_rounded,
+  'formula1' => Icons.sports_motorsports_rounded,
+  'crypto_prices' || 'crypto_coin' || 'crypto_trending' => Icons.currency_bitcoin_rounded,
+  'stock_quote' || 'stock_search' => Icons.candlestick_chart_outlined,
+  'currency_convert' => Icons.currency_exchange_rounded,
+  'weather' => Icons.cloud_outlined,
+  'flight_status' => Icons.flight_rounded,
+  'flight_search' => Icons.travel_explore_rounded,
+  'public_holidays' => Icons.celebration_outlined,
   'online_alert' || 'list_online_alerts' => Icons.circle_notifications_outlined,
   'canvas_export' => Icons.ios_share_rounded,
   'export_channel_summary' => Icons.insert_chart_outlined,
@@ -272,6 +373,10 @@ IconData toolIcon(String name) => switch (name) {
 String toolSubject(ToolPart part, TelegramStore store) {
   final a = part.args;
   final bits = <String>[];
+  // Screen control says what the tap, typing or swipe is for.
+  if (a['why'] case final String why when part.name.startsWith('screen_') && why.trim().isNotEmpty) {
+    return a['text'] is String && part.name == 'screen_type' ? '${why.trim()}: "${a['text']}"' : why.trim();
+  }
   for (final key in const ['chat_id', 'from_chat_id', 'to_chat_id']) {
     final id = a[key];
     if (id is num) bits.add(store.chat(id.toInt())?.title ?? 'chat $id');
@@ -503,6 +608,9 @@ class ToolCallCard extends ConsumerWidget {
               ),
             ),
           ),
+          // A download under way: what, how far, how fast.
+          if (part.status == ToolStatus.running) DownloadPanel(callId: part.callId),
+          if (part.status == ToolStatus.running && part.name == 'speed_test') SpeedTestPanel(id: part.callId),
           // Books, videos, posts, repos and pages get a card of their own;
           // other pictures (generated images, screenshots) show as they are.
           if (richResultFor(part) case final rich?)
@@ -618,6 +726,59 @@ class _ApprovalCardState extends ConsumerState<ApprovalCard> {
     }
   }
 
+  /// Asks where the rule applies, saves it, then approves this call.
+  Future<void> _alwaysAllow({
+    required TelegramTool tool,
+    required int? chatId,
+    required String? chatTitle,
+    required String? account,
+    required VoidCallback approve,
+  }) async {
+    final where = chatTitle?.trim().isNotEmpty == true ? chatTitle! : 'chat $chatId';
+    final anywhere = await showFormSheet<bool>(
+      context,
+      builder: (context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Always allow ${tool.label.toLowerCase()}?', style: context.text.titleMedium),
+          const SizedBox(height: Space.xs),
+          Text(
+            'Matching calls will run without a card, in chats and in watches. Remove the rule any time under '
+            'Settings → Approvals.',
+            style: context.text.bodySmall,
+          ),
+          const SizedBox(height: Space.l),
+          if (chatId != null)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.chat_bubble_outline_rounded),
+              title: Text('Only in $where'),
+              subtitle: const Text('Also when a watch has just read messages from others'),
+              onTap: () => Navigator.of(context).pop(false),
+            ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.public_rounded),
+            title: const Text('Anywhere'),
+            subtitle: const Text('Still asks after reading messages from others, since they could aim it elsewhere'),
+            onTap: () => Navigator.of(context).pop(true),
+          ),
+        ],
+      ),
+    );
+    if (anywhere == null || !mounted) return;
+    await ref.read(approvalRulesProvider.notifier).add(
+      tool: tool.name,
+      toolLabel: tool.label,
+      chatId: anywhere ? null : chatId,
+      chatTitle: anywhere ? null : chatTitle,
+      account: account,
+    );
+    if (!mounted) return;
+    approve();
+    showSnack(context, 'Rule saved: ${tool.label.toLowerCase()} ${anywhere ? 'anywhere' : 'in $where'}', icon: Icons.rule_rounded);
+  }
+
   static Future<List<(String, String?)>> _pickMedia() async {
     final picked = await ImagePicker().pickMultipleMedia(imageQuality: 90);
     return [for (final x in picked) (x.path, x.name)];
@@ -653,6 +814,18 @@ class _ApprovalCardState extends ConsumerState<ApprovalCard> {
 
     final danger = toolNamed(widget.part.name)?.destructive ?? false;
     final tone = danger ? AppColors.danger : AppColors.warning;
+    void approveNow() => _forward || _simple
+        ? controller.approve(part.callId)
+        : controller.approve(
+            part.callId,
+            text: _text.text.trim(),
+            files: [..._files],
+            asFiles: _asFiles,
+          );
+    // Deleting and spending always ask, so they get no standing rules.
+    final tool = toolNamed(part.name);
+    final ruleable = tool != null && !tool.destructive && !tool.alwaysAsk;
+    final chats = chatsOfCall(args);
     return Container(
       margin: const EdgeInsets.only(bottom: Space.s),
       padding: const EdgeInsets.all(Space.l),
@@ -688,6 +861,56 @@ class _ApprovalCardState extends ConsumerState<ApprovalCard> {
                 Text('You can edit this', style: context.text.labelSmall),
             ],
           ),
+          if (controller.heldForSafety(part.callId)) ...[
+            const SizedBox(height: Space.s),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(Space.m),
+              decoration: BoxDecoration(
+                color: AppColors.warning.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(Radii.m),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.policy_outlined, size: 16, color: AppColors.warning),
+                  const SizedBox(width: Space.s),
+                  Expanded(
+                    child: Text(
+                      'This would normally run on its own, but the assistant has just read messages, emails or pages '
+                      'written by other people, which can contain hidden instructions. Check that you want this.',
+                      style: context.text.bodySmall,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          if (controller.heldForVault(part.callId) case final shared when shared.isNotEmpty) ...[
+            const SizedBox(height: Space.s),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(Space.m),
+              decoration: BoxDecoration(
+                color: AppColors.warning.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(Radii.m),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.lock_outline_rounded, size: 16, color: AppColors.warning),
+                  const SizedBox(width: Space.s),
+                  Expanded(
+                    child: Text(
+                      'This shares ${shared.length == 1 ? 'something' : '${shared.length} things'} from your vault: '
+                      '${shared.join(', ')}. Make sure you want ${shared.length == 1 ? 'it' : 'them'} to go out.',
+                      style: context.text.bodySmall,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: Space.m),
           if (account != null) ...[
             Text('As', style: context.text.labelSmall),
@@ -872,16 +1095,7 @@ class _ApprovalCardState extends ConsumerState<ApprovalCard> {
                     backgroundColor: danger ? AppColors.danger : null,
                     foregroundColor: danger ? Colors.white : null,
                   ),
-                  onPressed: !canSend || _adding
-                      ? null
-                      : () => _forward || _simple
-                            ? controller.approve(part.callId)
-                            : controller.approve(
-                                part.callId,
-                                text: _text.text.trim(),
-                                files: [..._files],
-                                asFiles: _asFiles,
-                              ),
+                  onPressed: !canSend || _adding ? null : approveNow,
                   child: Text(
                     _simple ? 'Approve' : (_forward ? 'Forward' : 'Send'),
                   ),
@@ -889,6 +1103,24 @@ class _ApprovalCardState extends ConsumerState<ApprovalCard> {
               ),
             ],
           ),
+          if (ruleable)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                style: TextButton.styleFrom(visualDensity: VisualDensity.compact, foregroundColor: AppColors.text2),
+                icon: const Icon(Icons.rule_rounded, size: 16),
+                label: const Text('Always allow…'),
+                onPressed: !canSend || _adding
+                    ? null
+                    : () => _alwaysAllow(
+                        tool: tool,
+                        chatId: chats.length == 1 ? chats.first : null,
+                        chatTitle: chats.length == 1 ? store.chat(chats.first)?.title : null,
+                        account: accounts.hasSeveral ? accountId : null,
+                        approve: approveNow,
+                      ),
+              ),
+            ),
         ],
       ),
     );
@@ -1637,5 +1869,120 @@ class _InfoRow extends StatelessWidget {
         ),
       ],
     ),
+  );
+}
+
+/// A download's live progress under its tool card: the file, a bar, how
+/// much of how much, the speed and the time left. Nothing when the call
+/// isn't downloading.
+class DownloadPanel extends StatelessWidget {
+  const DownloadPanel({super.key, required this.callId});
+  final String callId;
+
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder<Map<String, DownloadState>>(
+    valueListenable: DownloadProgress.all,
+    builder: (context, all, _) {
+      final d = all[callId];
+      if (d == null) return const SizedBox.shrink();
+      final f = d.fraction;
+      final left = d.secondsLeft;
+      final ext = d.files > 1 ? '${d.files}' : (d.name.contains('.') ? d.name.split('.').last.toUpperCase() : 'FILE');
+      final control = DownloadProgress.of(callId);
+      final status = d.cancelled
+          ? 'Cancelled at ${formatBytes(d.received)}'
+          : d.error != null
+          ? 'Failed: ${d.error}'
+          : d.done
+          ? '${d.upload ? 'Sent' : 'Saved'} · ${formatBytes(d.received)} in ${formatSeconds(d.elapsed.inSeconds.clamp(1, 1 << 30))}'
+          : [
+              if (d.paused) 'Paused',
+              d.total == null ? '${formatBytes(d.received)} so far' : '${formatBytes(d.received)} of ${formatBytes(d.total!)}',
+              if (!d.paused && d.bytesPerSecond > 0) '${formatBytes(d.bytesPerSecond)}/s',
+              if (left != null) '${formatSeconds(left)} left',
+            ].join(' · ');
+      Widget button(IconData icon, String tip, VoidCallback onTap, {bool filled = false}) => Padding(
+        padding: const EdgeInsets.only(left: 6),
+        child: Material(
+          color: filled ? AppColors.text : AppColors.surface2,
+          shape: const CircleBorder(),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: onTap,
+            child: Tooltip(
+              message: tip,
+              child: SizedBox(width: 34, height: 34, child: Icon(icon, size: 18, color: filled ? AppColors.bg : AppColors.text)),
+            ),
+          ),
+        ),
+      );
+      return Container(
+        margin: const EdgeInsets.only(top: Space.s),
+        padding: const EdgeInsets.all(Space.m),
+        decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(Radii.l), border: Border.all(color: AppColors.line)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(color: AppColors.surface2, borderRadius: BorderRadius.circular(Radii.m), border: Border.all(color: AppColors.line)),
+                  child: d.upload && d.files > 1
+                      ? Icon(Icons.upload_rounded, size: 20, color: AppColors.text2)
+                      : Text(ext.length > 4 ? ext.substring(0, 4) : ext, style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: AppColors.text2, letterSpacing: 0.4)),
+                ),
+                const SizedBox(width: Space.m),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        d.upload && d.active ? 'Sending ${d.name}' : d.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: context.text.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                      ),
+                      Text(
+                        status,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: context.text.bodySmall?.copyWith(color: d.error != null ? AppColors.danger : AppColors.text2, fontFeatures: tabularFigures),
+                      ),
+                    ],
+                  ),
+                ),
+                if (f != null && d.active) Text('${(f * 100).round()}%', style: context.text.titleSmall?.copyWith(fontWeight: FontWeight.w700, fontFeatures: tabularFigures)),
+                if (d.active && control != null && d.canPause)
+                  d.paused
+                      ? button(Icons.play_arrow_rounded, 'Resume', control.resume, filled: true)
+                      : button(Icons.pause_rounded, 'Pause', control.pause),
+                if (d.active && control != null && d.canCancel) button(Icons.close_rounded, d.upload ? 'Cancel sending' : 'Cancel download', control.cancel),
+                if (d.done) Icon(Icons.check_circle_rounded, color: AppColors.success, size: 20),
+                if (d.cancelled) Icon(Icons.cancel_outlined, color: AppColors.text3, size: 20),
+              ],
+            ),
+            const SizedBox(height: Space.s + 2),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                // Unknown size: an indeterminate bar.
+                // Paused or stopped: hold still where it got to.
+                value: d.done ? 1 : (f ?? (d.paused || !d.active ? 0 : null)),
+                minHeight: 6,
+                color: d.error != null ? AppColors.danger : (d.done ? AppColors.success : (d.paused || d.cancelled ? AppColors.text3 : AppColors.text)),
+                backgroundColor: AppColors.surface3,
+              ),
+            ),
+            if (d.url != null) ...[
+              const SizedBox(height: 6),
+              Text(Uri.tryParse(d.url!)?.host ?? d.url!, maxLines: 1, overflow: TextOverflow.ellipsis, style: context.text.labelSmall?.copyWith(color: AppColors.text3)),
+            ],
+          ],
+        ),
+      );
+    },
   );
 }

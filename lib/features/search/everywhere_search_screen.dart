@@ -101,7 +101,7 @@ class _EverywhereSearchScreenState extends ConsumerState<EverywhereSearchScreen>
     if (_files == null) {
       final root = (await getApplicationSupportDirectory()).path;
       final out = <File>[];
-      for (final d in ['generated', 'sandbox', 'downloads', 'exports', 'screenshots']) {
+      for (final d in ['generated', 'sandbox', 'downloads', 'telegram', 'exports', 'screenshots']) {
         final dir = Directory('$root/$d');
         if (!await dir.exists()) continue;
         await for (final e in dir.list(recursive: true, followLinks: false)) {

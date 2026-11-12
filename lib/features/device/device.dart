@@ -31,9 +31,15 @@ abstract final class Device {
   static const contacts = DevicePermission('android.permission.READ_CONTACTS', 'Contacts', 'Finds numbers to call or text, and names for messages.');
   static const phone = DevicePermission('android.permission.CALL_PHONE', 'Phone calls', 'Places calls you approved directly. Without it the dialer opens with the number.');
 
-  static const all = [sms, sendSms, callLog, contacts, phone];
+  static const phoneState = DevicePermission('android.permission.READ_PHONE_STATE', 'SIM cards', 'Reads the carriers, signal and network type for network checks.');
 
-  static bool get supported => Platform.isAndroid;
+  static const all = [sms, sendSms, callLog, contacts, phone, phoneState];
+
+  /// Tests set this to draw Android-only screens.
+  @visibleForTesting
+  static bool? debugSupported;
+
+  static bool get supported => debugSupported ?? Platform.isAndroid;
 
   static Future<T?> call<T>(String method, [Map<String, dynamic>? args, bool retried = false]) async {
     if (!supported) throw DeviceException('Device tools work on Android only.');

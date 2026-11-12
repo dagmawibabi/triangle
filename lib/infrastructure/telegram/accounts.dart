@@ -447,6 +447,46 @@ class AccountsController extends Notifier<AccountsState> {
     state.copyWith(accounts: [for (final a in state.accounts) a.id == id ? change(a) : a]),
   );
 
+  /// Takes the assistant settings of accounts from a restored profile
+  /// ([saved], as the registry stores them) onto the accounts signed in
+  /// here, matched by Telegram user id: sign-ins themselves never come
+  /// from a profile. Returns the profile's account ids mapped to this
+  /// phone's.
+  Map<String, String> applyRestored(List<Object?> saved) {
+    final ids = <String, String>{};
+    final byUser = <int, TelegramAccount>{};
+    for (final e in saved) {
+      if (e is! Map) continue;
+      try {
+        final a = TelegramAccount.fromJson(Map<String, dynamic>.from(e));
+        if (a.userId != null) byUser[a.userId!] = a;
+      } catch (_) {}
+    }
+    final next = <TelegramAccount>[];
+    for (final a in state.accounts) {
+      final old = a.userId == null ? null : byUser[a.userId];
+      if (old == null) {
+        next.add(a);
+        continue;
+      }
+      ids[old.id] = a.id;
+      next.add(
+        a.copyWith(
+          aiAccess: old.aiAccess,
+          mentionAlerts: old.mentionAlerts,
+          readOnly: old.readOnly,
+          approvalMode: old.approvalMode,
+          clearApprovalMode: old.approvalMode == null,
+          disabledTools: old.disabledTools,
+          enabledDangerTools: old.enabledDangerTools,
+          clearCustomTools: old.disabledTools == null,
+        ),
+      );
+    }
+    _set(state.copyWith(accounts: next));
+    return ids;
+  }
+
   void setAiAccess(String id, bool on) => _updateAccount(id, (a) => a.copyWith(aiAccess: on));
 
   void setMentionAlerts(String id, bool on) => _updateAccount(id, (a) => a.copyWith(mentionAlerts: on));

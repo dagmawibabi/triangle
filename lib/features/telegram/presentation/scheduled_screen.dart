@@ -241,6 +241,11 @@ class _Stat extends StatelessWidget {
   );
 }
 
+/// A scheduled message's sheet: when it goes out, send now, reschedule,
+/// copy, open the chat, delete. [onChanged] runs after any change.
+void showScheduledMessageSheet(BuildContext context, WidgetRef ref, td.Message m, {required VoidCallback onChanged}) =>
+    _ScheduledTile(message: m, showChat: false, onChanged: onChanged)._details(context, ref);
+
 class _ScheduledTile extends ConsumerWidget {
   const _ScheduledTile({required this.message, required this.showChat, required this.onChanged});
   final td.Message message;
@@ -431,7 +436,14 @@ class _ScheduledTile extends ConsumerWidget {
                       final when = DateTime(day.year, day.month, day.day, time.hour, time.minute);
                       Navigator.pop(sheet);
                       await setWhen(
-                        td.MessageSchedulingStateSendAtDate(sendDate: when.millisecondsSinceEpoch ~/ 1000, repeatPeriod: 0),
+                        td.MessageSchedulingStateSendAtDate(
+                          sendDate: when.millisecondsSinceEpoch ~/ 1000,
+                          // A repeating message keeps repeating.
+                          repeatPeriod: switch (m.schedulingState) {
+                            td.MessageSchedulingStateSendAtDate(:final repeatPeriod) => repeatPeriod,
+                            _ => 0,
+                          },
+                        ),
                         'Rescheduled for ${DateFormat('d MMM HH:mm').format(when)}',
                       );
                     },

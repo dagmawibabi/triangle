@@ -18,12 +18,14 @@ import '../../media/audio_player_ui.dart';
 import '../../settings/data/settings.dart';
 import '../../voice/dictation.dart';
 import '../../voice/voice_note_recorder.dart';
+import '../data/content_filters.dart';
 import '../data/message_content.dart';
 import '../data/telegram_store.dart';
 import '../data/telegram_tools.dart';
 import 'attach_sheet.dart';
 import 'chat_actions.dart';
 import 'chat_background.dart';
+import 'chat_pages.dart';
 import 'expression_panel.dart';
 import 'chat_profile_screen.dart';
 import 'content_canvas_screen.dart' show saveManyToCanvas;
@@ -31,6 +33,7 @@ import 'direct_messages_topics.dart';
 import 'pending_draft.dart';
 import 'forum_topics.dart';
 import 'forward_sheet.dart';
+import 'hidden_message.dart';
 import 'members_screen.dart';
 import 'message_tile.dart';
 import 'tg_avatar.dart';
@@ -110,6 +113,10 @@ class _ChatViewScreenState extends ConsumerState<ChatViewScreen> {
 
   /// Messages picked in selection mode, by id.
   final Set<int> _selected = {};
+
+  /// Hidden posts (blocked sender, blocked channel, muted word) tapped open,
+  /// by their first message's id.
+  final Set<int> _revealed = {};
   bool get _selecting => _selected.isNotEmpty;
 
   void _toggle(td.Message m) => setState(() => _selected.contains(m.id) ? _selected.remove(m.id) : _selected.add(m.id));
@@ -120,6 +127,54 @@ class _ChatViewScreenState extends ConsumerState<ChatViewScreen> {
   Timer? _activityExpiry;
   Timer? _reactionsClock;
   final Object _openChatOwner = Object();
+
+  /// The chat's pinned messages, newest first, for the bar under the
+  /// header; [_pinIndex] is the one it shows.
+  List<td.Message> _pins = const [];
+  int _pinIndex = 0;
+  Timer? _pinsClock;
+
+  bool get _showsPins => widget.threadId == null && widget.commentsOn == null && !widget.generalTopic;
+
+  Future<void> _loadPins() async {
+    if (!_showsPins) return;
+    try {
+      final pins = await loadPinned(ref.read(telegramClientProvider), widget.chatId);
+      if (!mounted) return;
+      setState(() {
+        final shown = _pins.isEmpty ? null : _pins[_pinIndex.clamp(0, _pins.length - 1)].id;
+        _pins = pins;
+        final keep = shown == null ? -1 : pins.indexWhere((m) => m.id == shown);
+        _pinIndex = keep < 0 ? 0 : keep;
+      });
+    } catch (e) {
+      debugPrint('[Chat] pinned: $e');
+    }
+  }
+
+  /// Goes to the pinned message shown, then shows the one before it, the
+  /// way Telegram's pinned bar walks back through them.
+  void _tapPin() {
+    if (_pins.isEmpty) return;
+    final m = _pins[_pinIndex.clamp(0, _pins.length - 1)];
+    unawaited(_jumpTo(m.id));
+    setState(() => _pinIndex = (_pinIndex + 1) % _pins.length);
+  }
+
+  Future<void> _openPinned() async {
+    final id = await Navigator.of(context).push<int>(
+      MaterialPageRoute(builder: (_) => ChatPinnedScreen(chatId: widget.chatId, initial: _pins)),
+    );
+    if (id != null && mounted) {
+      final i = _pins.indexWhere((m) => m.id == id);
+      if (i >= 0) setState(() => _pinIndex = i);
+      unawaited(_jumpTo(id));
+    }
+  }
+
+  void _openScheduled() => Navigator.of(context).push(
+    MaterialPageRoute<void>(builder: (_) => ChatScheduledScreen(chatId: widget.chatId)),
+  );
 
   /// The oldest message fetched, which can be older than the oldest shown
   /// when the General topic filters topic messages out.
@@ -142,6 +197,14 @@ class _ChatViewScreenState extends ConsumerState<ChatViewScreen> {
     if (widget.openAt case final id?) WidgetsBinding.instance.addPostFrameCallback((_) => _jumpTo(id));
     _scroll.addListener(() {
       if (_scroll.position.pixels > _scroll.position.maxScrollExtent - 600) _loadMore();
+      // The arrow down shows once you've scrolled a screen or so up.
+      final away = _scroll.position.pixels > 400;
+      if (away != _scrolledUp) {
+        setState(() {
+          _scrolledUp = away;
+          if (!away) _newBelow = 0;
+        });
+      }
     });
     _updates = ref.read(telegramClientProvider).updates.listen(_onUpdate);
     unawaited(_openForLiveUpdates());
@@ -153,7 +216,10 @@ class _ChatViewScreenState extends ConsumerState<ChatViewScreen> {
       final chat = ref.read(telegramStoreProvider).chat(widget.chatId);
       if (chat != null && chat.hasUnread) unawaited(ref.read(toolRunnerProvider).markRead(chat).catchError((_) {}));
     }
-    if (!_isForumRoot) _loadMore();
+    if (!_isForumRoot) {
+      _loadMore();
+      unawaited(_loadPins());
+    }
   }
 
   @override
@@ -162,6 +228,7 @@ class _ChatViewScreenState extends ConsumerState<ChatViewScreen> {
     _activityExpiry?.cancel();
     _reactionsClock?.cancel();
     _highlightClock?.cancel();
+    _pinsClock?.cancel();
     unawaited(ref.read(openChatsProvider).release(widget.chatId, _openChatOwner));
     _scroll.dispose();
     super.dispose();
@@ -184,7 +251,8 @@ class _ChatViewScreenState extends ConsumerState<ChatViewScreen> {
     int index(int id) => _messages.indexWhere((m) => m.id == id);
     switch (u) {
       case td.UpdateNewMessage(:final message) when _inThisView(message):
-        if (index(message.id) < 0) setState(() => _messages.insert(0, message));
+        if (index(message.id) < 0 && _scrolledUp && !message.isOutgoing) _newBelow++;
+        if (index(message.id) < 0 && !_detached) setState(() => _messages.insert(0, message));
       case td.UpdateMessageSendSucceeded(:final message, :final oldMessageId) when message.chatId == widget.chatId:
         final i = index(oldMessageId);
         if (i >= 0) setState(() => _messages[i] = message);
@@ -214,6 +282,12 @@ class _ChatViewScreenState extends ConsumerState<ChatViewScreen> {
       case td.UpdateDeleteMessages(:final chatId, :final messageIds, :final isPermanent)
           when chatId == widget.chatId && isPermanent:
         setState(() => _messages.removeWhere((m) => messageIds.contains(m.id)));
+        if (_pins.any((m) => messageIds.contains(m.id))) unawaited(_loadPins());
+      case td.UpdateMessageIsPinned(:final chatId, :final messageId, :final isPinned) when chatId == widget.chatId:
+        final i = index(messageId);
+        if (i >= 0) setState(() => _messages[i] = _messages[i].copyWith(isPinned: isPinned));
+        _pinsClock?.cancel();
+        _pinsClock = Timer(const Duration(milliseconds: 350), _loadPins);
       default:
         break;
     }
@@ -317,14 +391,94 @@ class _ChatViewScreenState extends ConsumerState<ChatViewScreen> {
 
   /// Scrolls to message [id], loading older history until it's there, and
   /// lights it up: what tapping a reply or a quote does.
+  /// The list shows a stretch of older history around a message jumped to,
+  /// not the latest messages: new ones aren't added, and a button at the
+  /// bottom goes back to the latest.
+  bool _detached = false;
+
+  /// Scrolled up from the latest message: the arrow down is showing.
+  bool _scrolledUp = false;
+
+  /// Messages that came in below while scrolled up, counted on the arrow.
+  int _newBelow = 0;
+
+  /// The arrow down: back to the latest message.
+  void _toBottom() {
+    if (_detached) return _backToLatest();
+    if (!_scroll.hasClients) return;
+    final far = _scroll.position.pixels > _scroll.position.viewportDimension * 4;
+    // A long way up jumps most of it, then glides the last stretch.
+    if (far) _scroll.jumpTo(_scroll.position.viewportDimension);
+    _scroll.animateTo(0, duration: const Duration(milliseconds: 300), curve: Curves.easeOutCubic);
+    setState(() => _newBelow = 0);
+  }
+
+  /// Replaces the list with the messages around [id] (a pinned message or
+  /// reply too far back to page to). False when Telegram has no such
+  /// message.
+  Future<bool> _loadAround(int id) async {
+    while (_loading) {
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+    }
+    if (!mounted) return false;
+    setState(() => _loading = true);
+    try {
+      final client = ref.read(telegramClientProvider);
+      var list = <td.Message>[];
+      // TDLib may answer from its cache first; a second ask goes online.
+      for (var attempt = 0; attempt < 2 && list.every((m) => m.id != id); attempt++) {
+        final r = await client.send<td.Messages>(
+          td.GetChatHistory(chatId: widget.chatId, fromMessageId: id, offset: -20, limit: 50, onlyLocal: false),
+          limited: true,
+        );
+        list = r.messages.whereType<td.Message>().toList();
+      }
+      if (!mounted || list.every((m) => m.id != id)) return false;
+      list.sort((a, b) => b.id.compareTo(a.id));
+      final latest = ref.read(telegramStoreProvider).chat(widget.chatId)?.lastMessage?.id;
+      setState(() {
+        _messages
+          ..clear()
+          ..addAll(widget.generalTopic ? list.where((m) => !m.isTopicMessage) : list);
+        _oldest = list.last.id;
+        _end = false;
+        _detached = latest == null || list.first.id < latest;
+      });
+      unawaited(_refreshInteractions(list));
+      await WidgetsBinding.instance.endOfFrame;
+      if (_scroll.hasClients) _scroll.jumpTo(0);
+      return true;
+    } catch (e) {
+      debugPrint('[Chat] load around $id: $e');
+      return false;
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// Back from a stretch of old history to the latest messages.
+  void _backToLatest() {
+    setState(() {
+      _messages.clear();
+      _oldest = null;
+      _end = false;
+      _detached = false;
+    });
+    if (_scroll.hasClients) _scroll.jumpTo(0);
+    _loadMore();
+  }
+
   Future<void> _jumpTo(int id) async {
-    for (var page = 0; page < 25 && _find(id) == null && !_end; page++) {
+    // A few pages back is quicker to scroll through; anything further is
+    // loaded around the message itself.
+    for (var page = 0; page < 4 && _find(id) == null && !_end; page++) {
       while (_loading) {
         await Future<void>.delayed(const Duration(milliseconds: 80));
       }
       if (_find(id) != null) break;
       await _loadMore();
     }
+    if (_find(id) == null && widget.threadId == null) await _loadAround(id);
     if (!mounted) return;
     if (_find(id) == null) {
       showSnack(context, 'That message is no longer in this chat', icon: Icons.info_outline_rounded);
@@ -392,22 +546,49 @@ class _ChatViewScreenState extends ConsumerState<ChatViewScreen> {
           posts.add([m]);
         }
       }
+      // Posts from people or chats you blocked, or with a muted word: either
+      // gone entirely or folded behind a notice, as set in Block & mute.
+      final filters = ref.watch(contentFiltersProvider);
+      final blockedSenders = ref.watch(blockedSendersProvider);
+      final hidden = <int, HiddenVerdict>{};
+      posts.removeWhere((post) {
+        final v = hiddenVerdict(
+          post.first,
+          album: post.skip(1).toList(),
+          filters: filters,
+          blockedSenders: blockedSenders,
+          store: store,
+          viewingChatId: widget.chatId,
+        );
+        if (v == null) return false;
+        if (v.silent) return true;
+        hidden[post.first.id] = v;
+        return false;
+      });
       // A bot's reply as it is being written (draft streaming), newest of all.
       final pending = switch (store.pendingMessages[widget.chatId]) {
         final p? when p.forumTopicId == (widget.threadId ?? 0) || widget.threadId == null => p,
         _ => null,
       };
-      final lead = pending == null ? 0 : 1;
+      final lead = (pending == null ? 0 : 1) + (_detached ? 1 : 0);
       body = ListView.builder(
         controller: _scroll,
         reverse: true,
-        padding: EdgeInsets.fromLTRB(Space.m, Space.m, Space.m, headerHeight + Space.xxl + 40),
+        // A reversed list keeps padding where it says: the top clears the
+        // floating header (and the pinned bar), the bottom sits on the box.
+        padding: EdgeInsets.fromLTRB(
+          Space.m,
+          headerHeight + Space.m + (_showsPins && _pins.isNotEmpty ? 46 : 0),
+          Space.m,
+          Space.m,
+        ),
         itemCount: posts.length + 1 + lead,
         itemBuilder: (context, index) {
-          if (pending != null && index == 0) return PendingDraftBubble(update: pending);
+          if (_detached && index == 0) return _LatestButton(onTap: _backToLatest);
+          if (pending != null && index == (_detached ? 1 : 0)) return PendingDraftBubble(update: pending);
           final i = index - lead;
           if (i == posts.length && widget.commentsOn != null && (_end || _messages.isEmpty)) {
-            return _CommentedPost(post: widget.commentsOn!, loading: _loading);
+            return _CommentedPost(post: widget.commentsOn!, loading: _loading, hasComments: posts.isNotEmpty);
           }
           if (i == posts.length) {
             return Padding(
@@ -427,17 +608,36 @@ class _ChatViewScreenState extends ConsumerState<ChatViewScreen> {
               ? post.single
               : album.firstWhere((x) => gistOf(x.content).text.isNotEmpty, orElse: () => album.first);
           final older = i + 1 < posts.length ? posts[i + 1].first : null;
-          final newDay = older == null || !_sameDay(older.date, m.date);
-          final grouped = older != null && !newDay && _sameSender(older, m) && m.date - older.date < 300;
+          // Under a channel post, the first comment only gets a day of its
+          // own when it came on a later day than the post.
+          final newDay = older == null
+              ? !(widget.commentsOn != null && _end && _sameDay(widget.commentsOn!.date, m.date))
+              : !_sameDay(older.date, m.date);
+          final grouped = older != null && !newDay && !hidden.containsKey(older.id) && !hidden.containsKey(post.first.id) && _sameSender(older, m) && m.date - older.date < 300;
           final key = _keyFor(post.first.id);
           for (final x in post.skip(1)) {
             _postKeys[x.id] = key;
           }
           final lit = _highlight != null && post.any((x) => x.id == _highlight);
+          final verdict = hidden[post.first.id];
+          if (verdict != null && !_revealed.contains(post.first.id)) {
+            return Column(
+              key: key,
+              children: [
+                if (newDay) _DaySeparator(unix: m.date),
+                HiddenMessageNotice(
+                  verdict: verdict,
+                  onReveal: () => setState(() => _revealed.add(post.first.id)),
+                ),
+              ],
+            );
+          }
           return Column(
             key: key,
             children: [
               if (newDay) _DaySeparator(unix: m.date),
+              if (verdict != null)
+                RevealedMessageBar(verdict: verdict, onHide: () => setState(() => _revealed.remove(post.first.id))),
               AnimatedContainer(
                 duration: const Duration(milliseconds: 300),
                 decoration: BoxDecoration(
@@ -490,6 +690,16 @@ class _ChatViewScreenState extends ConsumerState<ChatViewScreen> {
                 Positioned.fill(
                   child: ChatBackdrop(background: chat?.background, child: body),
                 ),
+                if (!forumRoot)
+                  Positioned(
+                    right: Space.m,
+                    bottom: Space.s,
+                    child: _DownArrow(
+                      visible: (_scrolledUp || _detached) && !_selecting,
+                      count: _newBelow,
+                      onTap: _toBottom,
+                    ),
+                  ),
                 Positioned(
                   top: 0,
                   left: 0,
@@ -563,9 +773,22 @@ class _ChatViewScreenState extends ConsumerState<ChatViewScreen> {
                             }
                           },
                         )
+                      else if (widget.commentsOn case final post?)
+                        ChatPageHeader(
+                          chatId: post.chatId,
+                          chatTitle: store.chat(post.chatId)?.title ?? 'Channel',
+                          title: () {
+                            final n = _end
+                                ? _messages.length
+                                : (post.interactionInfo?.replyInfo?.replyCount ?? 0).clamp(_messages.length, 1 << 30);
+                            return n == 0 ? 'Comments' : '$n Comment${n == 1 ? '' : 's'}';
+                          }(),
+                          center: true,
+                        )
                       else
                       _Header(
                         title: title,
+                        onScheduled: chat != null && chat.hasScheduled ? _openScheduled : null,
                         chat: chat,
                         kind: kind,
                         isThread: widget.threadId != null,
@@ -584,6 +807,8 @@ class _ChatViewScreenState extends ConsumerState<ChatViewScreen> {
                                 threadTitle: widget.threadTitle,
                               ),
                       ),
+                      if (_showsPins && _pins.isNotEmpty && !_selecting && !forumRoot)
+                        PinnedMessageBar(pins: _pins, index: _pinIndex, onTap: _tapPin, onList: _openPinned),
                       const AudioMiniBar(),
                     ],
                   ),
@@ -605,9 +830,14 @@ class _ChatViewScreenState extends ConsumerState<ChatViewScreen> {
                     replyTo: _replyTo,
                     quote: _quote,
                     onReplyElsewhere: _replyElsewhere,
+                    hint: widget.commentsOn != null
+                        ? 'Comment'
+                        : (kind == ChatKind.channel ? 'Broadcast' : 'Message'),
+                    onScheduled: chat.hasScheduled && widget.commentsOn == null ? _openScheduled : null,
                     onCancelReply: () => setState(() => _replyTo = _quote = null),
                     onSent: () {
                       setState(() => _replyTo = _quote = null);
+                      if (_detached) return _backToLatest();
                       if (_scroll.hasClients)
                         _scroll.animateTo(0, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
                     },
@@ -690,9 +920,13 @@ class _Header extends ConsumerWidget {
     required this.onProfile,
     required this.onAskAi,
     this.subtitleOverride,
+    this.onScheduled,
   });
 
   final String? subtitleOverride;
+
+  /// Opens the chat's scheduled messages; null when it has none.
+  final VoidCallback? onScheduled;
   final String title;
   final ChatInfo? chat;
   final ChatKind kind;
@@ -820,6 +1054,18 @@ class _Header extends ConsumerWidget {
                           context,
                         ).push(MaterialPageRoute<void>(builder: (_) => MembersScreen(chatId: c.id)));
                       }
+                    case 'scheduled':
+                      if (c != null) {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(builder: (_) => ChatScheduledScreen(chatId: c.id)),
+                        );
+                      }
+                    case 'pinned':
+                      if (c != null) {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(builder: (_) => ChatPinnedScreen(chatId: c.id)),
+                        );
+                      }
                     case 'more':
                       if (c != null) showChatMenu(context, ref, c);
                   }
@@ -832,6 +1078,9 @@ class _Header extends ConsumerWidget {
                     if (kind != ChatKind.saved)
                       PopupMenuItem(value: 'archive', child: Text(c.inArchive ? 'Unarchive' : 'Archive')),
                     const PopupMenuItem(value: 'background', child: Text('Chat background')),
+                    if (c.hasScheduled || store.canPost(c))
+                      const PopupMenuItem(value: 'scheduled', child: Text('Scheduled messages')),
+                    const PopupMenuItem(value: 'pinned', child: Text('Pinned messages')),
                     if (kind == ChatKind.group || (kind == ChatKind.channel && store.isAdmin(c)))
                       PopupMenuItem(
                         value: 'members',
@@ -901,16 +1150,9 @@ class _DaySeparator extends StatelessWidget {
   Widget build(BuildContext context) {
     final d = DateTime.fromMillisecondsSinceEpoch(unix * 1000);
     final now = DateTime.now();
-    final label = d.year == now.year ? DateFormat('EEEE, d MMMM').format(d) : DateFormat('d MMMM y').format(d);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: Space.m),
-      child: Center(
-        child: Glass(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-          child: Text(label, style: TextStyle(fontSize: 12, color: AppColors.text2)),
-        ),
-      ),
-    );
+    final today = DateTime(now.year, now.month, now.day);
+    final days = today.difference(DateTime(d.year, d.month, d.day)).inDays;
+    return ChatPill(days == 0 ? 'Today' : (days == 1 ? 'Yesterday' : dayLabel(d)));
   }
 }
 
@@ -985,8 +1227,16 @@ class _ChatComposer extends ConsumerStatefulWidget {
     this.onReplyElsewhere,
     required this.onCancelReply,
     required this.onSent,
+    this.hint = 'Message',
+    this.onScheduled,
   });
 
+  /// What the empty box says: Message, Broadcast, Comment.
+  final String hint;
+
+  /// Opens the chat's scheduled messages, shown as a calendar by the send
+  /// button while the box is empty; null when there are none.
+  final VoidCallback? onScheduled;
   final int chatId;
   final int threadId;
   final td.Message? replyTo;
@@ -1250,8 +1500,14 @@ class _ChatComposerState extends ConsumerState<_ChatComposer> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Glass(
-              radius: Radii.xl + 4,
+            Container(
+              decoration: BoxDecoration(
+                color: AppColors.surface2,
+                borderRadius: BorderRadius.circular(Radii.xl + 4),
+                border: Border.all(
+                  color: dictation.listening ? AppColors.accent.withValues(alpha: 0.6) : AppColors.line,
+                ),
+              ),
               padding: const EdgeInsets.all(5),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -1297,10 +1553,12 @@ class _ChatComposerState extends ConsumerState<_ChatComposer> {
                               ],
                             ),
                           ),
-                          IconButton(
-                            visualDensity: VisualDensity.compact,
-                            icon: const Icon(Icons.close_rounded, size: 18),
-                            onPressed: widget.onCancelReply,
+                          _ComposerButton(
+                            icon: Icons.close_rounded,
+                            tooltip: 'Cancel reply',
+                            size: 32,
+                            iconSize: 18,
+                            onTap: widget.onCancelReply,
                           ),
                         ],
                       ),
@@ -1376,18 +1634,12 @@ class _ChatComposerState extends ConsumerState<_ChatComposer> {
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      IconButton(
-                        tooltip: 'Attach',
-                        icon: Icon(Icons.attach_file_rounded, color: AppColors.text2),
-                        onPressed: _attach,
-                      ),
-                      IconButton(
+                      _ComposerButton(icon: Icons.add_rounded, tooltip: 'Attach', onTap: _attach),
+                      _ComposerButton(
+                        icon: _panel ? Icons.keyboard_alt_outlined : Icons.emoji_emotions_outlined,
                         tooltip: _panel ? 'Keyboard' : 'Emoji, GIFs and stickers',
-                        icon: Icon(
-                          _panel ? Icons.keyboard_alt_outlined : Icons.emoji_emotions_outlined,
-                          color: _panel ? AppColors.accent : AppColors.text2,
-                        ),
-                        onPressed: () {
+                        active: _panel,
+                        onTap: () {
                           if (_panel) {
                             _focus.requestFocus();
                           } else {
@@ -1396,6 +1648,7 @@ class _ChatComposerState extends ConsumerState<_ChatComposer> {
                           setState(() => _panel = !_panel);
                         },
                       ),
+                      const SizedBox(width: Space.xs),
                       Expanded(
                         child: TextField(
                           focusNode: _focus,
@@ -1410,45 +1663,38 @@ class _ChatComposerState extends ConsumerState<_ChatComposer> {
                           decoration: InputDecoration(
                             hintText: dictation.listening
                                 ? 'Listening…'
-                                : (_files.isEmpty ? 'Message' : 'Add a caption'),
+                                : (_files.isEmpty ? widget.hint : 'Add a caption'),
+                            hintMaxLines: 1,
+                            hintStyle: TextStyle(color: AppColors.text3, overflow: TextOverflow.ellipsis),
                             isDense: true,
                             filled: false,
                             border: InputBorder.none,
                             enabledBorder: InputBorder.none,
                             focusedBorder: InputBorder.none,
-                            contentPadding: const EdgeInsets.symmetric(vertical: 11),
+                            contentPadding: const EdgeInsets.symmetric(vertical: 9),
                           ),
                         ),
                       ),
-                      const SizedBox(width: 4),
-                      Material(
-                        color: canSend || dictation.listening ? AppColors.accent : Colors.transparent,
-                        shape: const CircleBorder(),
-                        child: InkWell(
-                          customBorder: const CircleBorder(),
-                          // Like Telegram: the mic records a voice message;
-                          // hold it to dictate into the box instead.
-                          onTap: _sending ? null : (canSend ? _send : (dictation.listening ? _dictate : _recordVoice)),
-                          // Hold send to pick an animated effect (private chats).
-                          onLongPress: _sending ? null : (canSend ? _pickEffect : _dictate),
-                          child: SizedBox.square(
-                            dimension: 42,
-                            child: _sending || dictation.transcribing
-                                ? const Padding(
-                                    padding: EdgeInsets.all(12),
-                                    child: CircularProgressIndicator(strokeWidth: 2),
-                                  )
-                                : canSend && _effect != 0
-                                ? Center(child: Text(_effectEmoji, style: const TextStyle(fontSize: 19)))
-                                : Icon(
-                                    canSend
-                                        ? Icons.send_rounded
-                                        : (dictation.listening ? Icons.stop_rounded : Icons.mic_none_rounded),
-                                    size: 21,
-                                    color: canSend || dictation.listening ? AppColors.bg : AppColors.text2,
-                                  ),
-                          ),
+                      const SizedBox(width: Space.xs),
+                      if (widget.onScheduled != null && !canSend && !dictation.listening)
+                        _ComposerButton(
+                          icon: Icons.event_note_outlined,
+                          tooltip: 'Scheduled messages',
+                          onTap: widget.onScheduled,
                         ),
+                      // Like Telegram: the mic records a voice message; hold
+                      // it to dictate into the box instead. Hold send to pick
+                      // an animated effect (private chats).
+                      _ComposerButton(
+                        tooltip: canSend ? 'Send' : (dictation.listening ? 'Stop dictation' : 'Voice message (hold to dictate)'),
+                        icon: canSend
+                            ? Icons.arrow_upward_rounded
+                            : (dictation.listening ? Icons.stop_rounded : Icons.mic_none_rounded),
+                        filled: canSend || dictation.listening,
+                        busy: _sending || dictation.transcribing,
+                        label: canSend && _effect != 0 ? _effectEmoji : null,
+                        onTap: _sending ? null : (canSend ? _send : (dictation.listening ? _dictate : _recordVoice)),
+                        onLongPress: _sending ? null : (canSend ? _pickEffect : _dictate),
                       ),
                     ],
                   ),
@@ -1475,33 +1721,36 @@ class _ChatComposerState extends ConsumerState<_ChatComposer> {
   }
 }
 
-/// The channel post a comments page belongs to, shown above its comments.
+/// The channel post a comments page belongs to, shown above its comments:
+/// its day, the post, then where the discussion starts.
 class _CommentedPost extends ConsumerWidget {
-  const _CommentedPost({required this.post, required this.loading});
+  const _CommentedPost({required this.post, required this.loading, required this.hasComments});
   final td.Message post;
   final bool loading;
+  final bool hasComments;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final store = ref.watch(telegramStoreProvider);
-    final count = post.interactionInfo?.replyInfo?.replyCount ?? 0;
     return Column(
       children: [
-        MessageTile(
-          message: post,
-          kind: ChatKind.channel,
-          chatTitle: store.chat(post.chatId)?.title ?? 'Channel',
-          inComments: true,
-        ),
+        ChatPill(dayLabel(DateTime.fromMillisecondsSinceEpoch(post.date * 1000))),
         Padding(
-          padding: const EdgeInsets.only(bottom: Space.m),
-          child: loading
-              ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2))
-              : Text(
-                  count == 0 ? 'No comments yet. Be the first.' : '$count comment${count == 1 ? '' : 's'}',
-                  style: context.text.labelSmall,
-                ),
+          padding: const EdgeInsets.only(left: 40),
+          child: MessageTile(
+            message: post,
+            kind: ChatKind.channel,
+            chatTitle: store.chat(post.chatId)?.title ?? 'Channel',
+            inComments: true,
+          ),
         ),
+        if (loading)
+          const Padding(
+            padding: EdgeInsets.all(Space.m),
+            child: SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+          )
+        else
+          ChatPill(hasComments ? 'Discussion started' : 'No comments here yet'),
       ],
     );
   }
@@ -1533,4 +1782,155 @@ Future<void> openComments(BuildContext context, WidgetRef ref, td.Message post) 
     if (context.mounted)
       showSnack(context, 'Comments are not available for this post.', icon: Icons.mode_comment_outlined);
   }
+}
+
+/// A composer button the size of the AI box's: 36 px, a plain icon, or a
+/// filled circle for send.
+class _ComposerButton extends StatelessWidget {
+  const _ComposerButton({
+    required this.icon,
+    required this.tooltip,
+    this.onTap,
+    this.onLongPress,
+    this.filled = false,
+    this.active = false,
+    this.busy = false,
+    this.label,
+    this.size = 36,
+    this.iconSize,
+  });
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
+  final bool filled;
+
+  /// Lit in the accent colour (the emoji panel is open).
+  final bool active;
+  final bool busy;
+
+  /// Shown instead of the icon: the chosen effect's emoji.
+  final String? label;
+  final double size;
+  final double? iconSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = filled ? AppColors.bg : (active ? AppColors.accent : AppColors.text2);
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: filled ? AppColors.text : Colors.transparent,
+        shape: const CircleBorder(),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onTap,
+          onLongPress: onLongPress,
+          child: SizedBox.square(
+            dimension: size,
+            child: busy
+                ? Padding(
+                    padding: const EdgeInsets.all(9),
+                    child: CircularProgressIndicator(strokeWidth: 2, color: fg),
+                  )
+                : label != null
+                ? Center(child: Text(label!, style: const TextStyle(fontSize: 18)))
+                : Icon(icon, size: iconSize ?? (filled ? 20 : 22), color: fg),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// At the bottom of a stretch of older history: back to the latest.
+class _LatestButton extends StatelessWidget {
+  const _LatestButton({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: Space.m),
+    child: Center(
+      child: Glass(
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(999),
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.keyboard_double_arrow_down_rounded, size: 17, color: AppColors.text),
+                  const SizedBox(width: 6),
+                  Text('Latest messages', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.text)),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+/// The round arrow that takes a chat back to its latest message, with how
+/// many came in meanwhile.
+class _DownArrow extends StatelessWidget {
+  const _DownArrow({required this.visible, required this.count, required this.onTap});
+  final bool visible;
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => IgnorePointer(
+    ignoring: !visible,
+    child: AnimatedOpacity(
+      duration: const Duration(milliseconds: 180),
+      opacity: visible ? 1 : 0,
+      child: AnimatedScale(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutBack,
+        scale: visible ? 1 : 0.6,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Glass(
+              child: Material(
+                type: MaterialType.transparency,
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: onTap,
+                  child: SizedBox.square(
+                    dimension: 44,
+                    child: Icon(Icons.keyboard_arrow_down_rounded, size: 28, color: AppColors.text),
+                  ),
+                ),
+              ),
+            ),
+            if (count > 0)
+              Positioned(
+                top: -6,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                    constraints: const BoxConstraints(minWidth: 20),
+                    decoration: BoxDecoration(color: AppColors.accent, borderRadius: BorderRadius.circular(999)),
+                    child: Text(
+                      count > 99 ? '99+' : '$count',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: AppColors.bg),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    ),
+  );
 }

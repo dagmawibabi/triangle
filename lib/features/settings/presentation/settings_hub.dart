@@ -1,4 +1,18 @@
 import '../../assistant/presentation/watches_screen.dart';
+import '../../assistant/activity_log.dart';
+import '../../assistant/presentation/activity_log_screen.dart';
+import '../../assistant/presentation/default_assistant_screen.dart';
+import '../../routines/routines.dart';
+import '../../routines/routines_screen.dart';
+import '../../vault/vault.dart';
+import '../../vault/vault_screen.dart';
+import 'more_apps_screen.dart';
+import '../../finance/finance_screen.dart';
+import '../../calls/call_history_screen.dart';
+import '../../usage/spend_limits.dart';
+import '../../usage/spend_limits_screen.dart';
+import '../../lock/app_lock.dart';
+import '../../lock/app_lock_settings.dart';
 import '../../brief/brief_prefs.dart';
 import '../../brief/brief_screen.dart';
 import '../../brief/brief_settings_screen.dart';
@@ -38,7 +52,11 @@ import 'permissions_screen.dart';
 import 'watch_timing_screen.dart';
 import '../../account/security_screen.dart';
 import '../../account/storage_screen.dart';
+import '../../telegram/data/content_filters.dart';
+import '../../telegram/presentation/block_mute_screen.dart';
 import '../../telegram/presentation/folders_screen.dart';
+import '../../screen/screen_control_screen.dart';
+import '../../device/device.dart';
 
 /// Settings at a glance: who's signed in, then a few groups that each open
 /// a page of their own.
@@ -572,12 +590,6 @@ class SettingsHub extends ConsumerWidget {
                   tint: s.hasAnyKey ? null : AppColors.warning,
                 ),
                 tile(
-                  Icons.extension_outlined,
-                  'MCP & Skills',
-                  'Discover, install, manage, and choose assistant tools',
-                  () => _open(context, const McpSkillsSettingsScreen()),
-                ),
-                tile(
                   SettingsSection.assistant.icon,
                   SettingsSection.assistant.title,
                   SettingsSection.assistant.subtitle,
@@ -586,6 +598,38 @@ class SettingsHub extends ConsumerWidget {
                     const SettingsScreen(section: SettingsSection.assistant),
                   ),
                 ),
+                tile(
+                  SettingsSection.proactivity.icon,
+                  SettingsSection.proactivity.title,
+                  !s.proactive
+                      ? 'Paused'
+                      : '${s.notifications ? 'Notifications on' : 'Notifications off'} · ${s.keepAlive || s.backgroundAlways ? 'runs in background' : 'only while open'}',
+                  () => _open(
+                    context,
+                    const SettingsScreen(section: SettingsSection.proactivity),
+                  ),
+                ),
+                tile(
+                  Icons.timer_outlined,
+                  'Response timing',
+                  _watchTimingLabel(s.watchResponseDelaySeconds),
+                  () => _open(context, const WatchTimingScreen()),
+                ),
+                tile(
+                  Icons.assistant_outlined,
+                  'Default assistant',
+                  'Open Triangle by long-pressing home',
+                  () => _open(context, const DefaultAssistantScreen()),
+                ),
+                if (Device.supported)
+                  tile(
+                    Icons.touch_app_outlined,
+                    'Screen control',
+                    'Let the assistant read and use other apps',
+                    () => _open(context, const ScreenControlScreen()),
+                  ),
+              ]),
+              group('Tools & apps', [
                 tile(
                   Icons.handyman_outlined,
                   'Tools',
@@ -602,6 +646,81 @@ class SettingsHub extends ConsumerWidget {
                       : '${s.hasComposioKey ? '$connectedApps apps connected · ' : ''}$services of 4 services set up',
                   () => _open(context, const AppsWebScreen()),
                 ),
+                tile(
+                  Icons.extension_outlined,
+                  'MCP & Skills',
+                  'Discover, install, manage, and choose assistant tools',
+                  () => _open(context, const McpSkillsSettingsScreen()),
+                ),
+                tile(
+                  Icons.apps_rounded,
+                  'More apps',
+                  'Markets & travel, Bible, Reddit & Hacker News, books & radio, YouTube, research papers',
+                  () => _open(context, const MoreAppsScreen()),
+                ),
+              ]),
+              group('Your data', [
+                tile(
+                  Icons.account_balance_wallet_outlined,
+                  'Finance',
+                  'Bank & wallet texts, accounts, transactions, budgets',
+                  () => _open(context, const FinanceScreen()),
+                ),
+                tile(
+                  Icons.call_outlined,
+                  'Call history',
+                  'Talk time, missed calls, who you call and when',
+                  () => _open(context, const CallHistoryScreen()),
+                ),
+                tile(
+                  Icons.shield_outlined,
+                  'Vault',
+                  () {
+                    final n = ref.watch(vaultProvider).length;
+                    return n == 0 ? 'Your numbers, addresses and details, for the assistant' : '$n item${n == 1 ? '' : 's'} · encrypted on this phone';
+                  }(),
+                  () => _open(context, const VaultScreen()),
+                ),
+              ]),
+              group('Automation', [
+                tile(
+                  Icons.visibility_outlined,
+                  'Watches',
+                  telegram ? '$watches on · Telegram, phone, schedules and apps' : '$watches on · phone, schedules and apps',
+                  () => _open(context, const WatchesScreen()),
+                ),
+                tile(
+                  Icons.account_tree_outlined,
+                  'Routines',
+                  () {
+                    final all = ref.watch(routineStoreProvider);
+                    final on = all.where((r) => r.enabled).length;
+                    return all.isEmpty ? 'Build step-by-step automations' : '${all.length} routine${all.length == 1 ? '' : 's'} · $on on';
+                  }(),
+                  () => _open(context, const RoutinesScreen()),
+                ),
+                tile(
+                  Icons.wb_twilight_rounded,
+                  'Briefs',
+                  s.briefsScheduled
+                      ? [if (s.briefMorningOn) 'Morning ${s.briefMorning}', if (s.briefNightOn) 'night ${s.briefNight}'].join(' · ')
+                      : 'On demand only',
+                  () => _open(context, const BriefScreen()),
+                ),
+                tile(
+                  Icons.tune_rounded,
+                  'Brief settings',
+                  () {
+                    final p = ref.watch(briefPrefsProvider);
+                    final chats = p.scope == BriefScope.chosen
+                        ? '${p.chosen.length} chosen chats'
+                        : 'All chats${p.excluded.isEmpty ? '' : ' but ${p.excluded.length}'}';
+                    return '$chats · ${p.tone.label.toLowerCase()} · ${p.length.label.toLowerCase()}';
+                  }(),
+                  () => _open(context, const BriefSettingsScreen()),
+                ),
+              ]),
+              group('Safety & control', [
                 SwitchListTile(
                   secondary: lead(Container(
                     width: 36,
@@ -627,48 +746,6 @@ class SettingsHub extends ConsumerWidget {
                       .setReadOnlyMode,
                 ),
                 tile(
-                  Icons.insights_outlined,
-                  'Usage & cost',
-                  spentToday > 0
-                      ? '${usd(spentToday)} today'
-                      : 'Tokens and spend by chat, model and modality',
-                  () => _open(context, const UsageScreen()),
-                ),
-              ]),
-              group('Automation', [
-                tile(
-                  Icons.visibility_outlined,
-                  'Watches & routines',
-                  telegram ? '$watches on · Telegram, schedules and apps' : '$watches on · schedules and apps',
-                  () => _open(context, const WatchesScreen()),
-                ),
-                tile(
-                  Icons.timer_outlined,
-                  'Response timing',
-                  _watchTimingLabel(s.watchResponseDelaySeconds),
-                  () => _open(context, const WatchTimingScreen()),
-                ),
-                tile(
-                  Icons.wb_twilight_rounded,
-                  'Briefs',
-                  s.briefsScheduled
-                      ? [if (s.briefMorningOn) 'Morning ${s.briefMorning}', if (s.briefNightOn) 'night ${s.briefNight}'].join(' · ')
-                      : 'On demand only',
-                  () => _open(context, const BriefScreen()),
-                ),
-                tile(
-                  Icons.tune_rounded,
-                  'Brief settings',
-                  () {
-                    final p = ref.watch(briefPrefsProvider);
-                    final chats = p.scope == BriefScope.chosen
-                        ? '${p.chosen.length} chosen chats'
-                        : 'All chats${p.excluded.isEmpty ? '' : ' but ${p.excluded.length}'}';
-                    return '$chats · ${p.tone.label.toLowerCase()} · ${p.length.label.toLowerCase()}';
-                  }(),
-                  () => _open(context, const BriefSettingsScreen()),
-                ),
-                tile(
                   Icons.front_hand_outlined,
                   'Approvals',
                   s.readOnlyMode
@@ -677,21 +754,53 @@ class SettingsHub extends ConsumerWidget {
                   () => _open(context, const ApprovalsScreen()),
                 ),
                 tile(
+                  Icons.history_rounded,
+                  'Activity log',
+                  () {
+                    final log = ref.watch(activityLogProvider);
+                    final now = DateTime.now();
+                    final today = log.where((e) => e.at.isAfter(DateTime(now.year, now.month, now.day)) && e.outcome == ActivityOutcome.done).length;
+                    return log.isEmpty ? 'Everything the assistant sends, changes or deletes, with Undo' : '$today action${today == 1 ? '' : 's'} today · ${log.length} logged';
+                  }(),
+                  () => _open(context, const ActivityLogScreen()),
+                ),
+                tile(
+                  Icons.savings_outlined,
+                  'Spending limits',
+                  () {
+                    final l = ref.watch(spendLimitsProvider);
+                    if (!l.any) return 'No limits';
+                    return [
+                      if (l.daily != null) '${formatUsd(l.daily!)}/day',
+                      if (l.monthly != null) '${formatUsd(l.monthly!)}/month',
+                      if (l.perWatchDaily != null) '${formatUsd(l.perWatchDaily!)} per watch/day',
+                    ].join(' · ');
+                  }(),
+                  () => _open(context, const SpendLimitsScreen()),
+                ),
+                tile(
+                  Icons.insights_outlined,
+                  'Usage & cost',
+                  spentToday > 0
+                      ? '${usd(spentToday)} today'
+                      : 'Tokens and spend by chat, model and modality',
+                  () => _open(context, const UsageScreen()),
+                ),
+                tile(
+                  Icons.lock_outline_rounded,
+                  'App lock',
+                  () {
+                    final l = ref.watch(appLockProvider);
+                    if (!l.enabled) return 'Off';
+                    return '${l.biometrics && l.biometricsAvailable ? 'Fingerprint or passcode' : 'Passcode'} · ${lockAfterLabel(l.lockAfter).toLowerCase()}';
+                  }(),
+                  () => _open(context, const AppLockSettingsScreen()),
+                ),
+                tile(
                   Icons.verified_user_outlined,
                   'Permissions',
                   'Background, notifications, and the phone\'s texts, calls and contacts',
                   () => _open(context, const PermissionsScreen()),
-                ),
-                tile(
-                  SettingsSection.proactivity.icon,
-                  SettingsSection.proactivity.title,
-                  !s.proactive
-                      ? 'Paused'
-                      : '${s.notifications ? 'Notifications on' : 'Notifications off'} · ${s.keepAlive || s.backgroundAlways ? 'runs in background' : 'only while open'}',
-                  () => _open(
-                    context,
-                    const SettingsScreen(section: SettingsSection.proactivity),
-                  ),
                 ),
               ]),
               group('Experience', [
@@ -755,6 +864,21 @@ class SettingsHub extends ConsumerWidget {
                   'Privacy & security',
                   'Check-up, logged-in devices, who sees what',
                   () => _open(context, const SecurityScreen()),
+                ),
+                tile(
+                  Icons.block_rounded,
+                  'Block & mute',
+                  () {
+                    final f = ref.watch(contentFiltersProvider);
+                    final people = ref.watch(blockedSendersProvider).length;
+                    final parts = [
+                      if (people > 0) '$people blocked account${people == 1 ? '' : 's'}',
+                      if (f.blockedChats.isNotEmpty) '${f.blockedChats.length} blocked chat${f.blockedChats.length == 1 ? '' : 's'}',
+                      if (f.mutedWords.isNotEmpty) '${f.mutedWords.length} muted word${f.mutedWords.length == 1 ? '' : 's'}',
+                    ];
+                    return parts.isEmpty ? 'Hide blocked accounts, channels, groups and muted words' : parts.join(' · ');
+                  }(),
+                  () => _open(context, const BlockMuteScreen()),
                 ),
                 tile(
                   Icons.folder_copy_outlined,

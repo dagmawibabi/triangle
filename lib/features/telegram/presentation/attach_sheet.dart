@@ -238,9 +238,12 @@ class _GalleryState extends State<_Gallery> {
         if (mounted) setState(() => _denied = true);
         return;
       }
-      final paths = await PhotoManager.getAssetPathList(type: RequestType.common);
+      // Newest first, like Telegram: without an order Android lists the
+      // gallery oldest first, so the latest shots ended up at the bottom.
+      final newest = FilterOptionGroup(orders: [const OrderOption(type: OrderOptionType.createDate, asc: false)]);
+      final paths = await PhotoManager.getAssetPathList(type: RequestType.common, filterOption: newest);
       // "All videos" is the videos-only view of the whole library.
-      final videos = await PhotoManager.getAssetPathList(type: RequestType.video, onlyAll: true);
+      final videos = await PhotoManager.getAssetPathList(type: RequestType.video, onlyAll: true, filterOption: newest);
       final albums = <_Album>[
         for (final p in paths.where((p) => p.isAll)) _Album(p, 'All media'),
         for (final p in videos) _Album(p, 'All videos'),

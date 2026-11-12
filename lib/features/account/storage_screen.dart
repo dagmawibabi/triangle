@@ -70,7 +70,7 @@ String _percent(int part, int whole) {
 Future<int> _appFilesSize() async {
   final root = (await getApplicationSupportDirectory()).path;
   var total = 0;
-  for (final d in ['generated', 'sandbox', 'downloads', 'exports', 'screenshots', 'voice_notes', 'attachments']) {
+  for (final d in ['generated', 'sandbox', 'downloads', 'telegram', 'exports', 'screenshots', 'voice_notes', 'attachments']) {
     final dir = Directory('$root/$d');
     if (!await dir.exists()) continue;
     try {

@@ -42,23 +42,6 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
       ),
     ),
     const _Page(
-      title: 'All of Telegram, by asking.',
-      body: 'Post and edit stories, organise folders, run your channels with full statistics, give Stars, open t.me links in place, find every file anyone sent you, and keep your account safe with a security check-up.',
-      art: _FeatureGrid(
-        items: [
-          (Icons.amp_stories_outlined, 'Stories'),
-          (Icons.folder_copy_outlined, 'Folders'),
-          (Icons.query_stats_rounded, 'Statistics'),
-          (Icons.star_rounded, 'Stars'),
-          (Icons.manage_search_rounded, 'Search all'),
-          (Icons.health_and_safety_outlined, 'Security'),
-          (Icons.devices_rounded, 'Devices'),
-          (Icons.storage_rounded, 'Storage'),
-          (Icons.celebration_outlined, 'Effects'),
-        ],
-      ),
-    ),
-    const _Page(
       title: 'Your email, calendar and work apps.',
       body: 'Connect Gmail, Outlook, Google Calendar, Drive, Docs, Sheets, Slack, Notion, GitHub, Linear and Todoist, or any of '
           '500+ apps, through Composio. Read and triage your inbox, find a free slot, post to Slack, add a task. Emails open '
@@ -107,13 +90,38 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
     ),
     const _Page(
       title: 'Find what interests you.',
-      body: 'Search YouTube, catch up on X, explore public GitHub projects, and discover books with covers, details and legal free copies.',
+      body: 'Search YouTube and read its transcripts, catch up on X, Reddit and Hacker News, find research papers, and '
+          'discover books, free audiobooks, podcasts and radio. Films, shows, music and public GitHub projects too.',
       art: _FeatureGrid(
         items: [
           (Icons.ondemand_video_rounded, 'YouTube'),
           (Icons.alternate_email_rounded, 'X'),
-          (Icons.code_rounded, 'GitHub'),
+          (Icons.forum_outlined, 'Reddit'),
+          (Icons.newspaper_rounded, 'News'),
+          (Icons.science_outlined, 'Papers'),
           (Icons.menu_book_rounded, 'Books'),
+          (Icons.podcasts_rounded, 'Podcasts'),
+          (Icons.radio_rounded, 'Radio'),
+          (Icons.code_rounded, 'GitHub'),
+        ],
+      ),
+    ),
+    const _Page(
+      title: 'Handy, every day.',
+      body: 'Track spending and budgets from your bank texts. See your screen time and call history. Make and scan QR '
+          'codes, resize or cut out a picture. Check scores, the weather, your flight, a recipe or a word, read the '
+          'verse of the day, and see the Ethiopian date.',
+      art: _FeatureGrid(
+        items: [
+          (Icons.account_balance_wallet_outlined, 'Money'),
+          (Icons.hourglass_bottom_rounded, 'Screen time'),
+          (Icons.call_outlined, 'Calls'),
+          (Icons.qr_code_2_rounded, 'QR codes'),
+          (Icons.crop_rounded, 'Pictures'),
+          (Icons.sports_soccer_outlined, 'Scores'),
+          (Icons.wb_sunny_outlined, 'Weather'),
+          (Icons.restaurant_menu_rounded, 'Recipes'),
+          (Icons.translate_rounded, 'Words'),
         ],
       ),
     ),
@@ -128,9 +136,10 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
       art: _Glyph(icon: Icons.visibility_outlined),
     ),
     const _Page(
-      title: 'Reminders and routines.',
-      body: '"Remind me to walk in 5 minutes." "Every weekday at 9, catch me up on my channels." One-off or repeating, as plain alarms or as jobs the assistant carries out.',
-      art: _Glyph(icon: Icons.alarm_rounded),
+      title: 'Routines that run themselves.',
+      body: '"Every weekday at 9, catch me up on my channels." "Each Friday, sum up my spending." Describe a job and when '
+          'to do it, and the assistant carries it out on schedule. Run one now, change it or pause it anytime.',
+      art: _Glyph(icon: Icons.event_repeat_rounded),
     ),
     const _Page(
       title: 'Runs code, privately.',

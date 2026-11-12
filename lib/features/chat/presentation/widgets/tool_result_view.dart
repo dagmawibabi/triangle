@@ -87,6 +87,7 @@ class ToolResultView extends StatelessWidget {
     // Search results deserve a real reading surface, rather than the opaque
     // data dump used for an unknown tool response.
     if (name == 'web_search' && j['results'] is List) {
+      shown.addAll(const ['query', 'results']);
       return _WebSearchResults(
         query: '${j['query'] ?? ''}',
         results: (j['results'] as List).whereType<Map>().toList(),

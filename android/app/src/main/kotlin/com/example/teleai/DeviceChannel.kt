@@ -135,6 +135,30 @@ object DeviceChannel {
                 start(context, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
                 result.success(true)
             }
+            // Do Not Disturb access: needed to change the ringer mode.
+            "dndAccess" -> {
+                val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                result.success(nm.isNotificationPolicyAccessGranted)
+            }
+            "openDndAccess" -> {
+                start(context, Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+                result.success(true)
+            }
+            "screenTime" -> {
+                val days = call.argument<Int>("days") ?: 7
+                val end = call.argument<Number>("end")?.toLong()
+                Thread {
+                    try {
+                        val r = ScreenTime.query(context, days, end)
+                        android.os.Handler(android.os.Looper.getMainLooper()).post { result.success(r) }
+                    } catch (e: SecurityException) {
+                        android.os.Handler(android.os.Looper.getMainLooper()).post { result.error("usage_access", "Usage access is off.", null) }
+                    } catch (e: Exception) {
+                        android.os.Handler(android.os.Looper.getMainLooper()).post { result.error("failed", e.message ?: e.javaClass.simpleName, null) }
+                    }
+                }.start()
+            }
+            "imageOp" -> ImageOps.handle(call, result)
             "deviceInfo" -> result.success(deviceInfo(context))
             "battery" -> result.success(battery(context))
             "network" -> result.success(network(context))
@@ -546,7 +570,8 @@ object DeviceChannel {
             "all" -> Telephony.Sms.CONTENT_URI
             else -> Telephony.Sms.Inbox.CONTENT_URI
         }
-        val limit = (call.argument<Int>("limit") ?: 30).coerceIn(1, 200)
+        // The finance sync reads the inbox in bulk; everything else gets 200 at most.
+        val limit = (call.argument<Int>("limit") ?: 30).coerceIn(1, if (call.argument<Boolean>("bulk") == true) 5000 else 200)
         val clauses = mutableListOf<String>()
         val args = mutableListOf<String>()
         call.argument<String>("address")?.takeIf { it.isNotBlank() }?.let {
@@ -609,14 +634,18 @@ object DeviceChannel {
     }
 
     private fun callLog(context: Context, call: MethodCall): List<Map<String, Any?>> {
-        val limit = (call.argument<Int>("limit") ?: 30).coerceIn(1, 200)
+        // The call history analysis reads the whole log in bulk; other uses get 200 at most.
+        val bulk = call.argument<Boolean>("bulk") == true
+        val limit = (call.argument<Int>("limit") ?: 30).coerceIn(1, if (bulk) 50000 else 200)
         val type = call.argument<String>("type")
-        val where = when (type) {
-            "missed" -> "${CallLog.Calls.TYPE} = ${CallLog.Calls.MISSED_TYPE}"
-            "incoming" -> "${CallLog.Calls.TYPE} = ${CallLog.Calls.INCOMING_TYPE}"
-            "outgoing" -> "${CallLog.Calls.TYPE} = ${CallLog.Calls.OUTGOING_TYPE}"
-            else -> null
+        val clauses = mutableListOf<String>()
+        when (type) {
+            "missed" -> clauses.add("${CallLog.Calls.TYPE} = ${CallLog.Calls.MISSED_TYPE}")
+            "incoming" -> clauses.add("${CallLog.Calls.TYPE} = ${CallLog.Calls.INCOMING_TYPE}")
+            "outgoing" -> clauses.add("${CallLog.Calls.TYPE} = ${CallLog.Calls.OUTGOING_TYPE}")
         }
+        call.argument<Number>("since")?.let { clauses.add("${CallLog.Calls.DATE} >= ${it.toLong()}") }
+        val where = clauses.joinToString(" AND ").ifEmpty { null }
         val out = mutableListOf<Map<String, Any?>>()
         context.contentResolver.query(
             CallLog.Calls.CONTENT_URI,

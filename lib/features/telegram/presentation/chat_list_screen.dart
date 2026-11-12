@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:handy_tdlib/api.dart' as td;
@@ -6,12 +8,14 @@ import 'package:intl/intl.dart';
 import '../../../app/theme.dart';
 import '../../../infrastructure/telegram/telegram_client.dart';
 import '../data/message_content.dart';
+import '../data/search_history.dart';
 import '../data/telegram_store.dart';
 import '../../media/audio_player_ui.dart';
 import '../../settings/data/settings.dart';
 import '../data/telegram_tools.dart';
 import 'chat_actions.dart';
 import 'chat_view_screen.dart';
+import 'recent_searches.dart';
 import 'tg_avatar.dart';
 import '../../../infrastructure/telegram/accounts.dart';
 import '../../account/account_switcher.dart';
@@ -100,6 +104,14 @@ class ChatListScreen extends ConsumerStatefulWidget {
 
 class _ChatListScreenState extends ConsumerState<ChatListScreen> {
   String _q = '';
+  final _search = TextEditingController();
+  final _searchFocus = FocusNode();
+  late final SearchHistoryController _history;
+  late final SearchHistoryController _recentChats;
+
+  /// The chats Telegram counts as this list's most used, for the row of
+  /// faces over the search panel; loaded the first time the box is focused.
+  List<int>? _top;
   bool _unreadOnly = false;
   ChatRole _role = ChatRole.any;
   bool _myBots = false;
@@ -109,12 +121,87 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
   @override
   void initState() {
     super.initState();
+    _history = ref.read(searchHistoryProvider(_historyScope).notifier);
+    _recentChats = ref.read(recentChatsProvider(_historyScope).notifier);
+    _searchFocus.addListener(() {
+      if (_searchFocus.hasFocus && _top == null) _loadTop();
+      setState(() {});
+    });
     ref.read(telegramStoreProvider).ensureChatsLoaded();
     if (widget.folder == null && widget.section == BrowseSection.contacts)
       _loadContacts();
     if (widget.folder != null)
       ref.read(telegramStoreProvider).loadFolder(widget.folder!.id);
     ref.listenManual(activeAccountIdProvider, (_, _) => _accountSwitched());
+  }
+
+  /// Each list keeps its own recent searches.
+  String get _historyScope => widget.folder == null ? widget.section.name : 'folder:${widget.folder!.id}';
+
+  /// Saves what's typed as a recent search.
+  void _remember() => unawaited(_history.add(_q));
+
+  td.TopChatCategory? get _topCategory => widget.folder != null
+      ? const td.TopChatCategoryUsers()
+      : switch (widget.section) {
+          BrowseSection.dms || BrowseSection.contacts => const td.TopChatCategoryUsers(),
+          BrowseSection.bots => const td.TopChatCategoryBots(),
+          BrowseSection.groups => const td.TopChatCategoryGroups(),
+          BrowseSection.channels => const td.TopChatCategoryChannels(),
+          BrowseSection.archived => null,
+        };
+
+  Future<void> _loadTop() async {
+    _top = const [];
+    final category = _topCategory;
+    if (category == null) return;
+    try {
+      final r = await ref
+          .read(telegramClientProvider)
+          .send<td.Chats>(td.GetTopChats(category: category, limit: 20), limited: true);
+      if (mounted) setState(() => _top = r.chatIds);
+    } catch (_) {
+      // Top chats can be turned off in Telegram; the row just stays away.
+    }
+  }
+
+  /// Notes a chat (or contact) opened while searching, for "Recent".
+  void _opened(int id, {bool always = false}) {
+    if (!always && _q.trim().isEmpty) return;
+    _remember();
+    unawaited(_recentChats.add('$id'));
+  }
+
+  void _openRecent(int id) {
+    _opened(id, always: true);
+    if (widget.folder == null && widget.section == BrowseSection.contacts) {
+      _openContact(id);
+    } else {
+      _openChat(id);
+    }
+  }
+
+  void _clearAll() {
+    _history.clear();
+    _recentChats.clear();
+  }
+
+  void _openChat(int id) => Navigator.of(context).push(
+    MaterialPageRoute<void>(builder: (_) => ChatViewScreen(chatId: id)),
+  );
+
+  void _pickRecent(String q) {
+    _search.text = q;
+    _search.selection = TextSelection.collapsed(offset: q.length);
+    setState(() => _q = q);
+    _remember();
+  }
+
+  @override
+  void dispose() {
+    _search.dispose();
+    _searchFocus.dispose();
+    super.dispose();
   }
 
   /// Another account was picked from the app bar: its chats replace these.
@@ -146,6 +233,7 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
   }
 
   Future<void> _openContact(int userId) async {
+    _opened(userId);
     try {
       // Opens (or finds) the private chat; nothing is sent.
       final chat = await ref
@@ -249,15 +337,22 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
               itemBuilder: (_, i) => ChatTile(
                 chat: chats[i],
                 pinned: chats[i].pinnedIn.contains(listKey),
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => ChatViewScreen(chatId: chats[i].id),
-                  ),
-                ),
+                onTap: () {
+                  _opened(chats[i].id);
+                  _openChat(chats[i].id);
+                },
               ),
             );
     }
 
+    final history = ref.watch(searchHistoryProvider(_historyScope));
+    final recentIds = [for (final x in ref.watch(recentChatsProvider(_historyScope))) ?int.tryParse(x)];
+    final top = [
+      for (final id in _top ?? const <int>[])
+        if (store.chat(id) case final c? when c.title.isNotEmpty) c,
+    ];
+    final showHistory =
+        _searchFocus.hasFocus && q.isEmpty && (history.isNotEmpty || recentIds.isNotEmpty || top.isNotEmpty);
     final count = contacts ? (_contacts?.length ?? 0) : source.length;
     return Scaffold(
       appBar: AppBar(
@@ -287,7 +382,11 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
               children: [
                 Expanded(
                   child: TextField(
+                    controller: _search,
+                    focusNode: _searchFocus,
+                    textInputAction: TextInputAction.search,
                     onChanged: (v) => setState(() => _q = v),
+                    onSubmitted: (_) => _remember(),
                     decoration: InputDecoration(
                       isDense: true,
                       border: OutlineInputBorder(
@@ -356,7 +455,35 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
                 ],
               ),
             ),
-          Expanded(child: body),
+          Expanded(
+            child: showHistory
+                ? ListView(
+                    children: [
+                      if (top.isNotEmpty)
+                        SizedBox(
+                          height: 108,
+                          child: ListView(
+                            scrollDirection: Axis.horizontal,
+                            padding: const EdgeInsets.symmetric(horizontal: Space.s, vertical: Space.s),
+                            children: [
+                              for (final c in top) _TopPeer(chat: c, onTap: () => _openRecent(c.id)),
+                            ],
+                          ),
+                        ),
+                      if (history.isNotEmpty || recentIds.isNotEmpty) RecentHeader(onClear: _clearAll),
+                      if (history.isNotEmpty)
+                        RecentTermChips(terms: history, onPick: _pickRecent, onRemove: _history.remove),
+                      for (final id in recentIds)
+                        _RecentChatRow(
+                          id: id,
+                          contact: contacts,
+                          onTap: () => _openRecent(id),
+                          onRemove: () => _recentChats.remove('$id'),
+                        ),
+                    ],
+                  )
+                : body,
+          ),
         ],
       ),
     );
@@ -558,6 +685,126 @@ class _Badge extends StatelessWidget {
   );
 }
 
+/// "last seen recently", "online", … for a person.
+String lastSeenText(td.UserStatus? status) => switch (status) {
+  td.UserStatusOnline() => 'online',
+  td.UserStatusOffline(:final wasOnline) => 'last seen ${shortTime(wasOnline)}',
+  td.UserStatusRecently() => 'last seen recently',
+  td.UserStatusLastWeek() => 'last seen within a week',
+  td.UserStatusLastMonth() => 'last seen within a month',
+  _ => 'last seen a long time ago',
+};
+
+/// One face in the row of most-used chats over the search panel.
+class _TopPeer extends StatelessWidget {
+  const _TopPeer({required this.chat, required this.onTap});
+  final ChatInfo chat;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    borderRadius: BorderRadius.circular(Radii.m),
+    onTap: onTap,
+    child: SizedBox(
+      width: 78,
+      child: Column(
+        children: [
+          TgAvatar(chatId: chat.id, title: chat.title, size: 60),
+          const SizedBox(height: 6),
+          Text(
+            chat.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: context.text.bodySmall?.copyWith(color: AppColors.text),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+/// A chat (or contact) opened from a search: face, name and a status line,
+/// like "last seen recently", "bot" or "16 557 subscribers". Long-press
+/// removes it.
+class _RecentChatRow extends ConsumerWidget {
+  const _RecentChatRow({required this.id, required this.contact, required this.onTap, required this.onRemove});
+
+  /// A chat id, or for [contact] a user id (the same as their chat's).
+  final int id;
+  final bool contact;
+  final VoidCallback onTap;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final store = ref.watch(telegramStoreProvider);
+    final chat = store.chat(id);
+    final userId = switch (chat?.type) {
+      td.ChatTypePrivate(:final userId) => userId,
+      _ => contact ? id : null,
+    };
+    final user = userId == null ? null : store.users[userId];
+    final title = chat != null && chat.title.isNotEmpty ? chat.title : (user != null ? store.userName(user.id) : '');
+    if (title.isEmpty) return const SizedBox.shrink();
+    final kind = chat == null ? ChatKind.private : store.kindOf(chat);
+    final members = chat == null ? null : store.memberCount(chat);
+    String count(int n) => NumberFormat.decimalPattern().format(n).replaceAll(',', ' ');
+    final sub = switch (kind) {
+      ChatKind.saved => 'your cloud storage',
+      ChatKind.bot => 'bot',
+      ChatKind.private || ChatKind.secret => lastSeenText(user?.status),
+      ChatKind.channel => members == null ? 'channel' : '${count(members)} subscribers',
+      ChatKind.group => members == null ? 'group' : '${count(members)} members',
+    };
+    return InkWell(
+      onTap: onTap,
+      onLongPress: () async {
+        final remove = await showModalBottomSheet<bool>(
+          context: context,
+          showDragHandle: true,
+          builder: (sheet) => SafeArea(
+            child: ListTile(
+              leading: const Icon(Icons.close_rounded),
+              title: Text('Remove $title from recent'),
+              onTap: () => Navigator.pop(sheet, true),
+            ),
+          ),
+        );
+        if (remove == true) onRemove();
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: Space.l, vertical: Space.s),
+        child: Row(
+          children: [
+            chat == null && userId != null
+                ? TgAvatar(userId: userId, title: title, size: 52)
+                : TgAvatar(chatId: id, title: title, size: 52),
+            const SizedBox(width: Space.m),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: context.text.titleMedium),
+                  const SizedBox(height: 2),
+                  Text(
+                    sub,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: context.text.bodyMedium?.copyWith(
+                      color: sub == 'online' ? AppColors.accent : AppColors.text3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _ContactTile extends ConsumerWidget {
   const _ContactTile({required this.user, required this.onTap});
   final td.User user;
@@ -568,15 +815,7 @@ class _ContactTile extends ConsumerWidget {
     final store = ref.watch(telegramStoreProvider);
     final name = store.userName(user.id);
     final username = store.username(user.usernames);
-    final status = switch (user.status) {
-      td.UserStatusOnline() => 'online',
-      td.UserStatusOffline(:final wasOnline) =>
-        'last seen ${shortTime(wasOnline)}',
-      td.UserStatusRecently() => 'last seen recently',
-      td.UserStatusLastWeek() => 'last seen within a week',
-      td.UserStatusLastMonth() => 'last seen within a month',
-      _ => 'last seen a long time ago',
-    };
+    final status = lastSeenText(user.status);
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(
         horizontal: Space.l,

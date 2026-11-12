@@ -5,18 +5,6 @@ part of 'telegram_tools.dart';
 
 final _extraTools = <TelegramTool>[
   TelegramTool(
-    name: 'get_stories',
-    label: 'Looking at stories',
-    category: ToolCategory.media,
-    description:
-        'Active stories of a user or channel (chat_id), or with archived: true the ones it posted before (your own '
-        'or channels you admin): date, caption, views and reactions where shown.',
-    parameters: _obj({
-      'chat_id': {'type': 'integer'},
-      'archived': {'type': 'boolean'},
-    }, ['chat_id']),
-  ),
-  TelegramTool(
     name: 'add_contact',
     label: 'Adding a contact',
     category: ToolCategory.contacts,

@@ -171,6 +171,7 @@ class _HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                       onOpen: prefs.setDrawerChatsOpen,
                       children: [
                         for (final section in BrowseSection.values)
+                          if (settings.drawerShows('chats.${section.name}'))
                           _BrowseTile(
                             section: section,
                             count: section == BrowseSection.contacts
@@ -184,6 +185,7 @@ class _HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                             onTap: () =>
                                 go((_) => ChatListScreen(section: section)),
                           ),
+                        if (settings.drawerShows('chats.calls'))
                         InkWell(
                           borderRadius: BorderRadius.circular(Radii.s),
                           child: Padding(
@@ -234,6 +236,7 @@ class _HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                       open: settings.drawerToolsOpen,
                       onOpen: prefs.setDrawerToolsOpen,
                       children: [
+                        if (settings.drawerShows('tools.files'))
                         _DrawerActionTile(
                           icon: Icons.folder_copy_outlined,
                           title: 'Files',
@@ -242,6 +245,7 @@ class _HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                               : 'Generated, downloaded and sandbox files',
                           onTap: () => go((_) => const GeneratedFilesScreen()),
                         ),
+                        if (settings.drawerShows('tools.brief'))
                         _DrawerActionTile(
                           icon: Icons.wb_twilight_rounded,
                           title: 'Brief',
@@ -250,6 +254,7 @@ class _HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                           ),
                           onTap: () => go((_) => const BriefScreen()),
                         ),
+                        if (settings.drawerShows('tools.canvas'))
                         _DrawerActionTile(
                           icon: Icons.dashboard_customize_outlined,
                           title: 'Content Canvas',
@@ -257,6 +262,7 @@ class _HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                               '${ref.watch(canvasProvider).folders.length} folders · ${ref.watch(canvasProvider).items.length} saved',
                           onTap: () => go((_) => const ContentCanvasScreen()),
                         ),
+                        if (settings.drawerShows('tools.search'))
                         _DrawerActionTile(
                           icon: Icons.manage_search_rounded,
                           title: 'Search',
@@ -266,6 +272,7 @@ class _HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                           onTap: () =>
                               go((_) => const EverywhereSearchScreen()),
                         ),
+                        if (settings.drawerShows('tools.browser'))
                         _DrawerActionTile(
                           icon: Icons.public_rounded,
                           title: 'Browser',
@@ -275,6 +282,7 @@ class _HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                             BrowserScreen.open(context);
                           },
                         ),
+                        if (settings.drawerShows('tools.pc'))
                         _DrawerActionTile(
                           icon: Icons.desktop_windows_outlined,
                           title: 'PC screen',

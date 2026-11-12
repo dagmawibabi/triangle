@@ -15,7 +15,7 @@ void main() {
 
   test('creative tools belong to Apps & web and need no Telegram', () {
     final creative = telegramTools.where(
-      (t) => t.category == ToolCategory.creative || t.category == ToolCategory.vision,
+      (t) => t.category == ToolCategory.creative || t.category == ToolCategory.files,
     );
     expect(
       creative.map((t) => t.name),

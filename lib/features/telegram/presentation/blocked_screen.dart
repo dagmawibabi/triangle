@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:handy_tdlib/api.dart' as td;
 
 import '../../../app/theme.dart';
+import '../data/content_filters.dart';
 import '../data/telegram_store.dart';
 import '../data/telegram_tools.dart';
 import 'chat_actions.dart' show confirmAction;
@@ -32,6 +35,7 @@ class _BlockedScreenState extends ConsumerState<BlockedScreen> {
   Future<void> _load() async {
     try {
       final r = await ref.read(toolRunnerProvider).blocked();
+      unawaited(ref.read(blockedSendersProvider.notifier).reload());
       if (mounted) {
         setState(() {
           _senders = r.senders;

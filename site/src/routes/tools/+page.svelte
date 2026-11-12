@@ -12,7 +12,11 @@
 		{ id: 'modify', label: 'Changes' },
 		{ id: 'destructive', label: 'Deletes' }
 	];
-	const kindName: Record<string, string> = { read: 'Reads', modify: 'Changes', destructive: 'Deletes' };
+	const kindName: Record<string, string> = {
+		read: 'Reads',
+		modify: 'Changes',
+		destructive: 'Deletes'
+	};
 
 	let query = $state('');
 	let kind = $state('all');
@@ -29,7 +33,8 @@
 						...category,
 						tools: category.tools.filter((tool) => {
 							if (kind !== 'all' && tool.access !== kind) return false;
-							const text = `${tool.label} ${tool.name} ${tool.summary} ${category.title} ${group.title}`.toLowerCase();
+							const text =
+								`${tool.label} ${tool.name} ${tool.summary} ${category.title} ${group.title}`.toLowerCase();
 							return words.every((word) => text.includes(word));
 						})
 					}))
@@ -88,7 +93,7 @@
 	<title>All tools: Triangle</title>
 	<meta
 		name="description"
-		content={`Every tool in Triangle, by what it works with: ${data.toolCount} tools for Telegram, your apps, your phone, your PC, the web and the cloud.`}
+		content={`Every tool in Triangle, by what it works with: ${data.toolCount} tools for Telegram, your apps, your phone, your money, your PC, the web, everyday questions and the cloud.`}
 	/>
 	<meta property="og:title" content="All Triangle tools" />
 	<meta property="og:type" content="website" />
@@ -122,12 +127,19 @@
 		</label>
 		<div class="kinds" role="group" aria-label="Filter by what a tool does">
 			{#each kinds as item}
-				<button type="button" class:active={kind === item.id} aria-pressed={kind === item.id} onclick={() => (kind = item.id)}>
+				<button
+					type="button"
+					class:active={kind === item.id}
+					aria-pressed={kind === item.id}
+					onclick={() => (kind = item.id)}
+				>
 					{item.label}
 				</button>
 			{/each}
 		</div>
-		<p class="found" aria-live="polite">{filtering ? `${total} of ${data.toolCount} tools` : `${data.toolCount} tools`}</p>
+		<p class="found" aria-live="polite">
+			{filtering ? `${total} of ${data.toolCount} tools` : `${data.toolCount} tools`}
+		</p>
 	</div>
 
 	<div class="catalogue-body">
@@ -168,7 +180,9 @@
 			{:else}
 				<div class="no-tools">
 					<p>No tools match “{query}”{kind === 'all' ? '' : ` in ${kindName[kind]}`}.</p>
-					<button type="button" class="button ghost" data-magnetic onclick={clear}><span>Clear search</span></button>
+					<button type="button" class="button ghost" data-magnetic onclick={clear}
+						><span>Clear search</span></button
+					>
 				</div>
 			{/each}
 		</div>

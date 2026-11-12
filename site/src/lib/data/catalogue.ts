@@ -22,21 +22,52 @@ const plan = [
 		title: 'Telegram',
 		text: 'A full Telegram client the assistant can use with your account.',
 		from: 'app',
-		categories: ['chats', 'messages', 'contacts', 'folders', 'media', 'stories', 'members', 'bots', 'calls', 'analytics', 'stars', 'account']
+		categories: [
+			'chats',
+			'messages',
+			'contacts',
+			'folders',
+			'media',
+			'stories',
+			'members',
+			'bots',
+			'calls',
+			'analytics',
+			'stars',
+			'account'
+		]
 	},
 	{
 		id: 'assistant',
 		title: 'Assistant',
-		text: 'What it remembers, watches for and makes.',
+		text: 'What it remembers, keeps safe, watches for, runs on a schedule, checks and makes.',
 		from: 'app',
-		categories: ['memory', 'automation', 'canvas', 'files', 'vision', 'creative', 'decisions', 'ai']
+		categories: [
+			'memory',
+			'vault',
+			'automation',
+			'routines',
+			'system',
+			'canvas',
+			'files',
+			'imageTools',
+			'creative',
+			'decisions'
+		]
 	},
 	{
 		id: 'phone',
 		title: 'Your phone',
-		text: 'Texts, calls, alarms, battery and what’s playing. Actions ask first.',
+		text: 'Texts, calls, notifications, screen time, alarms, and other apps it can read and use for you. Actions ask first.',
 		from: 'app',
-		categories: ['device']
+		categories: ['device', 'screen', 'callHistory', 'screenTime']
+	},
+	{
+		id: 'money',
+		title: 'Money',
+		text: 'Your accounts and budgets, read from your bank texts, plus markets, prices and currencies.',
+		from: 'app',
+		categories: ['finance', 'markets', 'world']
 	},
 	{
 		id: 'pc',
@@ -50,14 +81,32 @@ const plan = [
 		title: 'Connected apps',
 		text: 'Email, calendar, documents and work apps you choose to connect.',
 		from: 'app',
-		categories: ['gmail', 'outlook', 'calendar', 'googleDocs', 'slack', 'notion', 'githubAccount', 'linear', 'todoist', 'apps']
+		categories: [
+			'gmail',
+			'outlook',
+			'calendar',
+			'googleDocs',
+			'slack',
+			'notion',
+			'githubAccount',
+			'linear',
+			'todoist',
+			'apps'
+		]
 	},
 	{
 		id: 'web',
 		title: 'Web and discovery',
-		text: 'A real browser, public GitHub, and things to watch, read and hear.',
+		text: 'A real browser, YouTube, Reddit and Hacker News, research papers, books, podcasts, radio and more.',
 		from: 'app',
-		categories: ['web', 'developer', 'discover']
+		categories: ['web', 'youtube', 'discover', 'news', 'papers', 'library', 'developer', 'packages']
+	},
+	{
+		id: 'everyday',
+		title: 'Everyday',
+		text: 'Words and translation, recipes, sports, the Bible, the Ethiopian calendar, QR codes, retro games and the wider world.',
+		from: 'app',
+		categories: ['reference', 'food', 'sports', 'bible', 'utilities', 'explore', 'games']
 	},
 	{
 		id: 'cloud',

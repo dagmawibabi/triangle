@@ -50,6 +50,7 @@ ToolDocumentation documentationFor(TelegramTool tool) {
                 ? 'ElevenLabs'
                 : 'Configured generation model',
           ToolCategory.device => 'Android',
+          ToolCategory.papers => 'ScholarXIV Papers API (arXiv, Semantic Scholar, OpenAlex, PubMed and more)',
           ToolCategory.code => 'On-device Python / JavaScript sandbox',
           ToolCategory.apps => 'Composio',
           _ =>
@@ -67,6 +68,8 @@ ToolDocumentation documentationFor(TelegramTool tool) {
       'A Composio key and a connected ${appLabel(app)} account with permission for this action.',
     if (tool.category == ToolCategory.apps)
       'A Composio key; running an action also needs its app connected.',
+    if (tool.category == ToolCategory.papers)
+      tool.name == 'paper_search' ? 'A ScholarXIV API key (any plan).' : 'A ScholarXIV API key on the Go plan or above.',
     if (tool.category == ToolCategory.device) 'Android. Permission is requested the first time it is needed; some actions also need Android settings access.',
     if (tool.category == ToolCategory.code || tool.name.startsWith('browser_'))
       'Android, iOS or macOS.',

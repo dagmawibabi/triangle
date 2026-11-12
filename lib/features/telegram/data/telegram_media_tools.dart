@@ -18,7 +18,7 @@ final _mediaTools = <TelegramTool>[
   TelegramTool(
     name: 'view_image',
     label: 'Looking at images',
-    category: ToolCategory.vision,
+    category: ToolCategory.files,
     cost: ToolCost.ai,
     description:
         'Lets you inspect images from any available source: attachments (by name, including earlier messages), '
@@ -250,7 +250,7 @@ extension TelegramMedia on TelegramToolRunner {
             timeout: const Duration(minutes: 3),
           );
     if (!f.local.isDownloadingCompleted) throw StateError('The download did not finish.');
-    final copy = await uniqueGeneratedFile(name.isEmpty ? '$kind-$messageId' : name);
+    final copy = await uniqueGeneratedFile(name.isEmpty ? '$kind-$messageId' : name, folder: 'telegram');
     await File(f.local.path).copy(copy.path);
     return (path: copy.path, name: name.isEmpty ? copy.uri.pathSegments.last : name, mime: mime, kind: kind, size: f.size, duration: duration);
   }

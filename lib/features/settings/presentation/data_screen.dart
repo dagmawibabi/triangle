@@ -24,6 +24,7 @@ class DataScreen extends ConsumerStatefulWidget {
 class _DataScreenState extends ConsumerState<DataScreen> {
   bool _keys = true;
   bool _chats = false;
+  bool _vault = true;
   bool _busy = false;
 
   Future<void> _guard(Future<void> Function() work) async {
@@ -38,7 +39,7 @@ class _DataScreenState extends ConsumerState<DataScreen> {
   }
 
   Future<void> _export() => _guard(() async {
-    final profile = await AppData.export(keys: _keys, chats: _chats);
+    final profile = await AppData.export(keys: _keys, chats: _chats, vault: _vault);
     final name = 'triangle-profile-${DateFormat('yyyy-MM-dd').format(DateTime.now())}.json';
     final path = await FilePicker.saveFile(
       dialogTitle: 'Save your Triangle profile',
@@ -84,7 +85,11 @@ class _DataScreenState extends ConsumerState<DataScreen> {
               '${counts['settings']} settings and memories',
               '${counts['keys']} keys',
               if (counts['chats']! > 0) '${counts['chats']} AI chats',
+              if (counts['vault']! > 0) '${counts['vault']} vault items',
               if (counts['watches']! > 0) '${counts['watches']} watches',
+              if (counts['routines']! > 0) '${counts['routines']} routines',
+              if (counts['rules']! > 0) '${counts['rules']} approval rules',
+              if (counts['transactions']! > 0) '${counts['transactions']} transactions',
               if (counts['widgets']! > 0) '${counts['widgets']} widgets',
               if (counts['skills']! > 0) '${counts['skills']} skills',
               if (counts['mcp']! > 0) '${counts['mcp']} MCP servers${counts['keys'] == 0 ? ' (add their keys again)' : ''}',
@@ -94,7 +99,8 @@ class _DataScreenState extends ConsumerState<DataScreen> {
           ),
           const SizedBox(height: Space.s),
           Text(
-            'Its settings and keys replace the ones here. Telegram stays as it is.',
+            'Its settings and keys replace the ones here. Telegram stays signed in as it is, and each account\'s '
+            'assistant settings go to the same account here. The app lock stays as it is.',
             style: context.text.bodySmall,
             textAlign: TextAlign.center,
           ),
@@ -123,9 +129,9 @@ class _DataScreenState extends ConsumerState<DataScreen> {
             Text('Clear all data?', style: context.text.titleMedium, textAlign: TextAlign.center),
             const SizedBox(height: Space.s),
             Text(
-              'AI chats, memories, files the assistant made or downloaded, briefs, the Content Canvas, '
-              'watches, reminders and usage are deleted from this phone. This can\'t be undone. '
-              'Telegram stays signed in.',
+              'AI chats, memories, the vault, money records, files the assistant made or downloaded, briefs, '
+              'the Content Canvas, watches, routines, reminders, the activity log and usage are deleted from '
+              'this phone. This can\'t be undone. Telegram stays signed in and the app lock stays on.',
               style: context.text.bodySmall,
               textAlign: TextAlign.center,
             ),
@@ -190,8 +196,10 @@ class _DataScreenState extends ConsumerState<DataScreen> {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(Space.l, Space.l, Space.l, Space.s),
                   child: Text(
-                    'One file with your setup: settings, memories, instructions, watches, reminders, brief settings, '
-                    'the Content Canvas and usage. Restore it after reinstalling to carry on where you were.',
+                    'One file with your setup: settings, memories, instructions, watches, routines, reminders, '
+                    'brief settings, approval rules, spend limits, Block & mute, money records, the Content Canvas, '
+                    'the activity log and usage. Restore it after reinstalling to carry on where you were. '
+                    'The app lock and Telegram sign-ins stay on this phone.',
                     style: context.text.bodySmall?.copyWith(height: 1.4),
                   ),
                 ),
@@ -206,6 +214,18 @@ class _DataScreenState extends ConsumerState<DataScreen> {
                   ),
                   value: _keys,
                   onChanged: (v) => setState(() => _keys = v),
+                ),
+                SwitchListTile(
+                  secondary: lead(const Icon(Icons.lock_outline_rounded)),
+                  title: const Text('Include vault'),
+                  subtitle: Text(
+                    _vault
+                        ? 'Your vault items are in the file as plain text: keep it somewhere private.'
+                        : 'Vault items stay on this phone only.',
+                    style: context.text.bodySmall?.copyWith(color: _vault ? AppColors.warning : null),
+                  ),
+                  value: _vault,
+                  onChanged: (v) => setState(() => _vault = v),
                 ),
                 SwitchListTile(
                   secondary: lead(const Icon(Icons.forum_outlined)),
@@ -237,7 +257,7 @@ class _DataScreenState extends ConsumerState<DataScreen> {
                   leading: lead(Icon(Icons.delete_forever_outlined, color: AppColors.danger)),
                   title: Text('Clear all data', style: TextStyle(color: AppColors.danger)),
                   subtitle: Text(
-                    'Chats, memories, files, briefs, canvas, watches and reminders on this phone',
+                    'Chats, memories, vault, money, files, briefs, canvas, watches, routines and reminders on this phone',
                     style: context.text.bodySmall,
                   ),
                   enabled: !_busy,

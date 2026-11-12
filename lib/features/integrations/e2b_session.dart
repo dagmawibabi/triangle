@@ -284,7 +284,7 @@ class E2bSession {
     for (final r in ex.results) {
       final (b64, ext) = r['png'] is String ? ('${r['png']}', 'png') : (r['jpeg'] is String ? ('${r['jpeg']}', 'jpg') : (null, ''));
       if (b64 == null) continue;
-      final f = await uniqueGeneratedFile('e2b.$ext');
+      final f = await uniqueGeneratedFile('e2b.$ext', folder: 'sandbox');
       await f.writeAsBytes(base64Decode(b64));
       out.add(f.path);
     }

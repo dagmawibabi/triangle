@@ -200,6 +200,87 @@ String? keyedModel(OmniAI ai, ModelType type) {
   return null;
 }
 
+/// The chat model to try when [primary] fails: the one picked in Settings,
+/// or else a free one (price 0, an OpenRouter `:free` model, or a local LM
+/// Studio model) from a service with a key that can use tools. Null when
+/// there is none, or it would be [primary] again.
+String? fallbackChatModel(OmniAI ai, AppSettings s, String primary) {
+  final p = canonicalModelId(primary);
+  bool keyed(String id) {
+    final r = AiRouter.of(id);
+    return r != null && ai.provider(r.providerId).isConfigured;
+  }
+
+  final chosen = s.fallbackModel.trim();
+  if (chosen.isNotEmpty) {
+    final c = canonicalModelId(chosen);
+    return c != p && keyed(c) ? c : null;
+  }
+  bool free(ModelInfo m) =>
+      m.modelId.endsWith(':free') ||
+      AiRouter.of(m.id) == AiRouter.lmStudio ||
+      (m.inputPrice == 0 && m.outputPrice == 0);
+  final candidates = [
+    for (final m in ai.catalog.models)
+      if (m.id != p && !m.isVariant && m.isText && m.toolCall && keyed(m.id) && free(m)) m,
+  ];
+  if (candidates.isEmpty) return null;
+  // Bigger context windows first: they take the conversation as it is.
+  candidates.sort((a, b) => (b.contextWindow ?? 0).compareTo(a.contextWindow ?? 0));
+  return candidates.first.id;
+}
+
+/// The model a watch or routine runs on, for its choice [choice]: `free` (a
+/// free model a keyed service offers, else the cheapest), `cheap` (the
+/// cheapest that can use tools), `main` (the chat's model) or a model id.
+/// Falls back to the chat's model when the catalog has nothing to offer
+/// (not loaded yet, or no key for a cheaper one).
+String automationModel(OmniAI ai, AppSettings s, String choice) {
+  final main = canonicalModelId(s.model);
+  bool keyed(String id) {
+    final r = AiRouter.of(id);
+    return r != null && ai.provider(r.providerId).isConfigured;
+  }
+
+  switch (choice) {
+    case 'main' || '':
+      return main;
+    case 'free' || 'cheap':
+      final usable = [
+        for (final m in ai.catalog.models)
+          if (!m.isVariant && m.isText && m.toolCall && keyed(m.id)) m,
+      ];
+      if (usable.isEmpty) return main;
+      bool free(ModelInfo m) =>
+          m.modelId.endsWith(':free') || AiRouter.of(m.id) == AiRouter.lmStudio || (m.inputPrice == 0 && m.outputPrice == 0);
+      double price(ModelInfo m) => (m.inputPrice ?? double.infinity) + 4 * (m.outputPrice ?? double.infinity);
+      if (choice == 'free') {
+        final frees = usable.where(free).toList()
+          // Larger context first: watch runs carry their chat's history.
+          ..sort((a, b) => (b.contextWindow ?? 0).compareTo(a.contextWindow ?? 0));
+        if (frees.isNotEmpty) return frees.first.id;
+      }
+      final priced = usable.where((m) => price(m).isFinite).toList()..sort((a, b) => price(a).compareTo(price(b)));
+      if (priced.isEmpty) return main;
+      // Never pricier than the chat's own model.
+      final mainInfo = ai.catalog.byId(main);
+      final best = priced.first;
+      if (mainInfo != null && price(mainInfo).isFinite && price(best) >= price(mainInfo)) return main;
+      return best.id;
+    default:
+      final c = canonicalModelId(choice);
+      return keyed(c) ? c : main;
+  }
+}
+
+/// Whether a failed run is worth trying again on another model: not a stop,
+/// and not something the user's input caused.
+bool worthFallback(Object e) {
+  if (e is AiCancelledException) return false;
+  if (e is ObjectParseException) return false;
+  return e is AiException || e is TimeoutException || e.toString().contains('SocketException');
+}
+
 /// The model's own id without the provider: `openai/gpt-5`.
 String modelLabel(String id) {
   final c = canonicalModelId(id);
@@ -280,29 +361,100 @@ class CatalogState {
 }
 
 class ModelCatalogNotifier extends Notifier<CatalogState> {
+  /// Lists fetched straight from a provider when the catalog came back
+  /// without them (a key added while another load ran, or a load that never
+  /// finished), by provider id, and why one couldn't be fetched.
+  final Map<String, List<ModelInfo>> _direct = {};
+  final Map<String, String> _directErrors = {};
+  bool _fixing = false;
+
   @override
   CatalogState build() {
     final catalog = ref.watch(aiProvider).catalog;
     void sync() => state = _read(catalog);
     catalog.addListener(sync);
     ref.onDispose(() => catalog.removeListener(sync));
+    // A key added or changed: its models are fetched, whatever the catalog
+    // was doing at the time.
+    ref.listen(settingsProvider, (before, s) {
+      if (before != null && before.loaded && s.loaded && keysChanged(before, s)) {
+        for (final r in AiRouter.values) {
+          _direct.remove(r.providerId);
+          _directErrors.remove(r.providerId);
+        }
+        Future.delayed(const Duration(milliseconds: 300), () => _fillMissing(force: true));
+      }
+    });
     return _read(catalog);
   }
 
-  static CatalogState _read(ModelCatalog c) => CatalogState(
-    models: c.models,
-    loading: c.loading,
-    fetchedAt: c.fetchedAt,
-    providerErrors: c.errors,
-    error: c.models.isEmpty && c.errors.isNotEmpty ? 'Could not reach the model lists. Check your connection.' : null,
-  );
+  CatalogState _read(ModelCatalog c) {
+    final listed = {for (final m in c.models) m.provider};
+    final models = [
+      ...c.models,
+      for (final e in _direct.entries)
+        if (!listed.contains(e.key)) ...e.value,
+    ];
+    final errors = {...c.errors, ..._directErrors};
+    return CatalogState(
+      models: models,
+      loading: c.loading || _fixing,
+      fetchedAt: c.fetchedAt,
+      providerErrors: errors,
+      error: models.isEmpty && errors.isNotEmpty ? 'Could not reach the model lists. Check your connection.' : null,
+    );
+  }
 
   ModelCatalog get _catalog => ref.read(aiProvider).catalog;
 
   /// The cached lists, refreshed when they are more than three days old.
-  Future<void> ensureLoaded() => _catalog.load();
+  Future<void> ensureLoaded() async {
+    await _catalog.load().timeout(const Duration(seconds: 75), onTimeout: () {});
+    await _fillMissing();
+  }
 
-  Future<void> refresh() => _catalog.refresh();
+  /// Fetches every list again. A load already running is waited for first,
+  /// so the refresh asked for really happens (and sees keys added since).
+  Future<void> refresh() async {
+    if (_catalog.isLoading) await _catalog.load().timeout(const Duration(seconds: 75), onTimeout: () {});
+    await _catalog.refresh().timeout(const Duration(seconds: 75), onTimeout: () {});
+    await _fillMissing(force: true);
+  }
+
+  /// Any service with a key but no models in the catalog is asked directly.
+  Future<void> _fillMissing({bool force = false}) async {
+    if (_fixing) return;
+    final ai = ref.read(aiProvider);
+    final have = {for (final m in _catalog.models) m.provider};
+    final missing = [
+      for (final r in AiRouter.values)
+        if (ai.provider(r.providerId).isConfigured && !have.contains(r.providerId) && (force || !_direct.containsKey(r.providerId))) r,
+    ];
+    if (missing.isEmpty) return;
+    _fixing = true;
+    state = _read(_catalog);
+    try {
+      await Future.wait([
+        for (final r in missing)
+          ai.provider(r.providerId).listModels().timeout(const Duration(seconds: 40)).then(
+            (list) {
+              _direct[r.providerId] = list;
+              if (list.isEmpty) {
+                _directErrors[r.providerId] = 'The service answered with no models for this key.';
+              } else {
+                _directErrors.remove(r.providerId);
+              }
+            },
+            onError: (Object e) {
+              _directErrors[r.providerId] = aiErrorText(e);
+            },
+          ),
+      ]);
+    } finally {
+      _fixing = false;
+      if (ref.mounted) state = _read(_catalog);
+    }
+  }
 }
 
 final modelCatalogProvider = NotifierProvider<ModelCatalogNotifier, CatalogState>(ModelCatalogNotifier.new);

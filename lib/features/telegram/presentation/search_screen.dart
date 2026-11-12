@@ -8,10 +8,12 @@ import 'package:intl/intl.dart';
 import '../../../app/theme.dart';
 import '../../chat/presentation/widgets/post_viewer.dart';
 import '../data/message_content.dart';
+import '../data/search_history.dart';
 import '../data/telegram_store.dart';
 import '../data/telegram_tools.dart';
 import 'media_viewer.dart';
 import 'message_tile.dart' show snapshotOf;
+import 'recent_searches.dart';
 import 'td_image.dart';
 import 'tg_avatar.dart';
 import '../../../infrastructure/telegram/accounts.dart';
@@ -46,14 +48,22 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   Timer? _debounce;
   int _run = 0;
 
+  /// Kept for dispose, where ref can no longer be read.
+  late final SearchHistoryController _history;
+
+  /// Saves what's typed as a recent search.
+  void _remember() => unawaited(_history.add(_query.text));
+
   bool get _visual => const {'photos', 'videos', 'photos_and_videos', 'gifs'}.contains(_type);
 
   @override
   void initState() {
     super.initState();
+    _history = ref.read(searchHistoryProvider('messages').notifier);
     _scroll.addListener(() {
       if (_scroll.position.pixels > _scroll.position.maxScrollExtent - 500) _more();
     });
+    if (widget.initialQuery.isNotEmpty) _remember();
     if (_type != 'any' || widget.initialQuery.isNotEmpty) _search();
     // A search of all chats follows the account picked in the app bar.
     if (widget.chatId == null) {
@@ -70,6 +80,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   @override
   void dispose() {
+    // Leaving after a search that found something counts as searching it,
+    // even without pressing search or opening a result.
+    if (_searched && _results.isNotEmpty) _remember();
     _debounce?.cancel();
     _query.dispose();
     _scroll.dispose();
@@ -134,6 +147,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   }
 
   void _open(td.Message m) {
+    _remember();
     final store = ref.read(telegramStoreProvider);
     final chat = store.chat(m.chatId);
     if (m.content is td.MessagePhoto || m.content is td.MessageVideo || m.content is td.MessageAnimation) {
@@ -147,6 +161,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   @override
   Widget build(BuildContext context) {
     final store = ref.watch(telegramStoreProvider);
+    final history = ref.watch(searchHistoryProvider('messages'));
+    final showHistory = history.isNotEmpty && _query.text.trim().isEmpty && _type == 'any' && !_busy;
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 0,
@@ -155,7 +171,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           autofocus: widget.initialType == 'any',
           textInputAction: TextInputAction.search,
           onChanged: (_) => _queue(),
-          onSubmitted: (_) => _search(),
+          onSubmitted: (_) {
+            _remember();
+            _search();
+          },
           decoration: InputDecoration(
             hintText: widget.chatId == null ? 'Search all chats' : 'Search ${store.chat(widget.chatId!)?.title ?? 'this chat'}',
             border: InputBorder.none,
@@ -232,7 +251,19 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
               ),
             ),
           Expanded(
-            child: _error != null
+            child: showHistory
+                ? RecentSearches(
+                    history: history,
+                    onPick: (q) {
+                      _query.text = q;
+                      _query.selection = TextSelection.collapsed(offset: q.length);
+                      _remember();
+                      _search();
+                    },
+                    onRemove: _history.remove,
+                    onClear: _history.clear,
+                  )
+                : _error != null
                 ? Center(child: Padding(padding: const EdgeInsets.all(Space.xl), child: Text(_error!, textAlign: TextAlign.center)))
                 : _busy && _results.isEmpty
                 ? const _SearchingPlaceholder()

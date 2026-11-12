@@ -45,6 +45,8 @@ dependencies:
   http: ^1.6.0
   path_provider: ^2.1.6
   qr_flutter: ^4.1.0
+  # Reading QR and barcodes: from a picture, or live from the camera.
+  mobile_scanner: ^7.2.0
   url_launcher: ^6.3.3
   flutter_markdown_plus: ^1.0.12
   uuid: ^4.6.0
@@ -64,6 +66,7 @@ dependencies:
   photo_manager: ^3.12.0
   archive: ^4.0.0
   html: ^0.15.6
+  xml: ^6.5.0
   timezone: ^0.11.0
   open_filex: ^5.0.0
   flutter_inappwebview: ^6.2.0-beta.3
@@ -75,6 +78,19 @@ dependencies:
   omni_ai: ^0.5.0
   speech_to_text: ^7.5.0
   markdown: ^7.3.1
+  # App lock: fingerprint/face unlock, and the hashed passcode.
+  local_auth: ^3.0.0
+  crypto: ^3.0.6
+  # Typesetting LaTeX in paper titles and abstracts.
+  flutter_math_fork: ^0.7.4
+
+dependency_overrides:
+  # 2.5.x (Pigeon JNI) keeps one native handle for the whole process: when a
+  # background engine (WorkManager jobs, the foreground service) shuts down,
+  # it clears that handle and the app's own engine can no longer read
+  # settings ("No instance with no name has been registered"). 2.4.x talks
+  # over each engine's own channel, so several engines can share the process.
+  shared_preferences_android: 2.4.28
 
 dev_dependencies:
   flutter_test:
@@ -99,6 +115,11 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  # Bank list and SMS patterns for the finance tools, from Totals
+  # (github.com/detached-space/totals, MIT licence).
+  assets:
+    - assets/finance/
 
   # To add assets to your application, add an assets section, like this:
   # assets:
