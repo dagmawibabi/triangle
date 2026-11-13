@@ -18,6 +18,7 @@ import '../../telegram/presentation/tg_avatar.dart';
 import '../data/chat_controller.dart';
 import '../domain/chat_models.dart';
 import 'generated_files_screen.dart';
+import 'chat_search_sheet.dart';
 import 'widgets/chat_sheets.dart';
 import '../../brief/brief_screen.dart';
 import '../../brief/brief_store.dart';
@@ -305,18 +306,45 @@ class _HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                       ),
                     ),
                   for (final g in groups.entries) ...[
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(
-                        Space.m,
-                        Space.l,
-                        Space.m,
-                        Space.xs,
+                    // The first heading ("Today", "Pinned"…) carries the
+                    // search, on its right.
+                    if (g.key == groups.keys.first)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(Space.m, Space.s, 0, 0),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                g.key.toUpperCase(),
+                                style: context.text.labelSmall,
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Search chats',
+                              visualDensity: VisualDensity.compact,
+                              icon: const Icon(Icons.search_rounded, size: 20),
+                              onPressed: () async {
+                                final opened = await ChatSearchSheet.show(context);
+                                // A chat was opened from the sheet: close the drawer too.
+                                if (opened == true && context.mounted) Navigator.pop(context);
+                              },
+                            ),
+                          ],
+                        ),
+                      )
+                    else
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(
+                          Space.m,
+                          Space.l,
+                          Space.m,
+                          Space.xs,
+                        ),
+                        child: Text(
+                          g.key.toUpperCase(),
+                          style: context.text.labelSmall,
+                        ),
                       ),
-                      child: Text(
-                        g.key.toUpperCase(),
-                        style: context.text.labelSmall,
-                      ),
-                    ),
                     for (final c in g.value)
                       _HistoryTile(
                         summary: c,

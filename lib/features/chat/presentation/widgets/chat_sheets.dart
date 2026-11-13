@@ -159,13 +159,20 @@ class _ContextSheetState extends ConsumerState<_ContextSheet> {
 
   Future<void> _compact() async {
     setState(() => _compacting = true);
-    final ok = await ref.read(chatControllerProvider.notifier).compact();
+    final controller = ref.read(chatControllerProvider.notifier);
+    final result = await controller.compact();
     if (!mounted) return;
     setState(() => _compacting = false);
     showSnack(
       context,
-      ok ? 'Older messages summarised' : 'Nothing to compact yet: it needs at least three questions.',
-      icon: ok ? Icons.compress_rounded : Icons.info_outline_rounded,
+      switch (result) {
+        CompactResult.done => 'Older messages summarised',
+        CompactResult.tooShort => 'Nothing to compact yet: it needs at least three questions.',
+        CompactResult.nothingNew => 'Already compacted: only your last two questions come after the summary.',
+        CompactResult.running => 'Already summarising this chat.',
+        CompactResult.failed => 'Couldn\'t summarise: ${controller.lastCompactError ?? 'the model gave no summary'}. Try again.',
+      },
+      icon: result == CompactResult.done ? Icons.compress_rounded : Icons.info_outline_rounded,
     );
   }
 

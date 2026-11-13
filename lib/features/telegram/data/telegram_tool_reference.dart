@@ -34,6 +34,7 @@ const toolReferences = <String, ToolReference>{
   ..._papersReferences,
   ..._infoReferences,
   ..._safetyReferences,
+  ..._systemToolReferences,
   ..._screenReferences,
   'get_account_overview': ToolReference([
     'me',
@@ -332,9 +333,9 @@ const toolReferences = <String, ToolReference>{
   'stop_poll': ToolReference(['done', 'chat', 'poll_closed']),
   'send_contact': ToolReference(['sent', 'chat', 'contact', 'ref']),
   'view_image': ToolReference(
-    ['shown', 'not_found', 'note', '_images'],
+    ['shown', 'animations: source, frames_shown, duration_seconds, frame_count', 'not_found', 'note', '_images'],
     limits: [
-      'Up to six images; input at most 20 MB. Inspection uses a decoded PNG/first frame, with a target width of 2,048 pixels. Telegram media may use a thumbnail.',
+      'Up to 12 pictures; input at most 20 MB. Stills are decoded to PNG at up to 2,048 pixels wide. GIFs, animated WebP and short MP4/WebM clips give frames (default 6, at most 10 each) at up to 768 pixels wide; MP4/WebM frames need the Android app. Telegram media other than GIFs and video stickers use a thumbnail.',
     ],
   ),
   'search_gifs': ToolReference(
@@ -371,7 +372,7 @@ const toolReferences = <String, ToolReference>{
   ),
   'view_stickers_and_gifs': ToolReference(
     ['shown', 'note'],
-    limits: ['Up to 8; animated stickers and GIFs show one frame.'],
+    limits: ['Up to 8. GIFs show 4 frames each for one or two, 2 for up to four, 1 beyond; animated stickers show their thumbnail.'],
   ),
   'list_sticker_sets': ToolReference(['sets']),
   'get_sticker_set': ToolReference(['count', 'stickers']),
@@ -653,6 +654,12 @@ const toolReferences = <String, ToolReference>{
   'canvas_remove': ToolReference(['removed']),
   'create_reminder': ToolReference(['created', 'note', 'updated']),
   'vault_list': ToolReference(['count', 'items', 'note']),
+  'list_files': ToolReference(['count', 'files: name, path, folder, type, size_kb, modified', 'note'], limits: ['Up to 100 files, newest first; only the app\'s own folders.']),
+  'read_file': ToolReference(['name', 'path', 'type', 'size_kb', 'text', 'truncated', 'note'], limits: ['Text up to 100,000 characters; files up to 20 MB are shown to the model.']),
+  'search_ai_chats': ToolReference(
+    ['query', 'count', 'chats: conversation_id, title, updated, title_matches, matching_messages, current, archived, snippets: from, text'],
+    limits: ['Up to 30 chats and 3 snippets each. Only this app\'s conversations with the assistant.'],
+  ),
   'vault_get': ToolReference(['item_id', 'label', 'category', 'value', 'note', 'sensitive', 'matches']),
   'vault_save': ToolReference(['saved', 'created', 'item_id', 'label', 'category', 'sensitive']),
   'vault_delete': ToolReference(['deleted']),

@@ -27,6 +27,7 @@ final aiProvider = Provider<OmniAI>((ref) {
     // Unchanged keys are ignored, so this is cheap on every settings change.
     ai.setApiKey('gateway', s.vercelKey, persist: false);
     ai.setApiKey('openrouter', s.openRouterKey, persist: false);
+    ai.setApiKey('opencode', s.openCodeKey, persist: false);
     ai.setApiKey('google', s.geminiKey, persist: false);
     ai.setApiKey('lmstudio', s.lmStudioUrl, persist: false);
     ai.setApiKey('elevenlabs', s.elevenKey, persist: false);
@@ -102,6 +103,7 @@ enum AiRouter {
   vercel('gateway', 'Vercel', 'Vercel AI Gateway'),
   openRouter('openrouter', 'OpenRouter', 'OpenRouter'),
   gemini('google', 'Gemini', 'Google AI Studio'),
+  openCode('opencode', 'OpenCode', 'OpenCode Zen'),
   lmStudio('lmstudio', 'LM Studio', 'LM Studio');
 
   const AiRouter(this.providerId, this.short, this.title);
@@ -118,7 +120,7 @@ enum AiRouter {
   static String nameOf(String modelId) => of(modelId)?.title ?? canonicalModelId(modelId).split(':').first;
 }
 
-const _providerPrefixes = ['gateway:', 'openrouter:', 'google:', 'lmstudio:', 'elevenlabs:', 'addis:'];
+const _providerPrefixes = ['gateway:', 'openrouter:', 'opencode:', 'google:', 'lmstudio:', 'elevenlabs:', 'addis:'];
 
 /// An omni_ai model id (`gateway:openai/gpt-5`) for one saved by earlier
 /// versions of the app: `or:` meant OpenRouter, `g:` Google AI Studio, and
@@ -170,6 +172,7 @@ fitToKeys(OmniAI ai, AppSettings s, {AppSettings? before}) {
 bool keysChanged(AppSettings a, AppSettings b) =>
     a.vercelKey != b.vercelKey ||
     a.openRouterKey != b.openRouterKey ||
+    a.openCodeKey != b.openCodeKey ||
     a.geminiKey != b.geminiKey ||
     a.lmStudioUrl != b.lmStudioUrl ||
     a.elevenKey != b.elevenKey ||
@@ -177,7 +180,7 @@ bool keysChanged(AppSettings a, AppSettings b) =>
 
 /// [id] when its service has a key; otherwise the default [type] model of
 /// the first service the person added a key for (Vercel AI Gateway,
-/// OpenRouter, Google AI Studio, then LM Studio). Unchanged when no service has one.
+/// OpenRouter, Google AI Studio, OpenCode Zen, then LM Studio). Unchanged when no service has one.
 String usableModel(OmniAI ai, String id, ModelType type) {
   final c = canonicalModelId(id);
   final router = AiRouter.of(c);
@@ -305,6 +308,7 @@ String aiErrorText(Object e) => switch (e) {
     'Add ${switch (provider) {
       'gateway' => 'a Vercel AI Gateway',
       'openrouter' => 'an OpenRouter',
+      'opencode' => 'an OpenCode Zen',
       'google' => 'a Google AI Studio Gemini',
       'elevenlabs' => 'an ElevenLabs',
       'addis' => 'an Addis AI',

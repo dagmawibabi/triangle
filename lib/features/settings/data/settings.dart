@@ -138,6 +138,7 @@ class AppSettings {
   const AppSettings({
     this.vercelKey = '',
     this.openRouterKey = '',
+    this.openCodeKey = '',
     this.geminiKey = '',
     this.lmStudioUrl = '',
     this.addisKey = '',
@@ -164,6 +165,10 @@ class AppSettings {
     this.autoVoice = true,
     this.autoMusic = false,
     this.customInstructions = '',
+    this.systemPromptEnabled = true,
+    this.loadToolsOnDemand = true,
+    this.systemPrompt = '',
+    this.systemPromptCustom = false,
     this.approvalMode = ApprovalMode.ask,
     this.holdAfterUntrusted = true,
     this.proactive = true,
@@ -251,6 +256,23 @@ class AppSettings {
 
   /// The user's own standing instructions, added to every conversation.
   final String customInstructions;
+
+  /// Whether the system prompt is sent (Settings → Assistant → System
+  /// prompt). Off, only the rule about other people's text and a watch's
+  /// instructions remain.
+  final bool systemPromptEnabled;
+
+  /// Send the model only the tools a message needs (a core set, groups the
+  /// message mentions or the chat used, and any it loads with load_tools);
+  /// off sends every enabled tool with every message.
+  final bool loadToolsOnDemand;
+
+  /// The user's own system prompt template, used when [systemPromptCustom].
+  final String systemPrompt;
+
+  /// The user edited (or cleared) the system prompt; false uses the
+  /// built-in one.
+  final bool systemPromptCustom;
   final ApprovalMode approvalMode;
 
   /// The anti-manipulation hold: once a turn has read text other people
@@ -486,6 +508,9 @@ class AppSettings {
   final String vercelKey;
   final String openRouterKey;
 
+  /// OpenCode Zen (pay-as-you-go models).
+  final String openCodeKey;
+
   /// Google AI Studio Gemini API key.
   final String geminiKey;
 
@@ -573,6 +598,7 @@ class AppSettings {
 
   bool get hasVercelKey => vercelKey.trim().isNotEmpty;
   bool get hasOpenRouterKey => openRouterKey.trim().isNotEmpty;
+  bool get hasOpenCodeKey => openCodeKey.trim().isNotEmpty;
   bool get hasGeminiKey => geminiKey.trim().isNotEmpty;
   bool get hasLmStudio => lmStudioUrl.trim().isNotEmpty;
   bool get hasAddisKey => addisKey.trim().isNotEmpty;
@@ -588,11 +614,12 @@ class AppSettings {
   bool get hasCloudflare => cloudflareToken.trim().isNotEmpty;
   bool get hasR2Keys => r2AccessKeyId.trim().isNotEmpty && r2SecretKey.trim().isNotEmpty;
   bool get hasE2bKey => e2bKey.trim().isNotEmpty;
-  bool get hasAnyKey => hasVercelKey || hasOpenRouterKey || hasGeminiKey || hasLmStudio;
+  bool get hasAnyKey => hasVercelKey || hasOpenRouterKey || hasOpenCodeKey || hasGeminiKey || hasLmStudio;
 
   AppSettings copyWith({
     String? vercelKey,
     String? openRouterKey,
+    String? openCodeKey,
     String? geminiKey,
     String? lmStudioUrl,
     String? addisKey,
@@ -619,6 +646,10 @@ class AppSettings {
     bool? autoVoice,
     bool? autoMusic,
     String? customInstructions,
+    bool? systemPromptEnabled,
+    bool? loadToolsOnDemand,
+    String? systemPrompt,
+    bool? systemPromptCustom,
     ApprovalMode? approvalMode,
     bool? holdAfterUntrusted,
     bool? proactive,
@@ -705,6 +736,7 @@ class AppSettings {
   }) => AppSettings(
     vercelKey: vercelKey ?? this.vercelKey,
     openRouterKey: openRouterKey ?? this.openRouterKey,
+    openCodeKey: openCodeKey ?? this.openCodeKey,
     geminiKey: geminiKey ?? this.geminiKey,
     lmStudioUrl: lmStudioUrl ?? this.lmStudioUrl,
     addisKey: addisKey ?? this.addisKey,
@@ -731,6 +763,10 @@ class AppSettings {
     autoVoice: autoVoice ?? this.autoVoice,
     autoMusic: autoMusic ?? this.autoMusic,
     customInstructions: customInstructions ?? this.customInstructions,
+    systemPromptEnabled: systemPromptEnabled ?? this.systemPromptEnabled,
+    loadToolsOnDemand: loadToolsOnDemand ?? this.loadToolsOnDemand,
+    systemPrompt: systemPrompt ?? this.systemPrompt,
+    systemPromptCustom: systemPromptCustom ?? this.systemPromptCustom,
     approvalMode: approvalMode ?? this.approvalMode,
     holdAfterUntrusted: holdAfterUntrusted ?? this.holdAfterUntrusted,
     proactive: proactive ?? this.proactive,
@@ -823,6 +859,7 @@ class SettingsController extends Notifier<AppSettings> {
   static const _secure = FlutterSecureStorage();
   static const _vercelKey = 'vercel_ai_gateway_key';
   static const _openRouterKey = 'openrouter_key';
+  static const _openCodeKey = 'opencode_key';
   static const _geminiKey = 'gemini_key';
   static const _addisKey = 'addis_key';
   static const _elevenKey = 'elevenlabs_key';
@@ -863,10 +900,12 @@ class SettingsController extends Notifier<AppSettings> {
     final vercel = await _secret(_vercelKey);
     final openRouter = await _secret(_openRouterKey);
     final gemini = await _secret(_geminiKey);
-    if (vercel.isEmpty && openRouter.isEmpty && gemini.isEmpty) return state.hasAnyKey;
+    final openCode = await _secret(_openCodeKey);
+    if (vercel.isEmpty && openRouter.isEmpty && gemini.isEmpty && openCode.isEmpty) return state.hasAnyKey;
     state = state.copyWith(
       vercelKey: vercel,
       openRouterKey: openRouter,
+      openCodeKey: openCode,
       geminiKey: gemini,
       addisKey: await _secret(_addisKey),
       elevenKey: await _secret(_elevenKey),
@@ -882,6 +921,7 @@ class SettingsController extends Notifier<AppSettings> {
     final loaded = AppSettings(
       vercelKey: await _secret(_vercelKey),
       openRouterKey: await _secret(_openRouterKey),
+      openCodeKey: await _secret(_openCodeKey),
       geminiKey: await _secret(_geminiKey),
       lmStudioUrl: p.getString('lmstudio_url') ?? d.lmStudioUrl,
       addisKey: await _secret(_addisKey),
@@ -935,6 +975,10 @@ class SettingsController extends Notifier<AppSettings> {
       autoMusic: p.getBool('auto_music') ?? d.autoMusic,
       customInstructions:
           p.getString('custom_instructions') ?? d.customInstructions,
+      systemPromptEnabled: p.getBool('system_prompt_enabled') ?? d.systemPromptEnabled,
+      loadToolsOnDemand: p.getBool('load_tools_on_demand') ?? d.loadToolsOnDemand,
+      systemPrompt: p.getString('system_prompt') ?? d.systemPrompt,
+      systemPromptCustom: p.getBool('system_prompt_custom') ?? d.systemPromptCustom,
       approvalMode:
           ApprovalMode.values.asNameMap()[p.getString('approval_mode')] ??
           d.approvalMode,
@@ -1037,6 +1081,11 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setOpenRouterKey(String key) async {
     state = state.copyWith(openRouterKey: key.trim());
     await _writeSecret(_openRouterKey, key.trim());
+  }
+
+  Future<void> setOpenCodeKey(String key) async {
+    state = state.copyWith(openCodeKey: key.trim());
+    await _writeSecret(_openCodeKey, key.trim());
   }
 
   Future<void> setGeminiKey(String key) async {
@@ -1261,6 +1310,34 @@ class SettingsController extends Notifier<AppSettings> {
     await _write('custom_instructions', v);
   }
 
+  Future<void> setLoadToolsOnDemand(bool v) async {
+    state = state.copyWith(loadToolsOnDemand: v);
+    await _write('load_tools_on_demand', v);
+  }
+
+  Future<void> setSystemPromptEnabled(bool v) async {
+    if (v != state.systemPromptEnabled) _audit(v ? 'System prompt turned on' : 'System prompt turned off', '');
+    state = state.copyWith(systemPromptEnabled: v);
+    await _write('system_prompt_enabled', v);
+  }
+
+  /// Uses [template] as the system prompt; empty clears it.
+  Future<void> setSystemPrompt(String template) async {
+    _audit(template.trim().isEmpty ? 'System prompt cleared' : 'System prompt edited', '');
+    state = state.copyWith(systemPrompt: template, systemPromptCustom: true);
+    await _write('system_prompt', template);
+    await _write('system_prompt_custom', true);
+  }
+
+  /// Back to the built-in system prompt, turned on.
+  Future<void> resetSystemPrompt() async {
+    _audit('System prompt reset to the default', '');
+    state = state.copyWith(systemPrompt: '', systemPromptCustom: false, systemPromptEnabled: true);
+    await _write('system_prompt', '');
+    await _write('system_prompt_custom', false);
+    await _write('system_prompt_enabled', true);
+  }
+
   /// Notes a settings change in the activity log.
   void _audit(String title, [String detail = '']) =>
       ref.read(activityLogProvider.notifier).recordEvent(kind: ActivityKind.settings, title: title, detail: detail);
@@ -1370,13 +1447,22 @@ class SettingsController extends Notifier<AppSettings> {
     final p = await SharedPreferences.getInstance();
     // Keys live in secure storage and aren't touched; the models and the
     // standing instructions are kept too.
-    const keep = {'chat_model', 'image_model', 'custom_instructions', 'composio_user_id'};
+    const keep = {
+      'chat_model',
+      'image_model',
+      'custom_instructions',
+      'system_prompt',
+      'system_prompt_custom',
+      'system_prompt_enabled',
+      'composio_user_id',
+    };
     for (final k in p.getKeys().toList()) {
       if (!keep.contains(k)) await p.remove(k);
     }
     state = const AppSettings().copyWith(
       vercelKey: state.vercelKey,
       openRouterKey: state.openRouterKey,
+      openCodeKey: state.openCodeKey,
       geminiKey: state.geminiKey,
       addisKey: state.addisKey,
       elevenKey: state.elevenKey,
@@ -1396,6 +1482,9 @@ class SettingsController extends Notifier<AppSettings> {
       model: state.model,
       imageModel: state.imageModel,
       customInstructions: state.customInstructions,
+      systemPromptEnabled: state.systemPromptEnabled,
+      systemPrompt: state.systemPrompt,
+      systemPromptCustom: state.systemPromptCustom,
       loaded: true,
     );
   }

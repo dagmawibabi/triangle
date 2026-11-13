@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.media.ExifInterface
+import android.media.MediaMetadataRetriever
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.segmentation.subject.SubjectSegmentation
 import com.google.mlkit.vision.segmentation.subject.SubjectSegmenterOptions
@@ -44,6 +45,7 @@ object ImageOps {
                 }
                 val r = when (op) {
                     "info" -> info(path)
+                    "video_frames" -> videoFrames(call, path)
                     "resize", "crop", "compress", "convert" -> transform(op, call, path)
                     else -> throw IllegalArgumentException("Unknown image operation $op")
                 }
@@ -326,5 +328,41 @@ object ImageOps {
                     )
                 }
             }
+    }
+
+    /// Evenly spaced stills of a short video (a Telegram GIF is a silent
+    /// MP4; video stickers are WebM), so the assistant can see it move.
+    /// Writes JPEGs into `out` and returns their paths with each one's time.
+    private fun videoFrames(call: MethodCall, path: String): Map<String, Any?> {
+        val count = (call.argument<Int>("count") ?: 6).coerceIn(1, 12)
+        val maxWidth = (call.argument<Int>("max_width") ?: 768).coerceIn(64, 2048)
+        val dir = File(call.argument<String>("out") ?: throw IllegalArgumentException("No folder for the frames"))
+        dir.mkdirs()
+        val r = MediaMetadataRetriever()
+        try {
+            r.setDataSource(path)
+            val duration = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+            val width = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+            val height = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+            // The middle of each of `count` equal slices, so the first and
+            // last frames (often blank or a fade) are skipped.
+            val times = if (duration <= 0L || count == 1) listOf(duration / 2) else (0 until count).map { duration * (2 * it + 1) / (2 * count) }
+            val frames = mutableListOf<Map<String, Any>>()
+            for ((i, ms) in times.withIndex()) {
+                val bmp = r.getFrameAtTime(ms * 1000, MediaMetadataRetriever.OPTION_CLOSEST) ?: continue
+                val scaled = if (bmp.width > maxWidth) {
+                    Bitmap.createScaledBitmap(bmp, maxWidth, max(1, (bmp.height * maxWidth.toDouble() / bmp.width).roundToInt()), true)
+                } else bmp
+                val f = File(dir, "frame_${System.nanoTime()}_$i.jpg")
+                f.outputStream().use { scaled.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+                if (scaled !== bmp) scaled.recycle()
+                bmp.recycle()
+                frames.add(mapOf("path" to f.path, "at_ms" to ms))
+            }
+            if (frames.isEmpty()) throw IllegalArgumentException("Couldn't read any frames from this video.")
+            return mapOf("frames" to frames, "duration_ms" to duration, "width" to width, "height" to height)
+        } finally {
+            r.release()
+        }
     }
 }

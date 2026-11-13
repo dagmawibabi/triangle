@@ -22,6 +22,7 @@ import '../../../infrastructure/telegram/telegram_client.dart';
 import '../../../infrastructure/telegram/telegram_exception.dart';
 import '../../ai/data/ai.dart';
 import '../../chat/domain/chat_models.dart';
+import '../../chat/data/image_input.dart' show ImageInputLoader;
 import '../../device/device.dart';
 import '../../integrations/app_results.dart';
 import '../../integrations/app_toolkits.dart';
@@ -101,6 +102,7 @@ part 'telegram_tool_reference.dart';
 part 'telegram_capability_tools.dart';
 part 'telegram_info_tools.dart';
 part 'telegram_safety_tools.dart';
+part 'telegram_system_tools.dart';
 part 'telegram_screen_tools.dart';
 part 'telegram_utility_tools.dart';
 part 'telegram_youtube_tools.dart';
@@ -1618,6 +1620,7 @@ final _tools = <TelegramTool>[
   ..._retroTools,
   ..._infoTools,
   ..._safetyTools,
+  ..._systemTools,
   ..._screenTools,
   ..._capabilityTools,
 ];

@@ -44,6 +44,7 @@ import '../../finance/finance_tools.dart';
 import '../../calls/call_history_tools.dart';
 import '../../info/info_tools.dart';
 import '../../telegram/data/safety_tools.dart';
+import '../../telegram/data/system_tools.dart' show redactKeyArguments, runSystemTool;
 import '../../screen/screen_tools.dart';
 import '../../../core/files/download_progress.dart';
 import '../../media/audio_center.dart';
@@ -59,6 +60,10 @@ import '../domain/chat_models.dart';
 import 'chat_repository.dart';
 import 'creative_audio.dart';
 import 'image_input.dart';
+import 'tool_loading.dart';
+import 'chat_search.dart';
+import '../../../core/files/app_files.dart';
+import '../../assistant/system_prompt.dart';
 import '../../../infrastructure/telegram/accounts.dart';
 import '../../telegram/data/account_tools.dart';
 
@@ -124,6 +129,9 @@ const _localTools = {
   'delete_reminder',
   'zip_files',
   'vault_list',
+  'search_ai_chats',
+  'list_files',
+  'read_file',
   'vault_get',
   'vault_save',
   'vault_delete',
@@ -141,6 +149,43 @@ const _localTools = {
   'bible_search',
   'play_audio',
 };
+
+/// How a compaction went.
+enum CompactResult { done, tooShort, nothingNew, running, failed }
+
+/// Whether a chat should be compacted before its next answer: more than
+/// [historyLimit] − 4 entries since the summary (the oldest would otherwise
+/// fall out of what the model reads, unsummarised), or the context over 80%
+/// of [window] while the chat itself ([chatTokens], without the summary) is
+/// at least 15% of it. Instructions and tools alone never trigger it:
+/// compacting can't shrink them.
+bool needsCompaction({
+  required int entriesSinceSummary,
+  required int used,
+  required int? window,
+  required int chatTokens,
+  int historyLimit = 40,
+}) {
+  if (entriesSinceSummary > historyLimit - 4) return true;
+  if (window == null || window <= 0) return false;
+  return used > window * 0.8 && chatTokens >= window * 0.15;
+}
+
+/// [text] in pieces of at most [size] characters, split between messages
+/// (blank lines) where it can be, for summarising a long chat in turns.
+List<String> transcriptPieces(String text, {int size = 100000}) {
+  if (text.length <= size) return [text];
+  final out = <String>[];
+  var rest = text;
+  while (rest.length > size) {
+    var cut = rest.lastIndexOf('\n\n', size);
+    if (cut < size ~/ 2) cut = size;
+    out.add(rest.substring(0, cut));
+    rest = rest.substring(cut).trimLeft();
+  }
+  if (rest.isNotEmpty) out.add(rest);
+  return out;
+}
 
 /// Runs conversations as omni_ai agent runs: the model streams, the app's
 /// tools run as omni_ai tools (pausing for approval where a tool needs it
@@ -164,6 +209,18 @@ class ChatController extends Notifier<ChatState> {
   /// unless a rule, a reply in the chat that woke a watch, or a harmless
   /// tool covers them.
   final Set<String> _tainted = {};
+
+  /// The app's files folder, once known (for finding saved files by name).
+  String? _appRoot;
+
+  /// Tool groups the model loaded with load_tools, by conversation; they
+  /// stay loaded for the rest of the conversation.
+  final Map<String, Set<ToolCategory>> _loadedCategories = {};
+
+  /// Tools left out of the current run of a conversation until their group
+  /// is loaded, and the groups it started with.
+  final Map<String, List<TelegramTool>> _deferred = {};
+  final Map<String, Set<ToolCategory>> _startedWith = {};
 
   /// Conversations a watch, job or routine is running in now, and which.
   final Set<String> _automatic = {};
@@ -613,44 +670,79 @@ class ChatController extends Notifier<ChatState> {
 
   /// Summarises everything before [c]'s last two questions, so the model
   /// reads the summary instead of those messages. The chat itself keeps
-  /// every message on screen.
-  Future<bool> compact([Conversation? conversation]) async {
+  /// every message on screen. Only what came after the last summary is read
+  /// (with that summary), in pieces when it is long, so nothing is cut.
+  Future<CompactResult> compact([Conversation? conversation]) async {
     final c = conversation ?? state.conversation;
+    if (_compacting.contains(c.id)) return CompactResult.running;
     final users = [
       for (final (i, e) in c.entries.indexed)
         if (e is UserEntry) i,
     ];
-    if (users.length < 3 || _compacting.contains(c.id)) return false;
-    final until = c.entries[users[users.length - 2] - 1];
+    if (users.length < 3) return CompactResult.tooShort;
+    final end = users[users.length - 2] - 1;
+    final start = _summaryEnd(c) + 1;
+    if (end < start) return CompactResult.nothingNew;
+    final until = c.entries[end];
     // Kept by the controller, not the sheet that asked: it finishes (and
     // shows in the chat) even when the sheet is closed.
     _compacting.add(c.id);
     _touch(c);
     try {
-      final previous = c.summary == null
-          ? ''
-          : 'Summary of what came before:\n${c.summary}\n\n';
-      final summary = await _ask(
-        'Summarise this conversation so it can continue without the original messages. Keep every fact, '
-            'decision, preference and open task; names, numbers, dates, chat ids and post refs (post:chat:message) '
-            'exactly; and what the user is working toward. Use short bullet points under headings. No preamble.',
-        '$previous${transcript(c, upTo: until.id, maxChars: 120000)}',
-        maxOutputTokens: 2000,
-      );
-      if (summary.isEmpty) return false;
+      final slice = Conversation(id: c.id, entries: c.entries.sublist(start, end + 1));
+      var summary = c.summary;
+      for (final piece in transcriptPieces(transcript(slice, maxChars: 1 << 30))) {
+        final next = await _ask(
+          'Summarise this conversation so it can continue without the original messages. Keep every fact, '
+              'decision, preference and open task; names, numbers, dates, chat ids and post refs (post:chat:message) '
+              'exactly; and what the user is working toward. Fold in the summary of what came before, if there is '
+              'one, so yours replaces it. Use short bullet points under headings. No preamble.',
+          '${summary == null ? '' : 'Summary of what came before:\n$summary\n\n'}The conversation since:\n$piece',
+          maxOutputTokens: 2000,
+        );
+        if (next.isEmpty) return CompactResult.failed;
+        summary = next;
+      }
       c
         ..summary = summary
         ..summaryUntil = until.id
         ..compactedAt = DateTime.now();
       await _persist(c);
-      return true;
+      return CompactResult.done;
     } catch (e) {
       debugPrint('[Chat] compact: $e');
-      return false;
+      lastCompactError = aiErrorText(e);
+      return CompactResult.failed;
     } finally {
       _compacting.remove(c.id);
       _touch(c);
     }
+  }
+
+  /// Why the last compaction failed, in words.
+  String? lastCompactError;
+
+  /// The index of the last entry [c]'s summary covers; -1 when none.
+  static int _summaryEnd(Conversation c) =>
+      c.summaryUntil == null ? -1 : c.entries.indexWhere((e) => e.id == c.summaryUntil);
+
+  /// How many entries the model reads after the summary (see [_history]).
+  static const historyEntries = 40;
+
+  /// Whether to compact [c] before the next answer: its unsummarised part
+  /// is about to outgrow what the model reads, or the context is near the
+  /// window and the chat (not the instructions and tools, which compacting
+  /// can't shrink) is a good share of it.
+  bool _shouldCompact(Conversation c) {
+    if (!ref.read(settingsProvider).autoCompact) return false;
+    final ctx = contextOf(c);
+    return needsCompaction(
+      entriesSinceSummary: c.entries.length - (_summaryEnd(c) + 1),
+      used: ctx.used,
+      window: ctx.window,
+      chatTokens: _modelText(c).length ~/ 4 - (c.summary?.length ?? 0) ~/ 4,
+      historyLimit: historyEntries,
+    );
   }
 
   // ---- approvals -----------------------------------------------------------
@@ -812,8 +904,8 @@ class ChatController extends Notifier<ChatState> {
     );
     if (!await dir.exists()) await dir.create(recursive: true);
     final base = name ?? sourcePath.split(RegExp(r'[\\/]')).last;
-    final dest = await File(sourcePath)
-        .copy('${dir.path}/${_uuid.v4().substring(0, 8)}_$base');
+    // Its own name, numbered only when another attachment has it.
+    final dest = await File(sourcePath).copy((await claimFile(dir, base)).path);
     return Attachment(
       path: dest.path,
       name: base,
@@ -850,11 +942,7 @@ class ChatController extends Notifier<ChatState> {
     final firstTitle = c.entries.length == 2 ? c.title : null;
     try {
       // Near the model's limit: summarise older messages first.
-      final ctx = contextOf(c);
-      if (settings.autoCompact &&
-          ctx.window != null &&
-          ctx.used > ctx.window! * 0.8)
-        await compact(c);
+      if (_shouldCompact(c)) await compact(c);
       await _runTurn(c, reply);
       if (firstTitle != null && reply.error == null)
         unawaited(_autoTitle(c, firstTitle));
@@ -965,38 +1053,14 @@ class ChatController extends Notifier<ChatState> {
     if (watch != null) reply.model = model;
     _stopping.remove(c.id);
     final runner = ref.read(toolRunnerProvider);
-    final connected = ref.read(integrationsProvider).connected;
-    final accounts = _accountsFor(c.id);
-    // Telegram tools work when any account the assistant may use is signed
-    // in, not only the one on screen.
-    final telegram =
-        accounts.forAi.isNotEmpty ||
-        (_accountViews[c.id] == null &&
-            ref.read(telegramClientProvider).authState is td.AuthorizationStateReady &&
-            accounts.active.aiAccess);
-    final offered = [
-      for (final t in telegramTools)
-        // Hidden runs (briefs) only read, so they aren't offered the rest.
-        if (toolOnSomewhere(t, settings, accounts) &&
-            !(_hidden.contains(c.id) && t.modifiesData) &&
-            toolPrerequisiteProblems(
-              t,
-              settings,
-              telegram: telegram,
-              connected: connected,
-              modelSeesImages: _modelSees(),
-              decisionsReady: ref.read(decisionsReadyProvider),
-            ).isEmpty &&
-            // A watch or routine picked its tools: only those.
-            (watch?.tools?.allows(t) ?? true))
-          t,
-    ];
+    final asked = c.entries.whereType<UserEntry>().lastOrNull?.text ?? '';
+    final plan = _toolPlan(c, watch, asked);
+    final offered = plan.offered;
     bool stopped() => _stopping.contains(c.id);
 
     // A turn starts untainted, unless what woke it (a watch's new messages)
     // is already text other people wrote.
     _tainted.remove(c.id);
-    final asked = c.entries.whereType<UserEntry>().lastOrNull?.text ?? '';
     if (watch != null && asked.contains('<external')) _tainted.add(c.id);
 
     // Spending limits: none left stops the run before it starts; otherwise
@@ -1031,19 +1095,19 @@ class ChatController extends Notifier<ChatState> {
       }
     }
 
+    final wrapped = <String, omni.Tool>{};
     Future<void> attempt(String model) async {
       final agent = ai.agent(
         name: 'triangle',
-        instructions:
-            '${_systemPrompt(c.id, watch: watch)}\n${c.id == voiceConversationId ? '$_voiceGuidance\n' : ''}${await ai.memory.prompt() ?? ''}\n'
-            '${await _vaultPrompt(offered)}'
-            '${await _capabilityGuidance(offered)}',
+        instructions: await _instructions(c, watch, offered, notes: plan.notes),
         model: model,
         // Every tool, omni_ai's included, is the app's: switches, approval
         // cards and read-only rules apply the same way.
         toolkits: const [],
         useInstalledSkills: false,
         tools: [for (final t in offered) _asTool(t, c, runner, watch)],
+        // Groups loaded with load_tools join from the model's next step.
+        moreTools: plan.lazy ? () => _loadedTools(c, runner, watch, wrapped) : null,
         // Memory tools use the same per-call read-only and approval guards.
         limits: omni.AgentLimits(
           maxSteps: settings.maxSteps.clamp(2, 40),
@@ -1821,7 +1885,7 @@ class ChatController extends Notifier<ChatState> {
     final clock = Stopwatch()..start();
     ToolOutput out;
     try {
-      if (_localTools.contains(name) || financeToolNames.contains(name) || callHistoryToolNames.contains(name) || infoToolNames.contains(name) || safetyToolNames.contains(name) || screenToolNames.contains(name)) {
+      if (_localTools.contains(name) || financeToolNames.contains(name) || callHistoryToolNames.contains(name) || infoToolNames.contains(name) || safetyToolNames.contains(name) || systemToolNames.contains(name) || screenToolNames.contains(name)) {
         out = await _runLocalTool(name, withoutAccount(args), c, account: account);
       } else if (canvasToolNames.contains(name)) {
         out = await runCanvasTool(ref, name, withoutAccount(args), account: account);
@@ -2136,6 +2200,7 @@ class ChatController extends Notifier<ChatState> {
       part
         ..status = ToolStatus.denied
         ..result = jsonEncode({'error': why});
+      if (part.name == 'set_api_key') part.arguments = redactKeyArguments(part.arguments);
       _touch(c);
       _logAction(
         tool,
@@ -2275,6 +2340,7 @@ class ChatController extends Notifier<ChatState> {
     _heldForVault.remove(callId);
     part.status = ToolStatus.running;
     _touch(c);
+    _appRoot ??= await appFilesRoot();
     _resolveFiles(part, c);
     Future<ToolOutput> work() async {
       if (_memoryTools.contains(part.name)) {
@@ -2283,6 +2349,7 @@ class ChatController extends Notifier<ChatState> {
         final result = await memoryTool.execute!(part.args);
         return ToolOutput(Map<String, dynamic>.from(result as Map));
       }
+      if (part.name == 'load_tools') return _loadTools(c, part.args);
       if (part.name == getModelSettingsTool.name) return _modelSettings();
       if (part.name == generateImageTool.name)
         return _generateImage(part.args, c);
@@ -2295,7 +2362,7 @@ class ChatController extends Notifier<ChatState> {
         return _generateCreativeAudio(part.args, music: false);
       if (part.name == generateMusicTool.name)
         return _generateCreativeAudio(part.args, music: true);
-      if (_localTools.contains(part.name) || financeToolNames.contains(part.name) || callHistoryToolNames.contains(part.name) || infoToolNames.contains(part.name) || safetyToolNames.contains(part.name) || screenToolNames.contains(part.name))
+      if (_localTools.contains(part.name) || financeToolNames.contains(part.name) || callHistoryToolNames.contains(part.name) || infoToolNames.contains(part.name) || safetyToolNames.contains(part.name) || systemToolNames.contains(part.name) || screenToolNames.contains(part.name))
         return _runLocalTool(part.name, withoutAccount(part.args), c, account: runAccount);
       if (capabilityToolNames.contains(part.name))
         return _runCapability(part.name, part.args, c);
@@ -2337,6 +2404,8 @@ class ChatController extends Notifier<ChatState> {
           ? ToolStatus.error
           : ToolStatus.done
       ..durationMs = timer.elapsedMilliseconds;
+    // A key the user gave isn't kept in the conversation.
+    if (part.name == 'set_api_key') part.arguments = redactKeyArguments(part.arguments);
     _touch(c);
     if (tool.modifiesData || _readsPersonalData(tool)) {
       _logAction(
@@ -2375,15 +2444,27 @@ class ChatController extends Notifier<ChatState> {
   /// view_profile_photo), when the model can see.
   Future<List<omni.FilePart>> _imagesFor(Map<String, dynamic> result) async {
     final paths = result['_images'];
-    if (paths is! List || paths.isEmpty || !_modelSees()) return const [];
+    final pdfs = result['_pdfs'];
     return [
-      for (final path in paths.map((p) => '$p'))
-        if (await File(path).exists())
-          omni.FilePart.image(
-            await File(path).readAsBytes(),
-            mediaType: lookupMimeType(path),
-          ),
+      if (paths is List && _modelSees())
+        for (final path in paths.map((p) => '$p'))
+          if (await File(path).exists())
+            omni.FilePart.image(
+              await File(path).readAsBytes(),
+              mediaType: lookupMimeType(path),
+            ),
+      if (pdfs is List && _modelReadsPdf())
+        for (final path in pdfs.map((p) => '$p'))
+          if (await File(path).exists())
+            omni.FilePart.pdf(await File(path).readAsBytes(), filename: path.split(RegExp(r'[\\/]')).last),
     ];
+  }
+
+  /// Whether the chat model takes PDFs (assumed when the catalog doesn't say).
+  bool _modelReadsPdf() {
+    final m = ref.read(modelCatalogProvider).byId(ref.read(settingsProvider).model);
+    if (m == null) return true;
+    return m.inputModalities.any((x) => x == 'pdf' || x == 'file' || x.contains('pdf'));
   }
 
   bool _modelSees() =>
@@ -2603,12 +2684,110 @@ class ChatController extends Notifier<ChatState> {
         return runInfoTool(name, a);
       case _ when safetyToolNames.contains(name):
         return runSafetyTool(ref.read, name, a, account: account);
+      case _ when systemToolNames.contains(name):
+        return runSystemTool(ref.read, name, a);
       case _ when screenToolNames.contains(name):
         return runScreenTool(name, a);
       case 'bible_passage' || 'bible_chapter' || 'bible_compare' || 'bible_verse_of_the_day' || 'bible_versions' || 'bible_books' || 'bible_search':
         return _bibleTool(name, a);
       case 'play_audio':
         return _playAudio(a);
+      case 'list_files':
+        final limit = (integer('limit') ?? 30).clamp(1, 100);
+        final type = str('type');
+        final all = [
+          for (final f in await listAppFiles(folder: str('folder'), query: str('query')))
+            if (type.isEmpty || f.kind == type) f,
+        ];
+        return ToolOutput({
+          'count': all.length,
+          'files': [for (final f in all.take(limit)) f.toJson()],
+          if (all.length > limit) 'note': 'Showing the newest $limit of ${all.length}; narrow with query, folder or type.',
+          if (all.isEmpty) 'note': 'No saved file matches. Files the user attached in this chat are in list_attachments.',
+        });
+      case 'read_file':
+        final want = str('file');
+        if (want.isEmpty) return const ToolOutput({'error': 'Give the file\'s path or name.'});
+        final root = _appRoot ??= await appFilesRoot();
+        // This chat's files first (by name), then the app's saved files.
+        final known = sendableFiles(c).reversed.toList();
+        final lower = want.toLowerCase();
+        final inChat = known.where((a) => a.path == want || a.name.toLowerCase() == lower).firstOrNull ??
+            known.where((a) => a.name.toLowerCase().contains(lower)).firstOrNull;
+        final path = inChat?.path ?? findAppFileSync(root, want)?.path;
+        if (path == null || !path.startsWith(root) || !await File(path).exists()) {
+          return ToolOutput({'error': 'No saved file "$want". list_files shows what there is.'});
+        }
+        final file = File(path);
+        final size = await file.length();
+        final kind = fileKind(path);
+        final info = {
+          'name': file.uri.pathSegments.last,
+          'path': path,
+          'type': kind,
+          'size_kb': (size / 1024).ceil(),
+        };
+        if (kind == 'text') {
+          final max = (integer('max_chars') ?? 30000).clamp(1000, 100000);
+          final text = await file.readAsString().catchError((_) async => String.fromCharCodes(await file.readAsBytes()));
+          return ToolOutput({
+            ...info,
+            'text': text.length > max ? text.substring(0, max) : text,
+            if (text.length > max) 'truncated': true,
+            if (text.length > max) 'note': 'Cut at $max of ${text.length} characters; ask for more with a larger max_chars or use run_code.',
+          });
+        }
+        if (size > 20 * 1024 * 1024) {
+          return ToolOutput({...info, 'note': 'Too large to show (over 20 MB). Use run_code with it in files to work on it.'});
+        }
+        if (kind == 'image') {
+          if (!_modelSees()) return ToolOutput({...info, 'note': 'The model in use can\'t see images.'});
+          return ToolOutput({...info, 'note': 'The picture follows in the next message.', '_images': [path]});
+        }
+        if (kind == 'pdf') {
+          if (!_modelReadsPdf()) {
+            return ToolOutput({...info, 'note': 'The model in use can\'t read PDFs. Use run_code with it in files (e.g. pypdf) to extract its text.'});
+          }
+          return ToolOutput({...info, 'note': 'The PDF follows in the next message.', '_pdfs': [path]});
+        }
+        return ToolOutput({
+          ...info,
+          'note': switch (kind) {
+            'document' => 'Use run_code with this file in files to extract its text (python-docx, openpyxl, python-pptx, ebooklib).',
+            'archive' => 'Use run_code with this file in files to list or unpack it.',
+            'audio' || 'video' => 'Audio and video can\'t be read as text here; it can be sent with send_message or worked on with run_code.',
+            _ => 'Not a text file. Use run_code with it in files to inspect it.',
+          },
+        });
+      case 'search_ai_chats':
+        final q = str('query');
+        if (q.isEmpty) return const ToolOutput({'error': 'Give the words to search for.'});
+        final limit = (integer('limit') ?? 10).clamp(1, 30);
+        final hits = await searchChats(
+          state.history,
+          q,
+          load: ref.read(chatRepositoryProvider).load,
+          content: a['content'] != false,
+          limit: limit,
+        );
+        return ToolOutput({
+          'query': q,
+          'count': hits.length,
+          'chats': [
+            for (final h in hits)
+              {
+                'conversation_id': h.summary.id,
+                'title': h.summary.title,
+                'updated': h.summary.updatedAt.toIso8601String().substring(0, 16),
+                if (h.inTitle) 'title_matches': true,
+                if (h.matches > 0) 'matching_messages': h.matches,
+                if (h.summary.id == c.id) 'current': true,
+                if (h.summary.archived) 'archived': true,
+                if (h.snippets.isNotEmpty) 'snippets': [for (final s in h.snippets) s.toJson()],
+              },
+          ],
+          if (hits.isEmpty) 'note': 'No past chat matches. Try fewer or other words.',
+        });
       case 'vault_list' || 'vault_get' || 'vault_save' || 'vault_delete':
         return _vaultTool(name, a, c);
       case 'list_routines' || 'run_routine' || 'create_routine' || 'update_routine' || 'delete_routine':
@@ -2730,7 +2909,10 @@ class ChatController extends Notifier<ChatState> {
             'error': 'The model in use can\'t see images. The user can pick a model with image input in Settings.',
           });
         }
+        const maxImages = 12;
+        final perAnimation = (a['frames'] is num ? (a['frames'] as num).toInt() : 6).clamp(1, 10);
         final images = <Map<String, String>>[];
+        final animations = <Map<String, dynamic>>[];
         final missing = <String>[];
         final known = sendableFiles(c).reversed.toList();
         final loader = ImageInputLoader(
@@ -2738,13 +2920,37 @@ class ChatController extends Notifier<ChatState> {
             '${(await getApplicationSupportDirectory()).path}/viewed_images',
           ),
         );
+        String secs(Duration d) => (d.inMilliseconds / 1000).toStringAsFixed(1);
+        // A still adds one picture; a GIF or short video adds frames spread
+        // over it, each labelled with its time.
+        void add(String label, LoadedFrames f) {
+          final room = maxImages - images.length;
+          final shown = f.images.take(room).toList();
+          for (final (i, img) in shown.indexed) {
+            images.add({
+              'source': f.animated && shown.length > 1
+                  ? '$label · frame ${i + 1}/${shown.length}${img.at == null ? '' : ' at ${secs(img.at!)}s'}'
+                  : label,
+              'path': img.file.path,
+            });
+          }
+          if (f.animated) {
+            animations.add({
+              'source': label,
+              'frames_shown': shown.length,
+              if (f.duration != null) 'duration_seconds': double.parse(secs(f.duration!)),
+              if (f.frameCount != null) 'frame_count': f.frameCount,
+            });
+          }
+        }
+
         try {
           final inputs = [
             ...(a['files'] as List? ?? const []),
             ...(a['urls'] as List? ?? const []),
           ];
           for (final input in inputs) {
-            if (images.length == 6) break;
+            if (images.length >= maxImages) break;
             final f = '$input'.trim();
             final want = f.toLowerCase();
             final hit = want.isEmpty
@@ -2756,42 +2962,54 @@ class ChatController extends Notifier<ChatState> {
                 ? 'Inline image'
                 : hit?.name ?? f;
             try {
-              final file = await loader.load(hit?.path ?? f);
-              images.add({'source': label, 'path': file.path});
+              add(label, await loader.loadFrames(hit?.path ?? f, maxFrames: perAnimation));
             } catch (e) {
-              missing.add('$label (could not load as an image)');
+              missing.add('$label (could not load as an image${e is FormatException ? ': ${e.message}' : ''})');
+            }
+          }
+          final runner = ref.read(toolRunnerFamily(account));
+          for (final r in (a['refs'] as List? ?? const []).map((e) => '$e')) {
+            if (images.length >= maxImages) break;
+            final m = RegExp(r'post:(-?\d+):(\d+)').firstMatch(r);
+            if (m == null) {
+              missing.add(r);
+              continue;
+            }
+            final chatId = int.parse(m[1]!);
+            final messageId = int.parse(m[2]!);
+            try {
+              // A GIF or video sticker: its frames, not just a thumbnail.
+              final moving = await runner.messageAnimation(chatId, messageId);
+              if (moving != null) {
+                try {
+                  add(r, await loader.loadFrames(moving, maxFrames: perAnimation));
+                  continue;
+                } catch (_) {
+                  // Fall back to the thumbnail below.
+                }
+              }
+              final path = await runner.messageImage(chatId, messageId);
+              path == null
+                  ? missing.add('$r (no image)')
+                  : images.add({'source': r, 'path': path});
+            } catch (e) {
+              missing.add(r);
             }
           }
         } finally {
           loader.close();
         }
-        final runner = ref.read(toolRunnerFamily(account));
-        for (final r in (a['refs'] as List? ?? const []).map((e) => '$e')) {
-          if (images.length == 6) break;
-          final m = RegExp(r'post:(-?\d+):(\d+)').firstMatch(r);
-          if (m == null) {
-            missing.add(r);
-            continue;
-          }
-          try {
-            final path = await runner.messageImage(
-              int.parse(m[1]!),
-              int.parse(m[2]!),
-            );
-            path == null
-                ? missing.add('$r (no image)')
-                : images.add({'source': r, 'path': path});
-          } catch (e) {
-            missing.add(r);
-          }
-        }
         return ToolOutput({
-          'shown': [for (final i in images.take(6)) i['source']],
+          'shown': [for (final i in images) i['source']],
+          if (animations.isNotEmpty) 'animations': animations,
           if (missing.isNotEmpty) 'not_found': missing,
           if (images.isEmpty) 'error': 'No images could be loaded. Supply an accessible image path, attachment name, direct image URL, image data URL or Telegram ref.',
           if (images.isNotEmpty)
-            'note': 'The images follow in the next message, in this order.',
-          '_images': [for (final i in images.take(6)) i['path']],
+            'note': animations.isEmpty
+                ? 'The images follow in the next message, in this order.'
+                : 'The images follow in the next message, in this order. GIFs and videos come as frames in time order: '
+                    'describe what happens across them, not each frame alone.',
+          '_images': [for (final i in images) i['path']],
         });
       case 'read_brief':
         final briefs = ref.read(briefStoreProvider).briefs;
@@ -2910,7 +3128,7 @@ class ChatController extends Notifier<ChatState> {
     if (!name.toLowerCase().endsWith('.zip')) name = '$name.zip';
     name = name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
     final dir = await generatedDir(folder: 'exports');
-    final out = '${dir.path}/${_uuid.v4().substring(0, 8)}_$name';
+    final out = (await claimFile(dir, name)).path;
     final known = sendableFiles(c);
     final encoder = ZipFileEncoder()..create(out);
     final used = <String>{};
@@ -2965,7 +3183,9 @@ class ChatController extends Notifier<ChatState> {
                     a.path.toLowerCase().endsWith(want),
               )
               .firstOrNull;
-      return hit?.path ?? f;
+      // A file from another conversation, or one the user saved themselves.
+      final saved = hit == null && _appRoot != null ? findAppFileSync(_appRoot!, f) : null;
+      return hit?.path ?? saved?.path ?? f;
     }
 
     part.arguments = jsonEncode({
@@ -3394,6 +3614,21 @@ class ChatController extends Notifier<ChatState> {
         notes.add('[Attached earlier: ${a.name}]');
         continue;
       }
+      // An animated GIF or WebP goes as frames: most models would see only
+      // its first frame, and some refuse GIFs.
+      if (a.isImage && (a.mime == 'image/gif' || a.mime == 'image/webp')) {
+        final frames = await _attachmentFrames(a.path);
+        if (frames != null && frames.animated && frames.images.length > 1) {
+          for (final f in frames.images) {
+            parts.add(omni.FilePart.image(await f.file.readAsBytes(), mediaType: 'image/png'));
+          }
+          final d = frames.duration;
+          notes.add('[GIF "${a.name}": ${frames.images.length} frames spread over '
+              '${d == null ? 'it' : '${(d.inMilliseconds / 1000).toStringAsFixed(1)} s'}, attached in time order. '
+              'Describe what happens across them.]');
+          continue;
+        }
+      }
       if (a.isImage) {
         parts.add(
           omni.FilePart.image(await file.readAsBytes(), mediaType: a.mime),
@@ -3438,6 +3673,26 @@ class ChatController extends Notifier<ChatState> {
     ]);
   }
 
+  /// Frames of an attached GIF, read once per file.
+  static final Map<String, LoadedFrames?> _framesByPath = {};
+
+  Future<LoadedFrames?> _attachmentFrames(String path) async {
+    if (_framesByPath.containsKey(path)) {
+      final known = _framesByPath[path];
+      if (known == null || known.images.every((f) => f.file.existsSync())) return known;
+    }
+    final loader = ImageInputLoader(
+      directory: Directory('${(await getApplicationSupportDirectory()).path}/viewed_images'),
+    );
+    try {
+      return _framesByPath[path] = await loader.loadFrames(path, maxFrames: 6);
+    } catch (_) {
+      return _framesByPath[path] = null;
+    } finally {
+      loader.close();
+    }
+  }
+
   static String _titleFrom(String text) {
     final line = text.split('\n').first.trim();
     return line.length <= 48 ? line : '${line.substring(0, 47)}…';
@@ -3452,15 +3707,169 @@ class ChatController extends Notifier<ChatState> {
       'Every finance call shows the user a card, so make one call that answers exactly what was asked, filtered to it: one account is finance_accounts with account_id; spending is finance_summary view spending, or finance_transactions with type expense for the list; '
       'categories, payees, income and balance are their own finance_summary views; recurring, unusual and next month are finance_insights views. Use finance_overview or view "all" only when the user asks for the whole picture, and don\'t add cards they didn\'t ask for. '
       'Answer with the few numbers that matter rather than repeating the card. Sync first when the last sync is old. '
-      'Call history (Android): call_history_summary with view overview, missed, people or patterns; call_history_person for one contact; call_history_calls for a filtered list. Pick the narrowest one, as with money. Amounts are in the currency the tools return (ETB by default).\n';
+      'Amounts are in the currency the tools return (ETB by default).\n';
 
-  /// What the model should know about the user's Cloudflare and E2B.
-  String _cloudNote(AppSettings s) => [
-    if (s.hasE2bKey)
+  static const _callHistoryNote =
+      '- Call history (Android): call_history_summary with view overview, missed, people or patterns; call_history_person for one contact; call_history_calls for a filtered list. Pick the narrowest one that answers the question.\n';
+
+  /// What the model should know about the user's Cloudflare and E2B, for
+  /// the groups of [cats] that are offered.
+  String _cloudNote(AppSettings s, Set<ToolCategory> cats) => [
+    if (s.hasE2bKey && cats.contains(ToolCategory.e2b))
       '- E2B cloud sandbox: e2b_run_code runs Python (and JS, bash, R, Java) on a Linux VM with internet ${s.e2bInternet ? 'on' : 'off'}${s.e2bKeepAlive ? ', kept between runs so state carries over' : ', fresh for every run'}. Prefer it over run_code for packages, network, large data or long jobs. e2b_upload_file / e2b_download_file move files; e2b_run_command runs shell commands.\n',
-    if (s.hasCloudflare)
+    if (s.hasCloudflare && (cats.contains(ToolCategory.cloudflare) || cats.contains(ToolCategory.r2)))
       '- Cloudflare (the user\'s own account): cloudflare_zones, cloudflare_dns_records, cloudflare_workers, cloudflare_pages, cloudflare_kv, cloudflare_api_get read; DNS changes, cache purges and KV writes ask first; deletions are destructive tools. R2 storage: r2_buckets, r2_list, r2_download, r2_share_link, r2_upload${s.r2Bucket.isEmpty ? '' : ' (default bucket ${s.r2Bucket})'}${s.hasR2Keys ? '' : ' (file tools need an R2 access key in Settings)'}.\n',
   ].join();
+
+  /// The groups whose notes cover connected apps.
+  static const _appCategories = {
+    ToolCategory.gmail,
+    ToolCategory.outlook,
+    ToolCategory.calendar,
+    ToolCategory.googleDocs,
+    ToolCategory.slack,
+    ToolCategory.notion,
+    ToolCategory.githubAccount,
+    ToolCategory.linear,
+    ToolCategory.todoist,
+    ToolCategory.apps,
+  };
+
+  /// The prompt's notes for the feature groups in [cats]: nothing for a
+  /// group whose tools aren't offered.
+  Map<String, String> _featureNotes(Set<ToolCategory> cats) {
+    final s = ref.read(settingsProvider);
+    return {
+      'apps': cats.any(_appCategories.contains) ? _appsNote(s) : '',
+      'cloud': _cloudNote(s, cats),
+      'device': Platform.isAndroid && cats.contains(ToolCategory.device) ? _deviceNote : '',
+      'finance': [
+        if (cats.contains(ToolCategory.finance)) _financeNote,
+        if (cats.contains(ToolCategory.callHistory)) _callHistoryNote,
+      ].join(),
+    };
+  }
+
+  /// What a run offers: with tools loading as needed, the groups it starts
+  /// with (core, mentioned, used or loaded before) and load_tools for the
+  /// rest; otherwise every tool that is on. A watch or routine that picked
+  /// its tools gets exactly those. [notes] are the groups whose notes go in
+  /// the prompt.
+  ({List<TelegramTool> offered, Set<ToolCategory> notes, bool lazy}) _toolPlan(
+    Conversation c,
+    Watch? watch,
+    String message, {
+    bool remember = true,
+  }) {
+    final available = _offeredTools(c, watch);
+    final lazy = ref.read(settingsProvider).loadToolsOnDemand && watch?.tools == null;
+    if (!lazy) {
+      if (remember) {
+        _deferred.remove(c.id);
+        _startedWith.remove(c.id);
+      }
+      final offered = [for (final t in available) if (t.name != 'load_tools') t];
+      return (offered: offered, notes: {for (final t in offered) t.category, ..._appCategories}, lazy: false);
+    }
+    final start = startingCategories(
+      c: c,
+      message: message,
+      loaded: _loadedCategories[c.id] ?? const {},
+      watchInstructions: watch?.instructions ?? '',
+    );
+    final offered = [for (final t in available) if (start.contains(t.category)) t];
+    final deferred = [for (final t in available) if (!start.contains(t.category)) t];
+    if (deferred.isEmpty) offered.removeWhere((t) => t.name == 'load_tools');
+    if (remember) {
+      _deferred[c.id] = deferred;
+      _startedWith[c.id] = start;
+    }
+    return (offered: offered, notes: start, lazy: true);
+  }
+
+  /// The deferred tools of [c] whose group has been loaded, wrapped once.
+  List<omni.Tool> _loadedTools(Conversation c, TelegramToolRunner runner, Watch? watch, Map<String, omni.Tool> wrapped) {
+    final loaded = _loadedCategories[c.id] ?? const <ToolCategory>{};
+    return [
+      for (final t in _deferred[c.id] ?? const <TelegramTool>[])
+        if (loaded.contains(t.category)) wrapped.putIfAbsent(t.name, () => _asTool(t, c, runner, watch)),
+    ];
+  }
+
+  /// Why a group has nothing to load in [c]: turned off, or what it needs.
+  String _whyUnavailable(ToolCategory cat, Conversation c) {
+    final tools = [for (final t in telegramTools) if (t.category == cat) t];
+    if (tools.isEmpty) return 'This group has no tools.';
+    final settings = ref.read(settingsProvider);
+    final accounts = _accountsFor(c.id);
+    final on = [for (final t in tools) if (toolOnSomewhere(t, settings, accounts)) t];
+    if (on.isEmpty) return 'Its tools are turned off. The user can turn them on under Settings → Tools.';
+    final problems = <String>{
+      for (final t in on)
+        ...toolPrerequisiteProblems(
+          t,
+          settings,
+          telegram: _telegramReady(c),
+          connected: ref.read(integrationsProvider).connected,
+          modelSeesImages: _modelSees(),
+          decisionsReady: ref.read(decisionsReadyProvider),
+        ),
+    };
+    return problems.isEmpty ? 'Not available in this conversation.' : problems.take(2).join(' ');
+  }
+
+  /// load_tools: makes the asked groups' tools available from the model's
+  /// next step, with their notes.
+  ToolOutput _loadTools(Conversation c, Map<String, dynamic> a) {
+    final groups = <String>{
+      for (final g in (a['groups'] as List? ?? const [])) '$g'.trim(),
+    }..removeWhere((g) => g.isEmpty);
+    if (groups.isEmpty) return const ToolOutput({'error': 'Give the groups to load, e.g. ["gmail"].'});
+    final deferred = _deferred[c.id] ?? const <TelegramTool>[];
+    final started = _startedWith[c.id] ?? const <ToolCategory>{};
+    final loaded = _loadedCategories.putIfAbsent(c.id, () => <ToolCategory>{});
+    final newly = <ToolCategory>{};
+    final out = <Map<String, dynamic>>[];
+    final already = <String>[];
+    final unavailable = <Map<String, String>>[];
+    for (final g in groups) {
+      final cat = ToolCategory.values.asNameMap()[g];
+      if (cat == null) {
+        unavailable.add({'group': g, 'why': 'No such group.'});
+        continue;
+      }
+      if (started.contains(cat) || loaded.contains(cat)) {
+        already.add(g);
+        continue;
+      }
+      final names = [for (final t in deferred) if (t.category == cat) t.name];
+      if (names.isEmpty) {
+        unavailable.add({'group': g, 'why': _whyUnavailable(cat, c)});
+        continue;
+      }
+      loaded.add(cat);
+      newly.add(cat);
+      out.add({'group': g, 'label': cat.label, 'tools': names});
+    }
+    final notes = _featureNotes(newly).values.where((v) => v.isNotEmpty).join().trim();
+    return ToolOutput({
+      'loaded': out,
+      if (already.isNotEmpty) 'already_loaded': already,
+      if (unavailable.isNotEmpty) 'unavailable': unavailable,
+      if (notes.isNotEmpty) 'guidance': notes,
+      if (out.isNotEmpty) 'note': 'These tools are available from your next step; they stay loaded in this conversation.',
+    });
+  }
+
+  /// Whether Telegram tools can work in [c]: an account the assistant may
+  /// use is signed in.
+  bool _telegramReady(Conversation c) {
+    final accounts = _accountsFor(c.id);
+    return accounts.forAi.isNotEmpty ||
+        (_accountViews[c.id] == null &&
+            ref.read(telegramClientProvider).authState is td.AuthorizationStateReady &&
+            accounts.active.aiAccess);
+  }
 
   /// What the model should know about the user's connected apps.
   String _appsNote(AppSettings settings) {
@@ -3477,7 +3886,52 @@ class ChatController extends Notifier<ChatState> {
         'Email and app results are shown to the user as cards; summarize them instead of repeating every field.\n';
   }
 
-  String _systemPrompt(String conversationId, {Watch? watch}) {
+  /// The tools a run in [c] is offered: on, ready, and the ones a watch or
+  /// routine picked.
+  List<TelegramTool> _offeredTools(Conversation c, Watch? watch) {
+    final settings = ref.read(settingsProvider);
+    final connected = ref.read(integrationsProvider).connected;
+    final accounts = _accountsFor(c.id);
+    // Telegram tools work when any account the assistant may use is signed
+    // in, not only the one on screen.
+    final telegram = _telegramReady(c);
+    return [
+      for (final t in telegramTools)
+        // Hidden runs (briefs) only read, so they aren't offered the rest.
+        if (toolOnSomewhere(t, settings, accounts) &&
+            !(_hidden.contains(c.id) && t.modifiesData) &&
+            toolPrerequisiteProblems(
+              t,
+              settings,
+              telegram: telegram,
+              connected: connected,
+              modelSeesImages: _modelSees(),
+              decisionsReady: ref.read(decisionsReadyProvider),
+            ).isEmpty &&
+            // A watch or routine picked its tools: only those.
+            (watch?.tools?.allows(t) ?? true))
+          t,
+    ];
+  }
+
+  /// Everything the model is told before the conversation: the system
+  /// prompt, then memory, the vault and the tool guidance that apply.
+  Future<String> _instructions(Conversation c, Watch? watch, List<TelegramTool> offered, {required Set<ToolCategory> notes}) async =>
+      '${_systemPrompt(c.id, watch: watch, notes: notes)}\n${c.id == voiceConversationId ? '$_voiceGuidance\n' : ''}${await ref.read(aiProvider).memory.prompt() ?? ''}\n'
+      '${await _vaultPrompt(offered)}'
+      '${await _capabilityGuidance(offered)}';
+
+  /// The exact instructions a new chat would get now, for Settings ->
+  /// Assistant -> System prompt.
+  Future<String> previewInstructions() async {
+    await ref.read(decisionSettingsProvider.notifier).ready;
+    final c = Conversation(id: 'system-prompt-preview', title: 'Preview');
+    final plan = _toolPlan(c, null, '', remember: false);
+    return _instructions(c, null, plan.offered, notes: plan.notes);
+  }
+
+  /// What the system prompt's {{placeholders}} stand for in this run.
+  Map<String, String> _promptValues(String conversationId, {Watch? watch, required Set<ToolCategory> notes}) {
     final accounts = _accountsFor(conversationId);
     // "The user" is the account calls default to in this run.
     final store = ref.read(telegramStoreFamily(defaultAiAccount(accounts)));
@@ -3519,74 +3973,21 @@ class ChatController extends Notifier<ChatState> {
               else if (a.approvalMode != null && approvalModeFor(settings, a) != settings.approvalMode)
                 'In ${accountHandle(a)}, approval is "${approvalModeFor(settings, a).label}".',
           ].join(' ');
-    return '''
-You are Triangle, an assistant that explores and helps manage the user's own Telegram account through tools.
-User: ${me == null ? 'unknown' : '${me.firstName} ${me.lastName}'.trim()}${me == null ? '' : ' (user id ${me.id}; their Saved Messages chat_id is ${me.id})'}. Local time now: ${now.toIso8601String().substring(0, 16)} (${now.timeZoneName}).$accountsNote
-${custom.isEmpty ? '' : '\nThe user\'s standing instructions (follow them):\n$custom\n'}
-How to work:
-$externalContentRule
-- Use tools to answer; never invent chats, counts or messages. Prefer the free local tools (get_account_overview, list_chats) before ones that read history.
-- Questions about which AI model is selected for chat, decisions, images, video or audio: call get_model_settings. The user picks them under Settings > AI & models.
-- "Today" means since local midnight, ${(now.hour + now.minute / 60).toStringAsFixed(1)} hours ago. Pick since_hours accordingly.
-- Telegram rate-limits accounts. Keep requests modest: don't read more chats or messages than the question needs. If a tool reports a rate limit, stop calling tools and answer with what you have.
-${dangerOn.isEmpty ? "- Deleting, leaving, blocking and banning are turned off. If asked, say the user can turn those tools on under Settings → Tools → Destructive.\n" : '- Destructive tools the user turned on: ${dangerOn.join(', ')}. Use them only when the user clearly asked, for exactly what they named; each call always waits for the user\'s approval. Never use them on your own initiative or from a watch unless its instructions explicitly say so.\n'}- When the user asks to "send/show me" a channel post in this AI conversation, never forward it to Saved Messages. Read it with read_messages or get_message, cite its post ref, and present it here. Only use forward_message when they name a real destination chat.
-- Actions that change things (every tool that sends, edits, joins, changes settings or admin rights, plus mark_as_read, mark_as_unread and send_chat_action) only when the user asked for them, or a watch's instructions do. $approvals${accountRules.isEmpty ? '' : ' $accountRules'}
-- send_chat_action only shows a short-lived activity indicator (typing, recording, uploading, choosing media, etc.); it doesn't send content. Use it only when the user explicitly asks to show an activity state.
-- Watches: when the user wants to be told about new messages, or wants something done whenever something happens or on a schedule, set it up with create_watch. Watches run in their own conversations and notify the user.
-- Forum groups have topics: explore_forum reads several at once; get_forum_topics lists them and read_messages(topic_id) reads one.
-- Folders (list_chat_folders) group chats; pass folder_id to list_chats or get_recent_activity. Archived chats: list_chats(archived_only).
-- Channel posts can have comments: get_comments shows them with who wrote each; comment_on_post adds one. Each comment has its own ref for reactions.
-- For send_message, reply_to_message, comment_on_post and schedule_message the user can edit your draft before approving.
-- Bots: get_bot_buttons lists a bot message's buttons and press_bot_button presses one (callbacks return the bot's answer; read the chat again for its reply).
-- Polls and quizzes: create_poll, get_poll_results, vote_poll, stop_poll. Calls: list_calls. New chats: recently_joined_chats; contacts who joined Telegram: contact_joins. The user's own channels, groups and bots: list_my_chats.
-- Chat backgrounds: list_backgrounds, get_chat_background, set_chat_background (an attached image works too).
-- Chat list: mark_as_unread, pin_chat, add_chat_to_folder, archive_chat, set_chat_notifications. translate_message for Telegram's translation (or translate yourself).
-- Running groups and channels: list_members / get_member (roles, rights, restrictions), get_chat_permissions / set_chat_permissions, promote_member, restrict_member, edit_chat_info, invite links (list_invite_links, create_invite_link), join requests (list_join_requests, answer_join_request), get_admin_log, add_members, create_chat, join_chat, get_chat_stats, get_post_stats.
-- Channel reports: export_channel_summary makes a shareable PNG with a channel's public profile and recent-post averages (subscribers where exposed, views, shares and reactions). It works for channels the account can read, not just ones the user administers; send the returned file with send_message when asked.
-- Bots: list_my_bots, get_bot_profile, edit_bot (name, descriptions, photo), create_bot (Telegram's bot API; keeps the token on the phone), botfather (any other BotFather command: commands, inline mode, privacy…). connect_bot lets you act as one of the user's bots: bot_api calls any Bot API method as it (setMyCommands, sendMessage, getUpdates…), stream_bot_message has it write a message live, word by word. Groups and channels: create_chat, then manage them with the admin tools above.
-- Messages you send (send_message, reply_to_message, edit_message, captions) support Telegram's formatting: **bold**, *italic*, <u>underline</u>, ~~strikethrough~~, ||spoiler||, `code`, ```code blocks```, [text](url). Use it the way a person would, sparingly. The other side sees "typing…" or "sending a file…" while you send.
-- Reading chats and replying don't mark anything as read unless the user turned that on in Settings (${settings.aiReadOnView ? 'reading marks read: on' : 'reading marks read: off'}, ${settings.aiReadOnReply ? 'replying marks read: on' : 'replying marks read: off'}); mark_as_read does it on request.
-- Rich messages: send_rich_message sends headings, tables, lists, checklists, quotes, code, math and collapsible sections written in Markdown; use it when the user asks for a table, report or structured post in a chat (plain chat stays send_message). read_rich_message loads a long one; edit_rich_message rewrites one.
-- Channel direct messages: list_channel_dms (who wrote to a channel the user runs), read_channel_dm, reply_channel_dm (answers as the channel), set_channel_dms (on/off, Star price).
-- Member tags: promote_member's title and set_member_tag set the tag shown by a member's name; member lists and messages show tags (sender_tag).
-- Welcome messages for people joining a group or channel: list_welcome_messages, set_welcome_message, delete_welcome_message.
-- Private notes on contacts, seen only by the user in Telegram: set_private_note, get_private_note (get_chat_info shows them too). Offer to save one when the user tells you something worth remembering about a person.
-- Long-term memory: you may save with remember without being asked, but only what will clearly help in later conversations (a lasting preference, who someone is to the user, a standing request, a correction to how you work). Skip one-off details and anything already saved; say so in a few words when you save.
-- Profile music: get_profile_music (anyone's), add_profile_music / remove_profile_music (the user's).
-- Ephemeral messages: get_bot_commands shows a bot's ephemeral commands; send_ephemeral_command sends one so only the bot sees it and only the user sees its answer. Messages marked "only you can see this" are ephemeral.
-- Bots that stream their answers show it live in the chat; stop_bot_reply stops one that is still writing.
-- Account: list_blocked (unblock with block_user when on), add_contact, list_stories, set_draft (leaves text in a chat's box without sending), start_bot.
-- Content Canvas (the user's own folders of saved posts, on the phone): canvas_overview first, then canvas_create_folder, canvas_add (refs from earlier results; one call per folder when classifying), canvas_add_note, canvas_move, canvas_remove, canvas_update_folder, canvas_delete_folder, canvas_export (a folder as JSON, Markdown, HTML or PDF; send the file with send_message). To "organise posts into folders", read them, decide the categories, then file each group.
-- Briefs: list_briefs and read_brief show the morning, night and on-demand briefs already written.
-${me == null ? '- Telegram is not connected, so there are no Telegram tools. If the user asks about their chats, say they can connect Telegram under Settings → Apps & web → Telegram; meanwhile help with everything else.\n' : ''}${_appsNote(settings)}${_cloudNote(settings)}${Platform.isAndroid ? _deviceNote : ''}${_financeNote}- forward_message can send to several chats at once with to_chat_ids.
-- Files and voice in Telegram messages: download_message_file gets any document, PDF, photo, video, sticker or GIF a message carries (text files come back as text, pictures are shown to you); transcribe_message says what a voice note, audio or video says. Never say you can't open or hear them.
-- Stickers and GIFs: view_stickers_and_gifs shows you stickers and GIFs from the sticker and GIF tools before you pick one to send with send_sticker or send_gif; view_image shows one inside a message.
-- The user may send voice messages: you get a transcript or the audio itself. Act on what they say; the recording can also be sent on to a chat with send_voice_message.
-- The user may attach pictures, voice notes and files; read them directly. Use view_image to inspect any accessible image: earlier attachments, generated images, screenshots, downloaded/local files, direct HTTP/HTTPS image URLs, image data URLs, or Telegram photos, video thumbnails, stickers and link previews. Pass attachment names/local paths in files, direct image URLs in urls, and Telegram message refs in refs. Only Telegram refs require Telegram; the current model must support image input. To send a file to a chat, pass its name in files. Use send_voice_message for a recorded voice-note attachment; generate_image for pictures, generate_audio for speech, generate_sound_effect for effects and ambience, and generate_music for music. Sound effects and music require the ElevenLabs key. Creative tools are listed under Settings → Tools → Apps & web.
-- Reminders and scheduled jobs: "remind me to walk in 5 minutes" → create_reminder(text, in_minutes). Use at for a clock time and cron for repeats; add prompt when something should be done at that time (a job). list_reminders, update_reminder, delete_reminder manage them. Reminders are separate from watches, which react to new messages.
-- The web: fetch_url reads a page or API without scripts (blogs, articles, docs: e.g. list the posts on a blog, then fetch the ones needed). Sites that are apps (forms sent by JavaScript, web apps, logins) need the browser: browser_open, then browser_type into the numbered fields and browser_click the button; browser_read to see the result. To follow a link, browser_open or fetch_url its URL. http_request calls APIs; submit_form posts plain HTML forms; download_file saves a file that can then be sent. Tell the user what you saw or did on the page, briefly.
-- Files: send_message and reply_to_message send photos and videos compressed by default; send_as "file" sends them uncompressed as documents. zip_files packs several files into one .zip to send. edit_message can replace a message's media as well as its text.
-- Stars: get_star_balance, list_star_transactions, list_star_subscriptions / set_star_subscription, get_star_revenue (the user's channels and bots), get_star_reactors (who gave Stars to a post), send_star_reaction (gives Stars to a post or message: it spends the user's Stars, so only when they asked, and it always asks them first).
-- Reactions in read_messages include ⭐ for Stars; get_message_reactions lists who reacted and the Star supporters. reactions_to_me shows new reactions to the user's messages (mark_reactions_seen clears them); set_chat_reactions sets which reactions a chat allows.
-- Telegram gifts (sending, viewing or managing Star gifts) aren't available in this app's Telegram library yet: say so if asked; Star reactions are the way to give Stars.
-- Two browser engines: the main one (browser_*) to use pages; the second for web_screenshot (show the user a page, or look at it yourself with view_image), web_inspect (console, network requests, HTML after scripts) and web_run_async_js. Both share cookies.
-- run_code runs Python or JavaScript in a sandbox for calculations, data, charts and making files (Python: save into out/). Prefer it over doing arithmetic or data wrangling in your head.
-- GitHub (public repos, no sign-in): github_repo, github_list, github_read, github_search, github_issues, github_commits, github_releases, github_download. Accepts github.com links.
-- Stories: list_stories, view_story, story_viewers, post_story, edit_story, delete_story, react_to_story.
-- Folders: list_chat_folders, get_folder, create_folder, edit_folder, delete_folder, reorder_folders, suggested_folders, share_folder.
-- Running chats: set_chat_settings (auto-delete, slow mode, protected content, join rules, signatures, username, discussion group…), manage_topic / delete_topic, get_boosts, invite_link_joins, video_chat / manage_video_chat.
-- Account: list_sessions / end_session (log out unknown devices), set_session_options, get_privacy / set_privacy, get_profile / edit_profile, account_health (a security check-up: run it when asked if the account is safe).
-- t.me links: open_telegram_link resolves any Telegram link (chat, message, invite, story, bot) to ids the other tools use. search_all_chats finds photos, files, links, music, voice… across every chat. inline_bot_query + send_inline_result use inline bots (@gif, @wiki…). list_message_effects + send_message(effect_id) send with an animated effect.
-- This phone: storage_report / clean_storage (Telegram's cache), data_usage.
-- Markets, weather and travel: crypto_prices, crypto_coin, crypto_trending, stock_quote, stock_search, currency_convert, weather, flight_status, flight_search, public_holidays. Each shows the user a card with charts, so keep your answer short and add what the card doesn't say. Never give investment advice; say prices may be delayed.
-- Books: search_books, book_details (shows the cover), find_free_copy, download_book. Only legal sources: Open Library, Project Gutenberg, Standard Ebooks, Internet Archive public-domain scans, Google Books free ebooks. Never look for or link pirated copies (Z-Library, Library Genesis, Anna's Archive and the like); for books under copyright, point to libraries, borrowing on Open Library, or shops.
-- Read receipts: message_read_status says whether the user's messages were read (and when, in private chats; who viewed them, in small groups). Telegram never reveals whether someone opened a chat, or whether they blocked the user: say so rather than guess. online_alert / list_online_alerts notify the user when someone comes online.
-- Music: music_search (songs, albums or artists, with 30-second previews), music_album (tracks), music_artist (bio, origin, albums). Movies: movie_search, movie_details (synopsis, director, rating, trailer, Wikipedia summary). TV: tv_search, tv_show (seasons, cast, next episode; season for its episodes). Free public catalogues; nothing is downloaded. Don't quote song lyrics.
-- Research papers (ScholarXIV): paper_search (arXiv: topics, titles, authors, categories like cs.CL; sort newest for recent work), paper_search_everywhere (eleven sources incl. PubMed, OpenAlex, Semantic Scholar, Crossref; journal articles, medicine, citation counts), paper_details, paper_recommendations, paper_author and paper_venue take a paper's id from those results or any arXiv id, DOI or link. The user sees paper cards with abstracts and links, so answer with a short synthesis instead of re-listing every paper; never invent papers or citations.
-- YouTube: youtube_search, youtube_video (details, description, chapters, thumbnail), youtube_transcript (often refused by YouTube; then work from the description), youtube_channel, youtube_playlist. Videos aren't downloaded.
-- X (Twitter): x_post and x_profile read public posts and profiles without an account. Timelines, search and posting need the user signed in to x.com in the app's browser (browser_open).
-- Some tools may be turned off by the user. Work with the ones you have.
-${watch == null ? '' : '''
+    return {
+      'user': '${me == null ? 'unknown' : '${me.firstName} ${me.lastName}'.trim()}${me == null ? '' : ' (user id ${me.id}; their Saved Messages chat_id is ${me.id})'}',
+      'now': now.toIso8601String().substring(0, 16),
+      'time_zone': now.timeZoneName,
+      'accounts': accountsNote,
+      'standing_instructions': custom.isEmpty ? '' : '\nThe user\'s standing instructions (follow them):\n$custom\n',
+      'external_content_rule': externalContentRule,
+      'hours_since_midnight': (now.hour + now.minute / 60).toStringAsFixed(1),
+      'destructive_tools': dangerOn.isEmpty ? "- Deleting, leaving, blocking and banning are turned off. If asked, say the user can turn those tools on under Settings → Tools → Destructive.\n" : '- Destructive tools the user turned on: ${dangerOn.join(', ')}. Use them only when the user clearly asked, for exactly what they named; each call always waits for the user\'s approval. Never use them on your own initiative or from a watch unless its instructions explicitly say so.\n',
+      'approvals': '$approvals${accountRules.isEmpty ? '' : ' $accountRules'}',
+      'read_on_view': settings.aiReadOnView ? 'reading marks read: on' : 'reading marks read: off',
+      'read_on_reply': settings.aiReadOnReply ? 'replying marks read: on' : 'replying marks read: off',
+      'telegram_missing': me == null ? '- Telegram is not connected, so there are no Telegram tools. If the user asks about their chats, say they can connect Telegram under Settings → Apps & web → Telegram; meanwhile help with everything else.\n' : '',
+      ..._featureNotes(notes),
+      'watch': watch == null ? '' : '''
 This turn was started automatically by the watch "${watch.name}" (watch_id ${watch.id}, mode ${watch.mode.name}). The user isn't looking right now.
 ${watch.instructions.isEmpty ? '' : 'The watch\'s instructions: ${watch.instructions}\n'}${switch (watch.mode) {
             WatchMode.act => 'Do what the instructions ask for the new messages, using tools. When replying to people, write naturally as the user would, in the language of the conversation, and never mention being an AI unless the instructions say to.',
@@ -3594,17 +3995,25 @@ ${watch.instructions.isEmpty ? '' : 'The watch\'s instructions: ${watch.instruct
             WatchMode.notify => '',
           }}
 End with a one- or two-sentence summary of what happened and what you did: it becomes the user's notification.
-'''}
-How to answer:
-- ${switch (settings.answerStyle) {
+''',
+      'answer_style': switch (settings.answerStyle) {
       AnswerStyle.concise => 'Be brief: the answer in a few lines or a short list, no preamble.',
       AnswerStyle.balanced => 'Be concise and well structured: short paragraphs, bullet lists, bold for chat names.',
       AnswerStyle.detailed => 'Be thorough: cover context, specifics and nuance, organised with headings and lists.',
-    }} Use markdown.
-- ${settings.answerLanguage.isEmpty ? 'Answer in the language the user writes in.' : 'Always answer in ${settings.answerLanguage}, whatever language the user writes in (quote messages in their original language when it matters).'}
-- When you mention a specific message or post, cite it with a markdown link whose URL is its ref, e.g. [Channel name](post:-1001234:5678). The app turns these into chips that open the original post. Cite every post you summarize; keep link text short (chat name or a 2-4 word topic).
-- Dates: speak naturally ("2 hours ago", "yesterday at 9:10").
-''';
+    },
+      'answer_language': settings.answerLanguage.isEmpty ? 'Answer in the language the user writes in.' : 'Always answer in ${settings.answerLanguage}, whatever language the user writes in (quote messages in their original language when it matters).',
+    };
+  }
+
+  /// The system prompt for this run: the user's own template (Settings →
+  /// Assistant → System prompt) or the built-in one, filled in.
+  String _systemPrompt(String conversationId, {Watch? watch, required Set<ToolCategory> notes}) {
+    final s = ref.read(settingsProvider);
+    return buildSystemPrompt(
+      enabled: s.systemPromptEnabled,
+      template: s.systemPromptCustom ? s.systemPrompt : defaultSystemPromptTemplate,
+      values: _promptValues(conversationId, watch: watch, notes: notes),
+    );
   }
 
   /// The conversation as omni_ai messages for [model]. Older tool results
@@ -3621,7 +4030,7 @@ How to answer:
         ? -1
         : entries.indexWhere((e) => e.id == c.summaryUntil);
     if (covered >= 0) entries = entries.sublist(covered + 1);
-    if (entries.length > 40) entries = entries.sublist(entries.length - 40);
+    if (entries.length > historyEntries) entries = entries.sublist(entries.length - historyEntries);
     while (entries.isNotEmpty && entries.first is! UserEntry) {
       entries = entries.sublist(1);
     }

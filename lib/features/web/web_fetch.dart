@@ -9,6 +9,7 @@ import 'package:mime/mime.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../core/files/download_progress.dart';
+import '../../core/files/generated_files.dart' show claimFile;
 
 /// Plain HTTP for the assistant: reading pages without running their
 /// scripts (fast, cheap, fine for blogs and docs), calling APIs, and
@@ -153,7 +154,8 @@ class WebFetcher {
       file ??= url.pathSegments.where((s) => s.isNotEmpty).lastOrNull ?? 'download';
     }
     file = Uri.decodeComponent(file).replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
-    final out = File('${dir.path}/${DateTime.now().millisecondsSinceEpoch}_$file');
+    // The file's own name, numbered only when one by that name is there.
+    final out = await claimFile(dir, file);
     final track = DownloadProgress.start(file, url: url.toString(), total: r.contentLength);
     final sink = out.openWrite();
     try {

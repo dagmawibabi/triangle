@@ -206,7 +206,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     if (value.isEmpty && attachments.isEmpty) return;
     final settings = ref.read(settingsProvider);
     if (!settings.hasAnyKey) {
-      _openSettings();
+      _openAiSettings();
       showSnack(context, 'Add an AI provider API key first.');
       return;
     }
@@ -229,6 +229,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
   void _openSettings() => Navigator.of(context)
       .push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
+
+  /// Straight to AI & models, where the keys are.
+  void _openAiSettings() => Navigator.of(context).push(
+    MaterialPageRoute<void>(builder: (_) => const SettingsScreen(section: SettingsSection.ai)),
+  );
 
   Future<void> _pickModel() async {
     final current = ref.read(settingsProvider).model;
@@ -301,7 +306,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   ? _EmptyState(
                       onPick: _send,
                       hasKey: settings.hasAnyKey || !settings.loaded,
-                      onSettings: _openSettings,
+                      onSettings: _openAiSettings,
                       seed: chat.conversation.id.hashCode,
                       telegram: ref.watch(telegramConnectedProvider),
                     )

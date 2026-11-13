@@ -267,6 +267,7 @@ class SystemChecker {
     final keys = [
       if (s.hasVercelKey) 'Vercel AI Gateway',
       if (s.hasOpenRouterKey) 'OpenRouter',
+      if (s.hasOpenCodeKey) 'OpenCode Zen',
       if (s.hasGeminiKey) 'Google Gemini',
       if (s.hasLmStudio) 'LM Studio',
     ];

@@ -149,7 +149,7 @@ class _EditCard extends StatelessWidget {
 
 Future<void> _save(BuildContext context, String path) async {
   try {
-    if (!await Gal.hasAccess()) await Gal.requestAccess();
+    if (!await Gal.hasPermission()) await Gal.requestPermission();
     await Gal.putImage(path, album: 'Triangle');
     if (context.mounted) showSnack(context, 'Saved to the gallery');
   } catch (e) {

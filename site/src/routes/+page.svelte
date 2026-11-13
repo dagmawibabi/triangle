@@ -226,7 +226,12 @@
 		{
 			question: 'Which AI models can I use?',
 			answer:
-				'You choose your own chat, image and audio models in Settings. Providers include Vercel AI Gateway, OpenRouter and Google AI Studio. What’s available depends on the provider and keys you add.'
+				'You choose your own chat, image and audio models in Settings → AI & models. Providers include Vercel AI Gateway, OpenRouter, OpenCode Zen, Google AI Studio and LM Studio on your own computer, with ElevenLabs and Addis AI for voices and TypeSafe Jev for decisions. The model list shows only the providers you added a key for. You can also ask the assistant to add or change a key, and it asks you before saving it.'
+		},
+		{
+			question: 'Can I change how the assistant behaves?',
+			answer:
+				'Yes. Give it standing instructions in Settings → Assistant, and choose how long its answers are and which language it answers in. You can also see the exact system prompt it follows, then edit it, clear it, turn it off or reset it to the default.'
 		},
 		{
 			question: 'What happens to my data?',

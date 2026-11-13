@@ -23,9 +23,11 @@ final _mediaTools = <TelegramTool>[
     description:
         'Lets you inspect images from any available source: attachments (by name, including earlier messages), '
         'generated images, screenshots, downloaded images, local file paths or file URLs, direct HTTP/HTTPS image '
-        'URLs and image data URLs. For Telegram photos, video thumbnails, GIF frames, stickers and link previews, '
-        'pass refs "post:<chat_id>:<message_id>". Telegram is only needed for refs. Up to 6 images at once. '
-        'The selected chat model must support image input. The images come right after the result.',
+        'URLs and image data URLs. For Telegram photos, GIFs, video thumbnails, stickers and link previews, '
+        'pass refs "post:<chat_id>:<message_id>". Telegram is only needed for refs. GIFs (Telegram GIFs, .gif files and '
+        'links, animated WebP, video stickers, short MP4/WebM clips) come as several frames spread over their length, '
+        'in time order, so you can see what happens in them. Up to 12 pictures at once. The selected chat model must '
+        'support image input. The images come right after the result.',
     parameters: _obj({
       'files': {
         'type': 'array',
@@ -41,6 +43,11 @@ final _mediaTools = <TelegramTool>[
         'type': 'array',
         'items': {'type': 'string'},
         'description': 'Telegram message refs: post:<chat_id>:<message_id>. Requires Telegram to be connected.',
+      },
+      'frames': {
+        'type': 'integer',
+        'description': 'For each GIF or short video, how many frames to look at, spread over its length: 1 to 10 '
+            '(default 6). Use more for a GIF whose story matters, 1 to just see what it shows.',
       },
     }),
   ),
@@ -215,6 +222,27 @@ extension TelegramMedia on TelegramToolRunner {
     return f.local.isDownloadingCompleted ? f.local.path : null;
   }
 
+  /// The moving picture a message shows, downloaded, so its frames can be
+  /// looked at: a GIF (a silent MP4 on Telegram), a video sticker (WebM) or a
+  /// GIF sent as a file. Null when the message has none, or it is over
+  /// 20 MB (its thumbnail is used then).
+  Future<String?> messageAnimation(int chatId, int messageId) async {
+    final m = await _client.send<td.Message>(td.GetMessage(chatId: chatId, messageId: messageId), limited: true);
+    final file = switch (m.content) {
+      td.MessageAnimation(:final animation) => animation.animation,
+      td.MessageSticker(:final sticker) when sticker.format is td.StickerFormatWebm => sticker.sticker,
+      td.MessageDocument(:final document) when document.mimeType == 'image/gif' => document.document,
+      _ => null,
+    };
+    if (file == null || file.size > 20 * 1024 * 1024) return null;
+    if (file.local.isDownloadingCompleted && File(file.local.path).existsSync()) return file.local.path;
+    final f = await _client.send<td.File>(
+      td.DownloadFile(fileId: file.id, priority: 16, offset: 0, limit: 0, synchronous: true),
+      timeout: const Duration(seconds: 90),
+    );
+    return f.local.isDownloadingCompleted ? f.local.path : null;
+  }
+
   /// The file a message carries (document, voice note, audio, video, video
   /// note, GIF, photo or sticker), downloaded and copied into the app's
   /// files under its own name. Null when the message has none.
@@ -283,10 +311,27 @@ extension TelegramMedia on TelegramToolRunner {
     }
     if (gifIds.isNotEmpty) {
       final saved = await savedGifs();
-      for (final id in gifIds) {
-        final gif = saved.where((g) => g.id == id).firstOrNull ?? _gifCache[id];
-        if (gif == null) continue;
-        if (await local(gif.animation.thumbnail?.file) case final p?) out.add(p);
+      // A few frames of each GIF, so it can be seen moving; fewer when
+      // there are many. The thumbnail stands in when it can't be read.
+      final frames = gifIds.length <= 2 ? 4 : (gifIds.length <= 4 ? 2 : 1);
+      final loader = ImageInputLoader(directory: Directory('${(await getApplicationSupportDirectory()).path}/viewed_images'));
+      try {
+        for (final id in gifIds) {
+          final gif = saved.where((g) => g.id == id).firstOrNull ?? _gifCache[id];
+          if (gif == null) continue;
+          final file = gif.animation.animation;
+          if (file.size <= 20 * 1024 * 1024) {
+            try {
+              if (await local(file) case final p?) {
+                out.addAll([for (final f in (await loader.loadFrames(p, maxFrames: frames)).images) f.file.path]);
+                continue;
+              }
+            } catch (_) {}
+          }
+          if (await local(gif.animation.thumbnail?.file) case final p?) out.add(p);
+        }
+      } finally {
+        loader.close();
       }
     }
     return out;

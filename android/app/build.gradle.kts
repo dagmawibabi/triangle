@@ -17,7 +17,9 @@ plugins {
 
 android {
     namespace = "com.example.teleai"
-    compileSdk = flutter.compileSdkVersion
+    // flutter_local_notifications 23 and androidx.core 1.19 need 37 (Flutter
+    // 3.50 defaults to 36). Only the compile SDK; minSdk/targetSdk unchanged.
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

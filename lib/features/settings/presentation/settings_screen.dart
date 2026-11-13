@@ -4,6 +4,7 @@ import '../../telegram/presentation/chat_actions.dart' show confirmAction;
 import '../../brief/brief_store.dart';
 import '../../canvas/canvas_store.dart';
 import '../../chat/data/chat_controller.dart';
+import 'system_prompt_screen.dart';
 import '../../telegram/presentation/translate_sheet.dart'
     show translateLanguages;
 
@@ -256,6 +257,15 @@ class SettingsScreen extends ConsumerWidget {
                     ),
                     const Divider(indent: Space.l, endIndent: Space.l),
                     _KeyTile(
+                      title: 'OpenCode Zen',
+                      subtitle: 'opencode.ai → Console → API keys. Pay-as-you-go GPT, Claude, Gemini, GLM, Kimi and more.',
+                      value: s.openCodeKey,
+                      onSave: ctl.setOpenCodeKey,
+                      verify: (k) => ref.read(aiProvider).verifyKey('opencode', key: k),
+                      help: Uri.parse('https://opencode.ai/console'),
+                    ),
+                    const Divider(indent: Space.l, endIndent: Space.l),
+                    _KeyTile(
                       title: 'Google AI Studio Gemini',
                       subtitle: 'AI Studio → API keys. Lists the models available to your key.',
                       value: s.geminiKey,
@@ -443,9 +453,57 @@ class SettingsScreen extends ConsumerWidget {
                     const _InstructionsField(),
                   ],
                 ),
+                const _Header('System prompt'),
+                _Card(
+                  children: [
+                    SwitchListTile(
+                      secondary: lead(const Icon(Icons.description_outlined)),
+                      title: const Text('Use the system prompt'),
+                      subtitle: Text(systemPromptStatus(s), style: context.text.bodySmall),
+                      value: s.systemPromptEnabled,
+                      onChanged: ctl.setSystemPromptEnabled,
+                    ),
+                    const Divider(indent: 56),
+                    ListTile(
+                      leading: lead(const Icon(Icons.visibility_outlined)),
+                      title: const Text('See the exact prompt'),
+                      subtitle: Text('Everything a new chat is sent, filled in', style: context.text.bodySmall),
+                      trailing: Icon(Icons.chevron_right_rounded, color: AppColors.text3),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(builder: (_) => const SystemPromptPreviewScreen()),
+                      ),
+                    ),
+                    const Divider(indent: 56),
+                    ListTile(
+                      leading: lead(const Icon(Icons.edit_note_rounded)),
+                      title: const Text('Edit, clear or reset'),
+                      subtitle: Text(
+                        s.systemPromptCustom ? 'Edited by you' : 'Built in',
+                        style: context.text.bodySmall,
+                      ),
+                      trailing: Icon(Icons.chevron_right_rounded, color: AppColors.text3),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(builder: (_) => const SystemPromptEditorScreen()),
+                      ),
+                    ),
+                  ],
+                ),
                 const _Header('What it may do'),
                 _Card(
                   children: [
+                    SwitchListTile(
+                      secondary: lead(const Icon(Icons.bolt_outlined)),
+                      title: const Text('Load tools as needed'),
+                      subtitle: Text(
+                        s.loadToolsOnDemand
+                            ? 'Each message carries only the tools it needs; the assistant loads more when it has to. Cheaper and faster.'
+                            : 'Off: every tool that is on goes with every message. Costs much more per message.',
+                        style: context.text.bodySmall,
+                      ),
+                      value: s.loadToolsOnDemand,
+                      onChanged: ctl.setLoadToolsOnDemand,
+                    ),
+                    const Divider(indent: 56),
                     SwitchListTile(
                       secondary: lead(const Icon(Icons.lock_outline_rounded)),
                       title: const Text('Read-only mode'),

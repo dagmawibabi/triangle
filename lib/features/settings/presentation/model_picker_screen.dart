@@ -62,13 +62,9 @@ class _ModelPickerScreenState extends ConsumerState<ModelPickerScreen> {
   void initState() {
     super.initState();
     final s = ref.read(settingsProvider);
-    // Start on the router there is a key for.
-    if (s.hasOpenRouterKey && !s.hasVercelKey) _router = AiRouter.openRouter;
-    if (s.hasVercelKey && !s.hasOpenRouterKey) _router = AiRouter.vercel;
-    if (s.hasGeminiKey && !s.hasVercelKey && !s.hasOpenRouterKey)
-      _router = AiRouter.gemini;
-    if (s.hasLmStudio && !s.hasGeminiKey && !s.hasVercelKey && !s.hasOpenRouterKey)
-      _router = AiRouter.lmStudio;
+    // Start on the one service there is a key for; with several, on All.
+    final keyed = AiRouter.values.where((r) => hasKeyFor(s, r)).toList();
+    if (keyed.length == 1) _router = keyed.single;
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => ref.read(modelCatalogProvider.notifier).ensureLoaded(),
     );
@@ -93,7 +89,7 @@ class _ModelPickerScreenState extends ConsumerState<ModelPickerScreen> {
             ),
             const SizedBox(height: Space.s),
             Text(
-              'provider:model, where provider is gateway (Vercel AI Gateway), openrouter or google (AI Studio).',
+              'provider:model, where provider is gateway (Vercel AI Gateway), openrouter, google (AI Studio), opencode (OpenCode Zen) or lmstudio.',
               style: context.text.bodySmall,
             ),
           ],
@@ -117,7 +113,10 @@ class _ModelPickerScreenState extends ConsumerState<ModelPickerScreen> {
   Widget build(BuildContext context) {
     final cat = ref.watch(modelCatalogProvider);
     final settings = ref.watch(settingsProvider);
-    final all = cat.ofKind(widget.kind);
+    // Only the services with a key, unless there is none yet (then every
+    // list, to browse).
+    final keyed = AiRouter.values.where((r) => hasKeyFor(settings, r)).toList();
+    final all = cat.ofKind(widget.kind).where((m) => keyed.isEmpty || keyed.contains(m.router)).toList();
     final textKind =
         widget.kind == ModelType.text || widget.kind == ModelType.transcription;
     final counts = {
@@ -176,12 +175,7 @@ class _ModelPickerScreenState extends ConsumerState<ModelPickerScreen> {
     }
     final missingKey =
         _router != null &&
-        !switch (_router!) {
-          AiRouter.openRouter => settings.hasOpenRouterKey,
-          AiRouter.gemini => settings.hasGeminiKey,
-          AiRouter.vercel => settings.hasVercelKey,
-          AiRouter.lmStudio => settings.hasLmStudio,
-        };
+        !hasKeyFor(settings, _router!);
 
     return Scaffold(
       appBar: AppBar(
@@ -227,34 +221,11 @@ class _ModelPickerScreenState extends ConsumerState<ModelPickerScreen> {
                         value: null,
                         label: Text('All · ${all.length}', maxLines: 1),
                       ),
-                      ButtonSegment(
-                        value: AiRouter.vercel,
-                        label: Text(
-                          'Vercel · ${counts[AiRouter.vercel]}',
-                          maxLines: 1,
-                        ),
-                      ),
-                      ButtonSegment(
-                        value: AiRouter.openRouter,
-                        label: Text(
-                          'OpenRouter · ${counts[AiRouter.openRouter]}',
-                          maxLines: 1,
-                          overflow: TextOverflow.fade,
-                          softWrap: false,
-                        ),
-                      ),
-                      ButtonSegment(
-                        value: AiRouter.gemini,
-                        label: Text(
-                          'Gemini · ${counts[AiRouter.gemini]}',
-                          maxLines: 1,
-                        ),
-                      ),
-                      if (settings.hasLmStudio)
+                      for (final r in keyed)
                         ButtonSegment(
-                          value: AiRouter.lmStudio,
+                          value: r,
                           label: Text(
-                            'LM Studio · ${counts[AiRouter.lmStudio]}',
+                            '${r.short} · ${counts[r]}',
                             maxLines: 1,
                             overflow: TextOverflow.fade,
                             softWrap: false,
@@ -356,6 +327,7 @@ class _ModelPickerScreenState extends ConsumerState<ModelPickerScreen> {
                     switch (_router) {
                       AiRouter.lmStudio => 'Add your LM Studio server address in Settings to use these models.',
                       AiRouter.openRouter => 'Add your OpenRouter key in Settings to use these models.',
+                      AiRouter.openCode => 'Add your OpenCode Zen key in Settings to use these models.',
                       AiRouter.gemini => 'Add your Google AI Studio Gemini key in Settings to use these models.',
                       _ => 'Add your Vercel AI Gateway key in Settings to use these models.',
                     },
@@ -366,12 +338,7 @@ class _ModelPickerScreenState extends ConsumerState<ModelPickerScreen> {
                 ),
               // A router whose list failed says why, rather than looking empty.
               for (final r in _router == null ? AiRouter.values : [_router!])
-                if (!missingKey && counts[r] == 0 && cat.providerErrors[r.providerId] != null && switch (r) {
-                  AiRouter.openRouter => settings.hasOpenRouterKey,
-                  AiRouter.gemini => settings.hasGeminiKey,
-                  AiRouter.vercel => settings.hasVercelKey,
-                  AiRouter.lmStudio => settings.hasLmStudio,
-                })
+                if (!missingKey && counts[r] == 0 && cat.providerErrors[r.providerId] != null && hasKeyFor(settings, r))
                   Padding(
                     padding: const EdgeInsets.fromLTRB(Space.l, Space.m, Space.l, 0),
                     child: Text(
@@ -578,8 +545,7 @@ class _ModelTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final m = model;
-    final or = m.router == AiRouter.openRouter;
-    final gemini = m.router == AiRouter.gemini;
+    final router = m.router;
     return Material(
       color: selected ? AppColors.accentDim : AppColors.surface,
       borderRadius: BorderRadius.circular(Radii.l),
@@ -643,12 +609,13 @@ class _ModelTile extends StatelessWidget {
                       runSpacing: 6,
                       children: [
                         Tag(
-                          gemini ? 'Gemini' : (or ? 'OpenRouter' : 'Vercel'),
-                          color: or
-                              ? const Color(0xFF7FB2FF)
-                              : (gemini
-                                    ? const Color(0xFF8AB4F8)
-                                    : AppColors.text2),
+                          router?.short ?? m.provider,
+                          color: switch (router) {
+                            AiRouter.openRouter => const Color(0xFF7FB2FF),
+                            AiRouter.gemini => const Color(0xFF8AB4F8),
+                            AiRouter.openCode => const Color(0xFFB49CFF),
+                            _ => AppColors.text2,
+                          },
                         ),
                         if (m.isFree)
                           Tag(
@@ -856,3 +823,12 @@ Future<void> showModelDetails(
     ),
   );
 }
+
+/// Whether [s] has the key (or, for LM Studio, the address) [r] needs.
+bool hasKeyFor(AppSettings s, AiRouter r) => switch (r) {
+  AiRouter.vercel => s.hasVercelKey,
+  AiRouter.openRouter => s.hasOpenRouterKey,
+  AiRouter.gemini => s.hasGeminiKey,
+  AiRouter.openCode => s.hasOpenCodeKey,
+  AiRouter.lmStudio => s.hasLmStudio,
+};
