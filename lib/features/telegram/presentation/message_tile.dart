@@ -16,6 +16,7 @@ import '../../chat/data/chat_controller.dart';
 import '../../chat/domain/chat_models.dart';
 import '../../chat/presentation/widgets/post_viewer.dart';
 import '../../media/audio_center.dart';
+import '../../../core/widgets/fullscreen_image.dart' show openFullscreenFile;
 import '../../settings/data/settings.dart';
 import '../data/file_loader.dart';
 import '../data/message_content.dart';
@@ -28,6 +29,11 @@ import 'expression_panel.dart' show StickerImage;
 import 'formatted_text.dart';
 import 'link_preview_card.dart';
 import 'content_canvas_screen.dart' show saveToCanvas;
+import '../../../infrastructure/telegram/accounts.dart' show activeAccountIdProvider;
+import '../../playlists/playlists.dart' show PlaylistTrack;
+import '../../playlists/playlist_widgets.dart' show showAddToPlaylist;
+import '../../playlists/playlist_share.dart' show isPlaylistFile;
+import '../../playlists/playlists_screen.dart' show importPlaylistFlow;
 import 'forward_sheet.dart';
 import 'poll_view.dart';
 import 'rich_message_view.dart';
@@ -148,7 +154,7 @@ class MessageTile extends ConsumerWidget {
               duration: const Duration(milliseconds: 120),
               margin: const EdgeInsets.only(bottom: 2),
               decoration: BoxDecoration(
-                color: selected ? AppColors.accent.withValues(alpha: 0.16) : Colors.transparent,
+                color: selected ? AppColors.tint.withValues(alpha: 0.16) : Colors.transparent,
                 borderRadius: BorderRadius.circular(Radii.m),
               ),
             ),
@@ -1237,7 +1243,7 @@ Future<void> showMessageActions(
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
                               color: chosen.contains(e)
-                                  ? AppColors.accent.withValues(alpha: 0.25)
+                                  ? AppColors.tint.withValues(alpha: 0.25)
                                   : null,
                             ),
                             child: Text(
@@ -1294,6 +1300,13 @@ Future<void> showMessageActions(
                 }
               }),
             action(ctx, Icons.dashboard_customize_outlined, 'Save to Content Canvas', () => saveToCanvas(context, ref, m, chatTitle)),
+            if (m.content case td.MessageDocument(:final document) when isPlaylistFile(document.fileName))
+              action(ctx, Icons.queue_music_rounded, 'Import playlist', () async {
+                final path = await ref.read(fileLoaderProvider).download(document.document, priority: 32);
+                if (path != null && context.mounted) await importPlaylistFlow(context, ref, path: path);
+              }),
+            if (PlaylistTrack.fromMessage(m, ref.read(telegramStoreProvider), ref.read(activeAccountIdProvider)) case final track?)
+              action(ctx, Icons.playlist_add_rounded, 'Add to playlist', () => showAddToPlaylist(context, ref, [track])),
             if (onSelect != null) action(ctx, Icons.check_circle_outline_rounded, 'Select', () => onSelect(m)),
             action(ctx, Icons.link_rounded, 'Copy link', () async {
               final link = await runner.messageLink(m.chatId, m.id);
@@ -1630,14 +1643,23 @@ class _AudioRow extends ConsumerWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _PlayButton(
-          playing: current && center.playing,
-          loading: current && center.loading,
-          cover: audio.albumCoverMinithumbnail,
-          onTap: () {
-            final t = Track.of(message, store);
-            if (t != null) center.play(t, playlist: playlist?.call());
-          },
+        GestureDetector(
+          // A long press shows the album cover full size; a tap plays.
+          onLongPress: bestAlbumCover(audio) == null
+              ? null
+              : () async {
+                  final path = await ref.read(fileLoaderProvider).download(bestAlbumCover(audio)!, priority: 16);
+                  if (path != null && context.mounted) await openFullscreenFile(context, path, title: title);
+                },
+          child: _PlayButton(
+            playing: current && center.playing,
+            loading: current && center.loading,
+            cover: audio.albumCoverMinithumbnail,
+            onTap: () {
+              final t = Track.of(message, store);
+              if (t != null) center.play(t, playlist: playlist?.call());
+            },
+          ),
         ),
         const SizedBox(width: Space.m),
         Flexible(

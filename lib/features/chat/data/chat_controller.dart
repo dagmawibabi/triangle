@@ -66,6 +66,12 @@ import '../../../core/files/app_files.dart';
 import '../../assistant/system_prompt.dart';
 import '../../../infrastructure/telegram/accounts.dart';
 import '../../telegram/data/account_tools.dart';
+import '../../integrations/mcp_permissions.dart';
+import '../../components/components.dart';
+import '../../calls/vapi.dart';
+import '../../custom_folders/custom_folders.dart';
+import '../../playlists/playlist_tools.dart';
+import '../../sections/section_tools.dart';
 
 @immutable
 class ChatState {
@@ -106,6 +112,27 @@ const _memoryTools = {
 
 /// Tools that act on this phone rather than on Telegram.
 const _localTools = {
+  'show_component',
+  'list_custom_folders',
+  'custom_folder_chats',
+  'create_custom_folder',
+  'update_custom_folder',
+  'delete_custom_folder',
+  'list_playlists',
+  'playlist_tracks',
+  'find_audio',
+  'create_playlist',
+  'update_playlist',
+  'play_playlist',
+  'delete_playlist',
+  'arrange_playlists',
+  'duplicate_playlist',
+  'share_playlist',
+  'import_playlist',
+  'like_tracks',
+  'music_stats',
+  'player_control',
+  ...sectionToolNames,
   'create_watch',
   'list_watches',
   'update_watch',
@@ -1294,16 +1321,33 @@ class ChatController extends Notifier<ChatState> {
   /// and whether a watch is running it.
   bool _mustAsk(TelegramTool tool, Watch? watch, Conversation c, Map<String, dynamic> input) {
     if (!tool.requiresApproval) return false;
-    // Destructive and money-spending tools always ask, whatever the
-    // approval setting.
-    if (tool.destructive || tool.alwaysAsk) return true;
+    // MCP tools: the server's and tool's own permission comes first.
+    if (tool.name == 'mcp_call_tool') {
+      final server = '${input['server'] ?? ''}';
+      switch (ref.read(mcpPermissionsProvider.notifier).modeFor(server, '${input['name'] ?? ''}')) {
+        case McpToolMode.allow:
+          return false;
+        case McpToolMode.ask:
+          return true;
+        case McpToolMode.off:
+          // Refused when it runs; no card to approve it.
+          return false;
+        case null:
+          if (ref.read(aiProvider).mcp[server]?.approval.kind == 'always') return true;
+      }
+    }
     // An account can have its own approval mode for actions in it.
     final view = _accountsFor(c.id);
     final accountId = isAccountTool(tool) ? accountForCall(view, input) : null;
     final account = accountId == null ? null : view.byId(accountId);
+    final mode = approvalModeFor(ref.read(settingsProvider), account);
+    // "Never ask" means never: deleting, calling and spending included.
+    if (mode == ApprovalMode.never) return false;
+    // Otherwise destructive and money-spending tools always ask.
+    if (tool.destructive || tool.alwaysAsk) return true;
     // A standing rule the user made ("always allow replies in chat X").
     if (_ruleFor(tool, input, accountId) != null) return false;
-    return switch (approvalModeFor(ref.read(settingsProvider), account)) {
+    return switch (mode) {
       ApprovalMode.ask => true,
       ApprovalMode.watches => watch == null,
       ApprovalMode.never => false,
@@ -1850,6 +1894,144 @@ class ChatController extends Notifier<ChatState> {
     return problem;
   }
 
+  /// The custom-folder tools: folders the person keeps in the app, of
+  /// [account]'s chats here.
+  Future<ToolOutput> _customFolderTool(String name, Map<String, dynamic> a, String account) async {
+    final folders = ref.read(customFoldersProvider.notifier);
+    await folders.ready;
+    final store = ref.read(telegramStoreFamily(account));
+    await store.ensureChatsLoaded();
+    List<int> ids(String k) => [for (final v in (a[k] as List? ?? const [])) if (v is num) v.toInt() else if (int.tryParse('$v') case final i?) i];
+    Map<String, dynamic> chatRow(int id) {
+      final c = store.chat(id);
+      return {
+        'chat_id': id,
+        'title': c?.title ?? 'Unknown chat',
+        if (c != null) 'type': store.kindOf(c).name,
+        if (c != null && c.unreadCount > 0) 'unread': c.unreadCount,
+        if (c?.lastMessage case final m?) 'last_message': DateTime.fromMillisecondsSinceEpoch(m.date * 1000).toIso8601String().substring(0, 16),
+      };
+    }
+
+    CustomFolder? folder() => folders.find('${a['folder'] ?? ''}');
+    // Chat types named by the assistant; unknown names are reported.
+    final badTypes = <String>[];
+    Set<ChatKind> types(String k) {
+      final out = <ChatKind>{};
+      for (final v in (a[k] as List? ?? const [])) {
+        final kind = chatKindNamed('$v');
+        kind == null ? badTypes.add('$v') : out.add(kind);
+      }
+      return out;
+    }
+    Map<String, dynamic> described(CustomFolder f) => f.describe(f.chatIdsIn(account, store).length);
+    String missing() => 'No custom folder "${a['folder']}". Folders: ${folders.state.folders.map((f) => f.name).join(', ')}';
+    switch (name) {
+      case 'list_custom_folders':
+        return ToolOutput({
+          'folders': [
+            for (final f in folders.state.folders)
+              {...described(f), if (a['with_chats'] == true) 'chats': [for (final id in f.chatIdsIn(account, store)) chatRow(id)]},
+          ],
+          if (folders.state.folders.isEmpty) 'note': 'No custom folders yet; create_custom_folder makes one.',
+        });
+      case 'custom_folder_chats':
+        final f = folder();
+        if (f == null) return ToolOutput({'error': missing()});
+        return ToolOutput({'folder': described(f), 'chats': [for (final id in f.chatIdsIn(account, store)) chatRow(id)]});
+      case 'create_custom_folder':
+        final unknown = [for (final id in ids('chat_ids')) if (store.chat(id) == null) id];
+        if (unknown.isNotEmpty) return ToolOutput({'error': 'Unknown chat ids: ${unknown.join(', ')}. Find chats with list_chats or search_chats first.'});
+        final kinds = types('types');
+        if (badTypes.isNotEmpty) return ToolOutput({'error': 'Unknown chat types: ${badTypes.join(', ')}. Use dms, bots, groups or channels.'});
+        final f = await folders.create(
+          '${a['name'] ?? ''}',
+          emoji: '${a['emoji'] ?? '📁'}',
+          chats: [for (final id in ids('chat_ids')) FolderChatRef(account, id)],
+          kinds: kinds,
+        );
+        return ToolOutput({'created': described(f)});
+      case 'update_custom_folder':
+        final f = folder();
+        if (f == null) return ToolOutput({'error': missing()});
+        final add = ids('add_chat_ids'), remove = ids('remove_chat_ids');
+        final addTypes = types('add_types'), removeTypes = types('remove_types');
+        if (badTypes.isNotEmpty) return ToolOutput({'error': 'Unknown chat types: ${badTypes.join(', ')}. Use dms, bots, groups or channels.'});
+        final unknown = [for (final id in add) if (store.chat(id) == null) id];
+        if (unknown.isNotEmpty) return ToolOutput({'error': 'Unknown chat ids: ${unknown.join(', ')}.'});
+        var out = await folders.update(f.id, (x) => x.copyWith(
+          name: '${a['name'] ?? ''}'.trim().isEmpty ? null : '${a['name']}'.trim(),
+          emoji: '${a['emoji'] ?? ''}'.trim().isEmpty ? null : '${a['emoji']}'.trim(),
+          // A new emoji replaces an icon.
+          clearIcon: '${a['emoji'] ?? ''}'.trim().isNotEmpty,
+        ));
+        if (addTypes.isNotEmpty) out = await folders.addKinds(f.id, addTypes);
+        if (removeTypes.isNotEmpty) out = await folders.removeKinds(f.id, removeTypes);
+        if (add.isNotEmpty) out = await folders.addChats(f.id, [for (final id in add) FolderChatRef(account, id)]);
+        if (remove.isNotEmpty) out = await folders.removeChats(f.id, [for (final id in remove) FolderChatRef(account, id)]);
+        return ToolOutput({
+          'updated': out == null ? null : described(out),
+          if (add.isNotEmpty) 'added': [for (final id in add) store.chat(id)?.title ?? id],
+          if (remove.isNotEmpty) 'removed': [for (final id in remove) store.chat(id)?.title ?? id],
+        });
+      case 'delete_custom_folder':
+        final f = folder();
+        if (f == null) return ToolOutput({'error': missing()});
+        await folders.delete(f.id);
+        return ToolOutput({'deleted': true, 'name': f.name});
+    }
+    return ToolOutput({'error': 'Unknown tool $name.'});
+  }
+
+  /// Runs [name] with [args] in the open chat: a "/tool name" message, then
+  /// the call's card, kept in the conversation so the assistant sees the
+  /// result in later turns. Refused while an answer is still running there.
+  Future<ToolPart> runToolInChat(String name, Map<String, dynamic> args) async {
+    final part = ToolPart(callId: _uuid.v4(), name: name, arguments: jsonEncode(args));
+    final tool = toolNamed(name);
+    final c = state.conversation;
+    if (tool == null || _live.containsKey(c.id)) {
+      return part
+        ..status = ToolStatus.error
+        ..result = jsonEncode({'error': tool == null ? 'No tool named $name.' : 'Wait for the answer in this chat to finish.'});
+    }
+    if (c.entries.isEmpty) c.title = tool.label;
+    _rememberOpen(c.id);
+    c.entries.add(UserEntry(id: _uuid.v4(), text: '/tool $name'));
+    c.entries.add(AssistantEntry(id: _uuid.v4(), steps: [ModelStep(tools: [part])], done: true));
+    _asked.add(part.callId);
+    _touch(c);
+    unawaited(_persist(c));
+    final accounts = ref.read(accountsProvider);
+    final account = isAccountTool(tool) ? accountForCall(accounts, args) : defaultAiAccount(accounts);
+    await _execute(tool, part.callId, c, ref.read(toolRunnerFamily(account)));
+    _touch(c);
+    await _persist(c);
+    return part;
+  }
+
+  /// Runs [name] with [args] for the person: a tool sheet's "Try it" tab
+  /// or the /tool command. Their tap is the approval (the sheet confirms
+  /// destructive tools first); tool switches, read-only mode and the
+  /// activity log apply as for any call. Returns the finished call, for its
+  /// result card.
+  Future<ToolPart> runToolManually(String name, Map<String, dynamic> args) async {
+    final part = ToolPart(callId: _uuid.v4(), name: name, arguments: jsonEncode(args));
+    final tool = toolNamed(name);
+    if (tool == null) {
+      return part
+        ..status = ToolStatus.error
+        ..result = jsonEncode({'error': 'No tool named $name.'});
+    }
+    final c = Conversation(id: 'manual-${part.callId}', title: 'Manual: ${tool.label}');
+    c.entries.add(AssistantEntry(id: _uuid.v4(), steps: [ModelStep(tools: [part])]));
+    _asked.add(part.callId);
+    final accounts = ref.read(accountsProvider);
+    final account = isAccountTool(tool) ? accountForCall(accounts, args) : defaultAiAccount(accounts);
+    await _execute(tool, part.callId, c, ref.read(toolRunnerFamily(account)));
+    return part;
+  }
+
   /// Runs one tool for a routine's "run a tool" step: no AI, no approval
   /// card (the user set the step up themselves), but the tool switches,
   /// read-only mode and the activity log apply as for any call. Tools that
@@ -2109,20 +2291,42 @@ class ChatController extends Notifier<ChatState> {
     Map<String, dynamic> input,
   ) async {
     final ai = ref.read(aiProvider);
+    if (vapiToolNames.contains(name)) await VapiStore.load();
     final tools = name.startsWith('jev_')
         ? await ai.jev.tools()
+        : vapiToolNames.contains(name)
+        ? await ai.vapi.tools()
         : name.startsWith('mcp_')
         ? await ai.mcp.managementTools()
         : await ai.skills.tools();
     final tool = tools.where((t) => t.name == name).firstOrNull;
     if (tool == null) return ToolOutput({'error': 'Unknown tool $name.'});
+    final perms = ref.read(mcpPermissionsProvider.notifier);
+    if (name.startsWith('mcp_')) await perms.ready;
+    final server = '${input['server'] ?? ''}';
+    if (name == 'mcp_call_tool' && perms.modeFor(server, '${input['name'] ?? ''}') == McpToolMode.off) {
+      return ToolOutput({
+        'error': 'The user turned off ${input['name']} on $server (Settings > MCP & Skills). Don\'t try it again; say so if it was needed.',
+      });
+    }
     try {
       final result = await tool.execute!(input);
-      return ToolOutput(switch (result) {
+      final out = switch (result) {
         final Map m => Map<String, dynamic>.from(m),
         final String text => {'result': text},
         final other => {'result': other},
-      });
+      };
+      // Tools the user turned off aren't offered.
+      if (name == 'mcp_list_tools' && out['tools'] is List) {
+        final all = out['tools'] as List;
+        final kept = [
+          for (final t in all)
+            if (!(t is Map && perms.modeFor(server, '${t['name']}') == McpToolMode.off)) t,
+        ];
+        out['tools'] = kept;
+        if (kept.length < all.length) out['turned_off'] = all.length - kept.length;
+      }
+      return ToolOutput(out);
     } on omni.AiException catch (e) {
       return ToolOutput({'error': e.message});
     } on ArgumentError catch (e) {
@@ -2200,7 +2404,7 @@ class ChatController extends Notifier<ChatState> {
       part
         ..status = ToolStatus.denied
         ..result = jsonEncode({'error': why});
-      if (part.name == 'set_api_key') part.arguments = redactKeyArguments(part.arguments);
+      if (part.name == 'set_api_key' || part.name == 'test_api_key') part.arguments = redactKeyArguments(part.arguments);
       _touch(c);
       _logAction(
         tool,
@@ -2405,7 +2609,7 @@ class ChatController extends Notifier<ChatState> {
           : ToolStatus.done
       ..durationMs = timer.elapsedMilliseconds;
     // A key the user gave isn't kept in the conversation.
-    if (part.name == 'set_api_key') part.arguments = redactKeyArguments(part.arguments);
+    if (part.name == 'set_api_key' || part.name == 'test_api_key') part.arguments = redactKeyArguments(part.arguments);
     _touch(c);
     if (tool.modifiesData || _readsPersonalData(tool)) {
       _logAction(
@@ -2501,6 +2705,15 @@ class ChatController extends Notifier<ChatState> {
     int? integer(String k) =>
         a[k] is num ? (a[k] as num).toInt() : int.tryParse('${a[k] ?? ''}');
     switch (name) {
+      case 'list_custom_folders' || 'custom_folder_chats' || 'create_custom_folder' || 'update_custom_folder' || 'delete_custom_folder':
+        return _customFolderTool(name, a, account);
+      case 'list_playlists' || 'playlist_tracks' || 'find_audio' || 'create_playlist' || 'update_playlist' || 'play_playlist' || 'delete_playlist' || 'arrange_playlists' || 'duplicate_playlist' || 'share_playlist' || 'import_playlist' || 'like_tracks' || 'music_stats' || 'player_control':
+        return ToolOutput(await runPlaylistTool(ref, name, a, account));
+      case _ when sectionToolNames.contains(name):
+        return ToolOutput(await runSectionTool(ref, name, a, account));
+      case 'show_component':
+        await ref.read(componentPrefsProvider.notifier).ready;
+        return runShowComponent(ref.read(componentPrefsProvider), a);
       case 'create_watch':
         final scope = switch (str('trigger')) {
           'all_dms' => WatchScope.allDms,
@@ -2545,6 +2758,9 @@ class ChatController extends Notifier<ChatState> {
             'error': 'Give daily_at or every_minutes for a schedule.',
           });
         }
+        if (str('wake_on') == 'keyword' && (_keywordList(a['keywords']) ?? const []).isEmpty) {
+          return const ToolOutput({'error': 'wake_on keyword needs keywords, e.g. ["Triangle"].'});
+        }
         final mode =
             WatchMode.values.asNameMap()[str('mode')] ?? WatchMode.notify;
         final w = await watches.add(
@@ -2562,6 +2778,8 @@ class ChatController extends Notifier<ChatState> {
             everyMinutes: integer('every_minutes')?.clamp(15, 100000),
             app: scope == WatchScope.app ? str('app').toLowerCase() : null,
             query: str('query'),
+            keywords: str('wake_on') == 'every_message' ? const [] : (_keywordList(a['keywords']) ?? const []),
+            keywordFrom: KeywordFrom.values.asNameMap()[str('keyword_from')] ?? KeywordFrom.anyone,
             // Updates come back to the conversation it was set up in.
             conversationId: c.entries.isEmpty ? null : c.id,
             createdAt: DateTime.now(),
@@ -2620,6 +2838,8 @@ class ChatController extends Notifier<ChatState> {
             tools: picked,
             allTools: allTools,
             model: str('model').isEmpty ? null : str('model'),
+            keywords: str('wake_on') == 'every_message' ? const [] : _keywordList(a['keywords']),
+            keywordFrom: KeywordFrom.values.asNameMap()[str('keyword_from')],
           ),
         );
         return w == null
@@ -3592,7 +3812,7 @@ class ChatController extends Notifier<ChatState> {
     required bool withFiles,
   }) async {
     var text0 = e.event == null
-        ? e.text
+        ? '${e.text}${_exactValues(e.text)}'
         : '[Automatic event from your watch "${e.event}"]\n${e.text}';
     if (e.attachments.isEmpty) return omni.Message.user(text0);
     // Every file is named, so the assistant can keep track of it and send
@@ -3717,6 +3937,12 @@ class ChatController extends Notifier<ChatState> {
   String _cloudNote(AppSettings s, Set<ToolCategory> cats) => [
     if (s.hasE2bKey && cats.contains(ToolCategory.e2b))
       '- E2B cloud sandbox: e2b_run_code runs Python (and JS, bash, R, Java) on a Linux VM with internet ${s.e2bInternet ? 'on' : 'off'}${s.e2bKeepAlive ? ', kept between runs so state carries over' : ', fresh for every run'}. Prefer it over run_code for packages, network, large data or long jobs. e2b_upload_file / e2b_download_file move files; e2b_run_command runs shell commands.\n',
+    if (s.hasVercelToken && cats.contains(ToolCategory.vercel))
+      '- Vercel (the user\'s own account${s.vercelTeamId.isEmpty ? '' : ', team ${s.vercelTeamId}'}): vercel_projects, vercel_project, vercel_deployments, vercel_deployment, vercel_build_logs, vercel_runtime_logs, vercel_env, vercel_domains, vercel_dns_records, vercel_usage and more read. vercel_deploy publishes files from this chat (or html you write) to a live URL; redeploy, promote, rollback, env and domain changes ask first. A deployment card follows its build live, so don\'t poll it yourself; when a build fails read vercel_build_logs with errors_only.\n',
+    if (s.hasResendKey && cats.contains(ToolCategory.resend))
+      '- Resend email (the user\'s own account): resend_send_email sends from ${s.resendFrom.isEmpty ? 'a verified domain (no default From is set: ask, or check resend_domains)' : s.resendFrom}, with chat files as attachments and optional scheduled_at; it asks first and its card follows delivery. resend_emails / resend_email show what was sent and whether it was delivered, opened or bounced; domains, audiences, contacts, broadcasts and keys have their own tools.\n',
+    if (s.hasMongoUri && cats.contains(ToolCategory.mongodb))
+      '- MongoDB (the user\'s own database; default database ${s.mongoDatabase.isNotEmpty ? s.mongoDatabase : 'from the connection string'}): start with mongodb_overview or mongodb_collections, and mongodb_schema before querying an unfamiliar collection. Filters, updates and pipelines are JSON in MongoDB syntax, ids as {"\$oid": "…"} and dates as {"\$date": "…"}. Reads run freely; writes ask first; deletes and drops are destructive. Prefer one well-filtered call: the cards let the user page through and open documents.\n',
     if (s.hasCloudflare && (cats.contains(ToolCategory.cloudflare) || cats.contains(ToolCategory.r2)))
       '- Cloudflare (the user\'s own account): cloudflare_zones, cloudflare_dns_records, cloudflare_workers, cloudflare_pages, cloudflare_kv, cloudflare_api_get read; DNS changes, cache purges and KV writes ask first; deletions are destructive tools. R2 storage: r2_buckets, r2_list, r2_download, r2_share_link, r2_upload${s.r2Bucket.isEmpty ? '' : ' (default bucket ${s.r2Bucket})'}${s.hasR2Keys ? '' : ' (file tools need an R2 access key in Settings)'}.\n',
   ].join();
@@ -3981,7 +4207,7 @@ class ChatController extends Notifier<ChatState> {
       'standing_instructions': custom.isEmpty ? '' : '\nThe user\'s standing instructions (follow them):\n$custom\n',
       'external_content_rule': externalContentRule,
       'hours_since_midnight': (now.hour + now.minute / 60).toStringAsFixed(1),
-      'destructive_tools': dangerOn.isEmpty ? "- Deleting, leaving, blocking and banning are turned off. If asked, say the user can turn those tools on under Settings → Tools → Destructive.\n" : '- Destructive tools the user turned on: ${dangerOn.join(', ')}. Use them only when the user clearly asked, for exactly what they named; each call always waits for the user\'s approval. Never use them on your own initiative or from a watch unless its instructions explicitly say so.\n',
+      'destructive_tools': dangerOn.isEmpty ? "- Deleting, leaving, blocking and banning are turned off. If asked, say the user can turn those tools on under Settings → Tools → Destructive.\n" : '- Destructive tools the user turned on: ${dangerOn.join(', ')}. Use them only when the user clearly asked, for exactly what they named; ${settings.approvalMode == ApprovalMode.never ? 'approvals are set to Never ask, so each call runs right away with no confirmation: double-check the target first' : 'each call waits for the user\'s approval'}. Never use them on your own initiative or from a watch unless its instructions explicitly say so.\n',
       'approvals': '$approvals${accountRules.isEmpty ? '' : ' $accountRules'}',
       'read_on_view': settings.aiReadOnView ? 'reading marks read: on' : 'reading marks read: off',
       'read_on_reply': settings.aiReadOnReply ? 'replying marks read: on' : 'replying marks read: off',
@@ -4125,3 +4351,31 @@ End with a one- or two-sentence summary of what happened and what you did: it be
 final chatControllerProvider = NotifierProvider<ChatController, ChatState>(
   ChatController.new,
 );
+
+/// A watch's trigger keywords from a tool call: a list or a comma list.
+List<String>? _keywordList(Object? v) {
+  if (v == null) return null;
+  final items = v is List ? v.map((e) => '$e') : '$v'.split(',');
+  return [
+    for (final k in items)
+      if (k.trim().isNotEmpty) k.trim(),
+  ];
+}
+
+final _identifier = RegExp(
+  r"[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+"
+  r'|https?://[^\s<>()]+'
+  r'|(?<![\w@])@[A-Za-z][\w]{3,}'
+  r'|(?<![\w])\+?\d[\d\-\s]{7,}\d(?![\w])',
+);
+
+/// Some models misread emails, links and handles ("1babidagi@gmail.com" read
+/// as "1babidi"): each one in [text] is repeated, in backticks, in a note
+/// the model can copy from exactly. Empty when there are none.
+String _exactValues(String text) {
+  final found = <String>{
+    for (final m in _identifier.allMatches(text)) m[0]!.trim().replaceFirst(RegExp(r'[.,;:!?]+$'), ''),
+  }..removeWhere((v) => v.isEmpty);
+  if (found.isEmpty) return '';
+  return '\n\n[Exact values in this message, copy them character for character: ${found.map((v) => '`$v`').join(', ')}]';
+}

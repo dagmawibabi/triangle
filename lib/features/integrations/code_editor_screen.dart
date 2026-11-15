@@ -242,7 +242,7 @@ class _CodeEditorScreenState extends ConsumerState<CodeEditorScreen> {
                   decoration: BoxDecoration(
                     color: AppColors.surface,
                     borderRadius: BorderRadius.circular(Radii.m),
-                    border: Border.all(color: _focus.hasFocus ? AppColors.accent.withValues(alpha: 0.6) : AppColors.line),
+                    border: Border.all(color: _focus.hasFocus ? AppColors.tint.withValues(alpha: 0.6) : AppColors.line),
                   ),
                   padding: const EdgeInsets.symmetric(vertical: Space.m),
                   child: Row(

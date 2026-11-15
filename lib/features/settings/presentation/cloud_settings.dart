@@ -11,6 +11,7 @@ import 'package:omni_ai/omni_ai.dart' show CloudflareClient, E2BClient, E2BSandb
 
 import '../../ai/data/ai.dart';
 import '../../integrations/e2b_session.dart';
+import '../../development/manage/app_managers.dart' show E2bManagerScreen;
 import '../../telegram/data/telegram_tools.dart';
 import '../../telegram/presentation/chat_actions.dart' show confirmAction;
 import '../data/settings.dart';
@@ -57,7 +58,7 @@ class _Section extends StatelessWidget {
 /// A key or setting typed in and saved with the check; secrets are hidden.
 /// Used at the top of each Apps & web tab.
 class KeyField extends StatefulWidget {
-  const KeyField({super.key, required this.label, required this.value, required this.onSave, this.hint, this.secret = false, this.verify, this.help});
+  const KeyField({super.key, required this.label, required this.value, required this.onSave, this.hint, this.secret = false, this.verify, this.help, this.action});
   final String label;
   final String value;
   final String? hint;
@@ -67,6 +68,9 @@ class KeyField extends StatefulWidget {
   /// Null when it works, else what went wrong.
   final Future<String?> Function(String)? verify;
   final Uri? help;
+
+  /// A button beside "Get one", e.g. Manage once connected.
+  final Widget? action;
 
   @override
   State<KeyField> createState() => _KeyFieldState();
@@ -118,6 +122,7 @@ class _KeyFieldState extends State<KeyField> {
         Row(
           children: [
             Expanded(child: Text(widget.label, style: context.text.titleSmall)),
+            ?widget.action,
             if (widget.help != null)
               TextButton(
                 onPressed: () => launchUrl(widget.help!, mode: LaunchMode.externalApplication),
@@ -178,7 +183,13 @@ class _KeyFieldState extends State<KeyField> {
 // ---- Cloudflare -------------------------------------------------------------------------
 
 class CloudflareTab extends ConsumerStatefulWidget {
-  const CloudflareTab({super.key});
+  const CloudflareTab({super.key, this.extra = const [], this.onManage});
+
+  /// Opens the Cloudflare manager; shown once a token is set.
+  final VoidCallback? onManage;
+
+  /// Shown after the account, e.g. the Cloudflare tools.
+  final List<Widget> extra;
 
   @override
   ConsumerState<CloudflareTab> createState() => _CloudflareTabState();
@@ -285,6 +296,9 @@ class _CloudflareTabState extends ConsumerState<CloudflareTab> {
                     },
                     verify: (k) => ref.read(aiProvider).verifyKey('cloudflare', key: k),
                     help: Uri.parse('https://dash.cloudflare.com/profile/api-tokens'),
+                    action: s.hasCloudflare && widget.onManage != null
+                        ? FilledButton.tonalIcon(onPressed: widget.onManage, icon: const Icon(Icons.dashboard_customize_outlined, size: 16), label: const Text('Manage'))
+                        : null,
                   ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(Space.l, 0, Space.l, Space.m),
@@ -379,6 +393,7 @@ class _CloudflareTabState extends ConsumerState<CloudflareTab> {
                       Padding(padding: const EdgeInsets.all(Space.l), child: Text('This token sees no sites or buckets yet.', style: context.text.bodySmall)),
                   ],
                 ),
+              ...widget.extra,
             ],
           ),
         ),
@@ -484,6 +499,13 @@ class _E2bTabState extends ConsumerState<E2bTab> {
                         },
                         verify: (k) => ref.read(aiProvider).verifyKey('e2b', key: k),
                         help: Uri.parse('https://e2b.dev/dashboard?tab=keys'),
+                        action: s.hasE2bKey
+                            ? FilledButton.tonalIcon(
+                                onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const E2bManagerScreen())),
+                                icon: const Icon(Icons.dashboard_customize_outlined, size: 16),
+                                label: const Text('Manage'),
+                              )
+                            : null,
                       ),
                     ],
                   ),

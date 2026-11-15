@@ -40,6 +40,10 @@ ToolDocumentation documentationFor(TelegramTool tool) {
           ToolCategory.mcp => 'Your MCP servers, found in the official MCP Registry',
           ToolCategory.skills => 'Agent Skills from Skyll, skills.sh and GitHub',
           ToolCategory.cloudflare || ToolCategory.r2 => 'Cloudflare',
+          ToolCategory.vercel => 'Vercel REST API',
+          ToolCategory.resend => 'Resend API',
+          ToolCategory.mongodb => 'Your MongoDB server, over the MongoDB wire protocol',
+          ToolCategory.parcels => '17TRACK (api.17track.net) and carriers\' own tracking pages',
           ToolCategory.creative =>
             tool.name == 'generate_addis_voice'
                 ? 'Addis AI'
@@ -92,6 +96,9 @@ ToolDocumentation documentationFor(TelegramTool tool) {
       'r2_delete',
     }.contains(tool.name))
       'R2 access-key ID and secret, and a bucket supplied here or selected as the default.',
+    if (tool.category == ToolCategory.vercel) 'A Vercel access token (Settings → Development → Vercel) with access to the team and project.',
+    if (tool.category == ToolCategory.resend) 'A Resend API key (Settings → Development → Resend); sending needs a verified domain and From address.',
+    if (tool.category == ToolCategory.mongodb) 'A MongoDB connection string (Settings → Development → MongoDB) whose user has the needed roles.',
     if (tool.name == 'web_search') 'An Exa key in Apps & web.',
     if (tool.category == ToolCategory.decisions) 'A TypeSafe Jev key in AI & models → Decisions, with decisions turned on.',
     if (tool.category == ToolCategory.mcp && !const {'mcp_search', 'mcp_list_servers', 'mcp_is_installed', 'mcp_install', 'mcp_install_catalog'}.contains(tool.name))
@@ -192,6 +199,14 @@ ToolDocumentation documentationFor(TelegramTool tool) {
         : tool.category == ToolCategory.cloudflare ||
               tool.category == ToolCategory.r2
         ? 'https://developers.cloudflare.com/'
+        : tool.category == ToolCategory.vercel
+        ? 'https://vercel.com/docs/rest-api'
+        : tool.category == ToolCategory.resend
+        ? 'https://resend.com/docs/api-reference'
+        : tool.category == ToolCategory.parcels
+        ? 'https://api.17track.net/en/doc'
+        : tool.category == ToolCategory.mongodb
+        ? 'https://www.mongodb.com/docs/manual/reference/command/'
         : tool.category == ToolCategory.creative &&
               const {
                 'generate_music',

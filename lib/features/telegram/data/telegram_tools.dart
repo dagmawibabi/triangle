@@ -39,6 +39,10 @@ import 'package:omni_ai/omni_ai.dart'
         R2Credentials;
 
 import '../../integrations/e2b_session.dart';
+import '../../development/dev_apis.dart';
+import '../../development/mongo_session.dart';
+import '../../info/info_keys.dart' show InfoKeysNotifier;
+import '../../parcels/parcel_api.dart';
 import '../../integrations/integrations_store.dart';
 import '../../settings/data/settings.dart';
 import '../../web/browser_mode.dart';
@@ -62,6 +66,7 @@ import '../../../core/files/generated_files.dart';
 import '../../library/library_api.dart';
 import '../../pokemon/pokemon_api.dart' show PokemonApi, PokemonException, pokeTypes;
 import '../../sports/sports_api.dart' show leagueIds, scorerCompetitions;
+import '../../calls/vapi.dart';
 
 part 'telegram_account_tools.dart';
 part 'telegram_activity_tools.dart';
@@ -74,6 +79,7 @@ part 'telegram_canvas_tools.dart';
 part 'telegram_chat_tools.dart';
 part 'telegram_cloud_tools.dart';
 part 'telegram_destructive_tools.dart';
+part 'telegram_premium_tools.dart';
 part 'telegram_device_tools.dart';
 part 'telegram_dev_tools.dart';
 part 'telegram_discover_tools.dart';
@@ -108,6 +114,11 @@ part 'telegram_utility_tools.dart';
 part 'telegram_youtube_tools.dart';
 part 'telegram_retro_tools.dart';
 part 'telegram_papers_tools.dart';
+part 'telegram_vercel_tools.dart';
+part 'telegram_resend_tools.dart';
+part 'telegram_mongodb_tools.dart';
+part 'telegram_parcel_tools.dart';
+part 'telegram_section_tools.dart';
 
 /// What a tool hands back: JSON for the model, and the posts it showed so
 /// the chat can turn citations into chips.
@@ -148,6 +159,11 @@ enum ToolCategory {
   routines('Routines'),
   stories('Stories'),
   folders('Folders'),
+  playlists('Playlists'),
+  marketplace('Marketplace'),
+  movies('Video'),
+  books('Books library'),
+  gallery('Gallery'),
   web('Web & browsing'),
   developer('Public GitHub'),
   discover('Video, music & social'),
@@ -186,6 +202,10 @@ enum ToolCategory {
   apps('Any connected app'),
   cloudflare('Cloudflare'),
   r2('Cloudflare R2 storage'),
+  vercel('Vercel'),
+  resend('Resend email'),
+  mongodb('MongoDB'),
+  parcels('Package tracking'),
   decisions('Decisions (Jev)'),
   mcp('MCP servers'),
   skills('Skills'),
@@ -255,7 +275,16 @@ enum ToolCategory {
     todoist ||
     apps => true,
     cloudflare || r2 || e2b => true,
+    vercel || resend || mongodb => true,
+    parcels => true,
     decisions || mcp || skills => true,
+    _ => false,
+  };
+
+  /// Listed under Settings → Development: developer platforms reached with
+  /// the user's own keys.
+  bool get isDevelopment => switch (this) {
+    vercel || resend || mongodb || cloudflare || r2 => true,
     _ => false,
   };
 }
@@ -281,7 +310,7 @@ enum ToolCost {
   ),
   cloud(
     'Your cloud account',
-    'Runs on your own Cloudflare or E2B account with the key you added; usage counts against that account.',
+    'Runs on your own account (Cloudflare, Vercel, Resend, MongoDB or E2B) with the key you added; usage counts against that account.',
   ),
   apps(
     'Connected app',
@@ -1241,7 +1270,8 @@ final _tools = <TelegramTool>[
     category: ToolCategory.automation,
     cost: ToolCost.device,
     description:
-        'Creates a watch that runs on its own. Triggers: new messages in specific chats (chat_ids), all_dms, '
+        'Creates a watch that runs on its own. Message triggers can wake on every message or only on a keyword '
+        '(wake_on: keyword, keywords: ["Triangle", "/agent"]). Triggers: new messages in specific chats (chat_ids), all_dms, '
         'all_groups, all_channels, mentions of the user, a folder (these need Telegram), a schedule (daily_at "HH:MM" or '
         'every_minutes), or app: something new in a connected app (app = a toolkit like gmail, slack, github, notion, '
         'todoist, or "any"; query = what to look for, e.g. "emails from my bank"), checked every_minutes (default 15), or phone: '
@@ -1324,6 +1354,26 @@ final _tools = <TelegramTool>[
               'Send a phone notification when it fires. false runs it quietly in the background; results '
               'still land in its conversation. Default true.',
         },
+        'wake_on': {
+          'type': 'string',
+          'enum': ['every_message', 'keyword'],
+          'description':
+              'For message triggers: every_message (default) runs on each new matching message; keyword runs only '
+              'on messages that say one of keywords, so the watch can listen all day without using the AI.',
+        },
+        'keywords': {
+          'type': 'array',
+          'items': {'type': 'string'},
+          'description':
+              'Trigger words, e.g. ["Triangle", "/agent"]. When set, the watch hears its chats all day but only '
+              'runs (and costs anything) on a message that says one of them, as a whole word, any case. The user\'s '
+              'own messages count too, so they can summon it by typing the word. [] turns the filter off.',
+        },
+        'keyword_from': {
+          'type': 'string',
+          'enum': ['anyone', 'me', 'others'],
+          'description': 'Whose messages can say a keyword: anyone (default), me (only the user) or others.',
+        },
         'accounts': accountsParameter('the watch (whose messages it hears and which its runs may use; a folder watch covers its folder\'s account)'),
       },
       ['name', 'trigger', 'mode'],
@@ -1342,7 +1392,7 @@ final _tools = <TelegramTool>[
     label: 'Changing a watch',
     category: ToolCategory.automation,
     cost: ToolCost.device,
-    description: 'Changes a watch: turn it on or off, rename it, change its chats, mode, schedule or instructions.',
+    description: 'Changes a watch: turn it on or off, rename it, change its chats, mode, schedule, instructions or trigger keywords.',
     parameters: _obj(
       {
         'watch_id': {'type': 'string'},
@@ -1369,6 +1419,26 @@ final _tools = <TelegramTool>[
           'type': 'array',
           'items': {'type': 'string', 'description': 'A tool name, category or area.'},
           'description': 'Only these tools for its runs (names, categories or areas); ["all"] allows every tool again.',
+        },
+        'wake_on': {
+          'type': 'string',
+          'enum': ['every_message', 'keyword'],
+          'description':
+              'For message triggers: every_message (default) runs on each new matching message; keyword runs only '
+              'on messages that say one of keywords, so the watch can listen all day without using the AI.',
+        },
+        'keywords': {
+          'type': 'array',
+          'items': {'type': 'string'},
+          'description':
+              'Trigger words, e.g. ["Triangle", "/agent"]. When set, the watch hears its chats all day but only '
+              'runs (and costs anything) on a message that says one of them, as a whole word, any case. The user\'s '
+              'own messages count too, so they can summon it by typing the word. [] turns the filter off.',
+        },
+        'keyword_from': {
+          'type': 'string',
+          'enum': ['anyone', 'me', 'others'],
+          'description': 'Whose messages can say a keyword: anyone (default), me (only the user) or others.',
         },
         'model': {'type': 'string', 'description': 'free, cheap, main or a model id.'},
       },
@@ -1574,6 +1644,10 @@ final _tools = <TelegramTool>[
     ),
   ),
   generateImageTool,
+  showComponentTool,
+  ...customFolderTools,
+  ...playlistTools,
+  ...sectionTools,
   getModelSettingsTool,
   generateVideoTool,
   generateAudioTool,
@@ -1593,6 +1667,7 @@ final _tools = <TelegramTool>[
   ..._extraTools,
   ..._botFatherTools,
   ..._destructiveTools,
+  ..._premiumTools,
   ..._canvasTools,
   ..._localPhoneTools,
   ..._webTools,
@@ -1615,6 +1690,10 @@ final _tools = <TelegramTool>[
   ..._papersTools,
   ..._appTools,
   ..._cloudTools,
+  ..._vercelTools,
+  ..._resendTools,
+  ..._mongoTools,
+  ..._parcelTools,
   ..._deviceTools,
   ..._utilityTools,
   ..._retroTools,
@@ -1624,6 +1703,468 @@ final _tools = <TelegramTool>[
   ..._screenTools,
   ..._capabilityTools,
 ];
+
+const _customFolderRef = {'type': 'string', 'description': 'The folder: its folder_id or name.'};
+
+/// The person's own folders (beside Telegram's), managed by the assistant.
+const customFolderTools = <TelegramTool>[
+  TelegramTool(
+    name: 'list_custom_folders',
+    label: 'Listing your folders',
+    category: ToolCategory.folders,
+    cost: ToolCost.device,
+    description:
+        'The user\'s own custom folders (made in the app, separate from Telegram\'s chat folders): name, emoji or '
+        'icon, any whole chat types it holds (every DM, bot, group or channel) and chat count. with_chats true also '
+        'lists each folder\'s chats in this account.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'with_chats': {'type': 'boolean', 'description': 'Also list each folder\'s chats.'},
+      },
+    },
+  ),
+  TelegramTool(
+    name: 'custom_folder_chats',
+    label: 'Opening a folder',
+    category: ToolCategory.folders,
+    cost: ToolCost.local,
+    description: 'The chats in one custom folder (this account), with type, unread count and last activity.',
+    parameters: {
+      'type': 'object',
+      'properties': {'folder': _customFolderRef},
+      'required': ['folder'],
+    },
+  ),
+  TelegramTool(
+    name: 'create_custom_folder',
+    label: 'Making a folder',
+    category: ToolCategory.folders,
+    cost: ToolCost.device,
+    description:
+        'Makes a custom folder in the app (not a Telegram folder) and optionally puts chats in it, one by one '
+        '(chat_ids) or whole types (types: every DM, bot, group or channel, including ones that come later). Any '
+        'chat can be in several folders. It shows in the drawer.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'name': {'type': 'string', 'description': 'The folder\'s name.'},
+        'emoji': {'type': 'string', 'description': 'One emoji for it, e.g. 💼.'},
+        'chat_ids': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'Chats to put in it.'},
+        'types': {
+          'type': 'array',
+          'items': {'type': 'string', 'enum': ['dms', 'bots', 'groups', 'channels']},
+          'description': 'Whole chat types to put in it.',
+        },
+      },
+      'required': ['name'],
+    },
+  ),
+  TelegramTool(
+    name: 'update_custom_folder',
+    label: 'Changing a folder',
+    category: ToolCategory.folders,
+    cost: ToolCost.device,
+    description: 'Renames a custom folder, changes its emoji, or adds and removes chats or whole chat types.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'folder': _customFolderRef,
+        'name': {'type': 'string', 'description': 'A new name.'},
+        'emoji': {'type': 'string', 'description': 'A new emoji.'},
+        'add_chat_ids': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'Chats to add.'},
+        'remove_chat_ids': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'Chats to take out (also from a whole type).'},
+        'add_types': {
+          'type': 'array',
+          'items': {'type': 'string', 'enum': ['dms', 'bots', 'groups', 'channels']},
+          'description': 'Whole chat types to add.',
+        },
+        'remove_types': {
+          'type': 'array',
+          'items': {'type': 'string', 'enum': ['dms', 'bots', 'groups', 'channels']},
+          'description': 'Whole chat types to take out.',
+        },
+      },
+      'required': ['folder'],
+    },
+  ),
+  TelegramTool(
+    name: 'delete_custom_folder',
+    label: 'Deleting a folder',
+    category: ToolCategory.folders,
+    cost: ToolCost.device,
+    destructive: true,
+    description: 'Deletes a custom folder. Its chats are untouched. Only when the user asks.',
+    parameters: {
+      'type': 'object',
+      'properties': {'folder': _customFolderRef},
+      'required': ['folder'],
+    },
+  ),
+];
+
+const _playlistRef = {'type': 'string', 'description': 'The playlist: its playlist_id or name.'};
+const _audioTypes = {
+  'type': 'string',
+  'enum': ['music', 'voice', 'files'],
+  'description': 'music: songs sent as audio; voice: voice messages; files: audio files (mp3, m4a…) posted as documents.',
+};
+const _addAudioProps = <String, dynamic>{
+  'chat_id': {'type': 'integer', 'description': 'The Telegram chat the message_ids are in.'},
+  'message_ids': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'Telegram messages (songs, voice messages, audio files) in chat_id to add.'},
+  'file_paths': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Audio files the app saved (from find_audio with source files, or list_files) to add.'},
+  'whole_chat_id': {'type': 'integer', 'description': 'Add every audio of whole_chat_type from this chat or channel, newest first.'},
+  'whole_chat_type': _audioTypes,
+  'max_tracks': {'type': 'integer', 'description': 'Most tracks to take from whole_chat_id (default 100, at most 300).'},
+};
+
+/// The person's playlists: songs, voice messages and audio files from
+/// Telegram chats and channels, and audio saved in Files.
+const playlistTools = <TelegramTool>[
+  TelegramTool(
+    name: 'list_playlists',
+    label: 'Listing your playlists',
+    category: ToolCategory.playlists,
+    cost: ToolCost.device,
+    description:
+        'The user\'s playlists in the app: name, description, track count and length. with_tracks true also lists '
+        'each one\'s tracks.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'with_tracks': {'type': 'boolean', 'description': 'Also list each playlist\'s tracks.'},
+      },
+    },
+  ),
+  TelegramTool(
+    name: 'playlist_tracks',
+    label: 'Opening a playlist',
+    category: ToolCategory.playlists,
+    cost: ToolCost.device,
+    description:
+        'The tracks of one playlist in order: track_id, title, artist, type (music, voice, podcast, audiobook, audio), '
+        'where it\'s from (Telegram chat and message, or a saved file) and length.',
+    parameters: {
+      'type': 'object',
+      'properties': {'playlist': _playlistRef},
+      'required': ['playlist'],
+    },
+  ),
+  TelegramTool(
+    name: 'find_audio',
+    label: 'Finding audio',
+    category: ToolCategory.playlists,
+    cost: ToolCost.telegram,
+    description:
+        'Finds audio to put in playlists. source telegram (default) searches songs, voice messages or audio files '
+        'in one chat or channel (chat_id) or across every chat, optionally by words (title, artist, file name); '
+        'it returns chat_id and message_id for each. source files lists audio the app saved (podcast episodes, '
+        'audiobook chapters, downloads, Telegram audio saved to Files), with file_path.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'source': {'type': 'string', 'enum': ['telegram', 'files'], 'description': 'Where to look (default telegram).'},
+        'type': _audioTypes,
+        'query': {'type': 'string', 'description': 'Words to match. Searching every chat needs no words: a type is enough.'},
+        'chat_id': {'type': 'integer', 'description': 'Only this chat or channel.'},
+        'limit': {'type': 'integer', 'description': 'Most results (default 30, at most 100).'},
+        'next': {'type': 'string', 'description': 'The next value from a previous call, for more.'},
+      },
+    },
+  ),
+  TelegramTool(
+    name: 'create_playlist',
+    label: 'Making a playlist',
+    category: ToolCategory.playlists,
+    cost: ToolCost.device,
+    description:
+        'Makes a playlist in the app and optionally fills it: Telegram messages (chat_id + message_ids), every song, '
+        'voice message or audio file of one chat or channel (whole_chat_id + whole_chat_type), and saved files '
+        '(file_paths). Tracks stay where they are and play from there. It shows under Playlists in the drawer.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'name': {'type': 'string', 'description': 'The playlist\'s name.'},
+        'description': {'type': 'string', 'description': 'A line about it.'},
+        'emoji': {'type': 'string', 'description': 'A cover emoji (any emoji); replaces an icon.'},
+        'icon': {
+          'type': 'string',
+          'enum': ['music', 'queue', 'album', 'headphones', 'mic', 'podcast', 'radio', 'piano', 'guitar', 'speaker', 'waves', 'book', 'church', 'mosque', 'heart', 'star', 'moon', 'sun', 'fitness', 'car', 'coffee', 'party', 'school', 'bolt'],
+          'description': 'A plain monochrome icon for the cover instead of an emoji.',
+        },
+        'no_mark': {'type': 'boolean', 'description': 'No emoji or icon on the cover, just the colour.'},
+        'colour': {'type': 'integer', 'description': 'The cover gradient, 0-11: 0 coral-purple, 1 sky blue, 2 orange-gold, 3 green, 4 pink-blue, 5 violet, 6 magenta-orange, 7 mint, 8 graphite, 9 orchid, 10 teal, 11 wine-navy.'},
+        'cover': {'type': 'string', 'enum': ['collage', 'colour'], 'description': 'Without a picture: a collage of the tracks\' album art, or the gradient.'},
+        'cover_image': {'type': 'string', 'description': 'A picture for the cover: a saved file\'s path (e.g. an image the assistant generated) or an https link.'},
+        'remove_cover_image': {'type': 'boolean', 'description': 'Drop the cover picture.'},
+        ..._addAudioProps,
+      },
+      'required': ['name'],
+    },
+  ),
+  TelegramTool(
+    name: 'update_playlist',
+    label: 'Changing a playlist',
+    category: ToolCategory.playlists,
+    cost: ToolCost.device,
+    description:
+        'Changes anything about a playlist: name, description; its cover (a picture from a file or link, a collage of '
+        'album art, or a gradient colour) and mark (emoji, icon or none); pinned to the top; adds tracks (same ways '
+        'as create_playlist, skipping ones already in it); removes tracks by track_id; moves one track; sorts or '
+        'shuffles all its tracks for good.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'playlist': _playlistRef,
+        'name': {'type': 'string', 'description': 'A new name.'},
+        'description': {'type': 'string', 'description': 'A new description.'},
+        'emoji': {'type': 'string', 'description': 'A cover emoji (any emoji); replaces an icon.'},
+        'icon': {
+          'type': 'string',
+          'enum': ['music', 'queue', 'album', 'headphones', 'mic', 'podcast', 'radio', 'piano', 'guitar', 'speaker', 'waves', 'book', 'church', 'mosque', 'heart', 'star', 'moon', 'sun', 'fitness', 'car', 'coffee', 'party', 'school', 'bolt'],
+          'description': 'A plain monochrome icon for the cover instead of an emoji.',
+        },
+        'no_mark': {'type': 'boolean', 'description': 'No emoji or icon on the cover, just the colour.'},
+        'colour': {'type': 'integer', 'description': 'The cover gradient, 0-11: 0 coral-purple, 1 sky blue, 2 orange-gold, 3 green, 4 pink-blue, 5 violet, 6 magenta-orange, 7 mint, 8 graphite, 9 orchid, 10 teal, 11 wine-navy.'},
+        'cover': {'type': 'string', 'enum': ['collage', 'colour'], 'description': 'Without a picture: a collage of the tracks\' album art, or the gradient.'},
+        'cover_image': {'type': 'string', 'description': 'A picture for the cover: a saved file\'s path (e.g. an image the assistant generated) or an https link.'},
+        'remove_cover_image': {'type': 'boolean', 'description': 'Drop the cover picture.'},
+        'pinned': {'type': 'boolean', 'description': 'Pin it to the top of the library, or unpin.'},
+        'sort_tracks': {
+          'type': 'string',
+          'enum': ['title', 'artist', 'length', 'added', 'posted', 'reverse', 'shuffle'],
+          'description': 'Reorder every track for good: by title, artist, length (short first), date added, date posted, reversed, or shuffled.',
+        },
+        ..._addAudioProps,
+        'remove_track_ids': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Tracks to take out (track_id from playlist_tracks).'},
+        'move_track_id': {'type': 'string', 'description': 'A track to move.'},
+        'move_to': {'type': 'integer', 'description': 'Its new position, 1 for the top.'},
+        'track_order': {'type': 'array', 'items': {'type': 'string'}, 'description': 'track_ids in the exact order wanted; the rest follow.'},
+        'rename_tracks': {'type': 'object', 'description': 'track_id → new title, to rename tracks.'},
+      },
+      'required': ['playlist'],
+    },
+  ),
+  TelegramTool(
+    name: 'play_playlist',
+    label: 'Playing a playlist',
+    category: ToolCategory.playlists,
+    cost: ToolCost.device,
+    description: 'Plays a playlist in the app\'s player, from the top, from one track, or shuffled.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'playlist': _playlistRef,
+        'shuffle': {'type': 'boolean', 'description': 'Play in a random order.'},
+        'start_track_id': {'type': 'string', 'description': 'Start from this track.'},
+      },
+      'required': ['playlist'],
+    },
+  ),
+  TelegramTool(
+    name: 'arrange_playlists',
+    label: 'Arranging your playlists',
+    category: ToolCategory.playlists,
+    cost: ToolCost.device,
+    description:
+        'Arranges the playlists library: put playlists in an exact order (order: playlist ids or names, first to '
+        'last), or sort it by recently played, recently changed, name or size; show it as a grid or a list; and '
+        'show or hide the Playlists section of the side drawer.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'order': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Playlists (id or name) in the order wanted; the rest follow.'},
+        'sort': {'type': 'string', 'enum': ['custom', 'recent', 'updated', 'name', 'size'], 'description': 'How the library is sorted (custom = the order set by hand).'},
+        'view': {'type': 'string', 'enum': ['grid', 'list'], 'description': 'Show the library as a grid of covers or a list.'},
+        'show_in_drawer': {'type': 'boolean', 'description': 'Show the Playlists section in the side drawer.'},
+      },
+    },
+  ),
+  TelegramTool(
+    name: 'duplicate_playlist',
+    label: 'Copying a playlist',
+    category: ToolCategory.playlists,
+    cost: ToolCost.device,
+    description: 'Makes a copy of a playlist (tracks, cover and look), optionally under a new name.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'playlist': _playlistRef,
+        'name': {'type': 'string', 'description': 'The copy\'s name (default "<name> copy").'},
+      },
+      'required': ['playlist'],
+    },
+  ),
+  TelegramTool(
+    name: 'share_playlist',
+    label: 'Sharing a playlist',
+    category: ToolCategory.playlists,
+    cost: ToolCost.telegram,
+    description:
+        'Shares a playlist. file: sends a playlist file to chat_id that people with Triangle import (cover, order and '
+        'all; Telegram tracks travel as message links). forward: forwards the playlist\'s Telegram songs and voice '
+        'messages themselves to chat_id. save: just writes the file to Files → Exports and returns its path.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'playlist': _playlistRef,
+        'mode': {'type': 'string', 'enum': ['file', 'forward', 'save'], 'description': 'Default file.'},
+        'chat_id': {'type': 'integer', 'description': 'Where to send it (file and forward).'},
+        'to': {'type': 'string', 'enum': ['saved_messages'], 'description': 'Send to the user\'s own Saved Messages instead of chat_id.'},
+      },
+      'required': ['playlist'],
+    },
+  ),
+  TelegramTool(
+    name: 'import_playlist',
+    label: 'Importing a playlist',
+    category: ToolCategory.playlists,
+    cost: ToolCost.telegram,
+    description:
+        'Makes a playlist from a shared playlist file (.playlist.json): a saved file\'s path, or a file someone sent '
+        'in Telegram (chat_id + message_id). Telegram tracks are found again by their links; ones this account can\'t '
+        'reach are listed.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'file_path': {'type': 'string', 'description': 'The playlist file on the phone.'},
+        'chat_id': {'type': 'integer', 'description': 'The chat the playlist file was sent in.'},
+        'message_id': {'type': 'integer', 'description': 'The message with the playlist file.'},
+        'name': {'type': 'string', 'description': 'A different name for it.'},
+      },
+    },
+  ),
+  TelegramTool(
+    name: 'delete_playlist',
+    label: 'Deleting a playlist',
+    category: ToolCategory.playlists,
+    cost: ToolCost.device,
+    destructive: true,
+    description: 'Deletes a playlist. The songs and voice messages stay in Telegram and Files. Only when the user asks.',
+    parameters: {
+      'type': 'object',
+      'properties': {'playlist': _playlistRef},
+      'required': ['playlist'],
+    },
+  ),
+  TelegramTool(
+    name: 'like_tracks',
+    label: 'Liking songs',
+    category: ToolCategory.playlists,
+    cost: ToolCost.device,
+    description:
+        'Adds tracks to (or with unlike: true takes them out of) the Liked songs playlist: tracks of a playlist '
+        '(playlist + track_ids), Telegram audio (chat_id + message_ids), or what is playing now (now_playing, the '
+        'default when nothing else is given).',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'playlist': _playlistRef,
+        'track_ids': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Tracks of the playlist, by track_id from playlist_tracks.'},
+        'chat_id': {'type': 'integer', 'description': 'A Telegram chat id: one channel, group or store.'},
+        'message_ids': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'Telegram message ids in chat_id.'},
+        'now_playing': {'type': 'boolean', 'description': 'The track playing now.'},
+        'unlike': {'type': 'boolean', 'description': 'Take them out of Liked songs instead.'},
+      },
+    },
+  ),
+  TelegramTool(
+    name: 'music_stats',
+    label: 'Reading your listening stats',
+    category: ToolCategory.playlists,
+    cost: ToolCost.device,
+    description:
+        'The user\'s listening stats from the app\'s player: minutes listened, plays, day streak, the last 14 days, '
+        'top tracks, artists and playlists, and what played lately.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'limit': {'type': 'integer', 'description': 'How many in each top list (default 10).'},
+      },
+    },
+  ),
+  TelegramTool(
+    name: 'player_control',
+    label: 'Controlling the player',
+    category: ToolCategory.playlists,
+    cost: ToolCost.device,
+    description:
+        'Controls the app\'s audio player: status (what\'s playing, the queue), pause, resume, next, previous, stop, '
+        'seek (seconds), skip (± seconds), shuffle (on), repeat (mode off/all/one), speed (0.5-3), sleep (minutes, '
+        'or end_of_track; 0 turns it off).',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'action': {
+          'type': 'string',
+          'enum': ['status', 'pause', 'resume', 'next', 'previous', 'stop', 'seek', 'skip', 'shuffle', 'repeat', 'speed', 'sleep'],
+        },
+        'seconds': {'type': 'integer', 'description': 'Seconds: where to seek to, or how far to skip (negative goes back).'},
+        'on': {'type': 'boolean', 'description': 'Shuffle on or off (default: flip it).'},
+        'mode': {'type': 'string', 'enum': ['off', 'all', 'one'], 'description': 'Repeat mode.'},
+        'speed': {'type': 'number', 'description': 'Playback speed, 0.5 to 3.'},
+        'minutes': {'type': 'integer', 'description': 'Stop after this many minutes; 0 turns the timer off.'},
+        'end_of_track': {'type': 'boolean', 'description': 'Stop at the end of the current track.'},
+      },
+      'required': ['action'],
+    },
+  ),
+];
+
+const showComponentTool = TelegramTool(
+  name: 'show_component',
+  label: 'Drawing a component',
+  category: ToolCategory.creative,
+  cost: ToolCost.device,
+  description:
+      'Shows data as a visual card in the chat, drawn by the app (no AI cost). Use it when a picture says it better '
+      'than text: trends and breakdowns (chart), headline numbers (stats), many rows (table), goals (progress), '
+      'schedules or histories (timeline), choices (comparison), one reading on a scale (gauge). After it, add only '
+      'what the card doesn\'t show. Fields by component:\n'
+      '- chart: chart_type (line, area, bar, hbar, pie, donut), labels (x values or slice names), series '
+      '[{name, values}] (pie/donut use the first series), unit.\n'
+      '- stats: items [{label, value (text, e.g. "\$12.4k"), delta (% change), up_is_bad, hint}].\n'
+      '- table: columns, rows (lists of cells; markdown links allowed).\n'
+      '- progress: items [{label, value, max, unit}].\n'
+      '- timeline: items [{time, title, detail, status (done, next or empty)}].\n'
+      '- comparison: options [{name, score (0-10), pros, cons}] (2-4), verdict.\n'
+      '- gauge: value, min, max, label, unit.\n'
+      'Some components may be turned off by the user; the error then lists those you can use.',
+  parameters: {
+    'type': 'object',
+    'properties': {
+      'component': {
+        'type': 'string',
+        'enum': ['chart', 'stats', 'table', 'progress', 'timeline', 'comparison', 'gauge'],
+        'description': 'Which component to draw.',
+      },
+      'title': {'type': 'string', 'description': 'A short heading for the card.'},
+      'subtitle': {'type': 'string', 'description': 'An optional line under the title (source, period).'},
+      'chart_type': {
+        'type': 'string',
+        'enum': ['line', 'area', 'bar', 'hbar', 'pie', 'donut'],
+        'description': 'chart only; default line.',
+      },
+      'labels': {'type': 'array', 'items': {'type': 'string'}, 'description': 'chart only: x-axis labels or slice names.'},
+      'series': {
+        'type': 'array',
+        'items': {'type': 'object'},
+        'description': 'chart only: [{name, values: [numbers]}], each values list as long as labels.',
+      },
+      'unit': {'type': 'string', 'description': 'chart or gauge: unit shown with values, e.g. "\$", "%", "km".'},
+      'items': {'type': 'array', 'items': {'type': 'object'}, 'description': 'stats, progress or timeline: the entries.'},
+      'columns': {'type': 'array', 'items': {'type': 'string'}, 'description': 'table only: column headings.'},
+      'rows': {'type': 'array', 'items': {'type': 'array'}, 'description': 'table only: rows of cells.'},
+      'options': {'type': 'array', 'items': {'type': 'object'}, 'description': 'comparison only: the options.'},
+      'verdict': {'type': 'string', 'description': 'comparison only: the recommendation in one line.'},
+      'value': {'type': 'number', 'description': 'gauge only: the reading.'},
+      'min': {'type': 'number', 'description': 'gauge only: lowest value, default 0.'},
+      'max': {'type': 'number', 'description': 'gauge only: highest value, default 100.'},
+      'label': {'type': 'string', 'description': 'gauge only: what the reading means, e.g. "AQI · Moderate".'},
+    },
+    'required': ['component'],
+  },
+);
 
 const generateImageTool = TelegramTool(
   name: 'generate_image',
@@ -2076,6 +2617,10 @@ class TelegramToolRunner {
   Future<ToolOutput>? _runExtra(String name, Map<String, dynamic> args) =>
       _runApps(name, args) ??
       _runCloud(name, args) ??
+      _runVercel(name, args) ??
+      _runResend(name, args) ??
+      _runMongo(name, args) ??
+      _runParcels(name, args) ??
       _runDevice(name, args) ??
       _runUtility(name, args) ??
       _runRetro(name, args) ??
@@ -2087,6 +2632,7 @@ class TelegramToolRunner {
       _runAnalytics(name, args) ??
       _runChats(name, args) ??
       _runDestructive(name, args) ??
+      _runPremium(name, args) ??
       _runAdmin(name, args) ??
       _runExtra2(name, args) ??
       _runBotFather(name, args) ??
@@ -2113,12 +2659,17 @@ class TelegramToolRunner {
   ) =>
       _describeApps(name, args) ??
       _describeCloud(name, args) ??
+      _describeVercel(name, args) ??
+      _describeResend(name, args) ??
+      _describeMongo(name, args) ??
+      _describeParcels(name, args) ??
       _describeDevice(name, args) ??
       _describeMore(name, args, title) ??
       _describeBackgrounds(name, args, title) ??
       _describeBots(name, args, title) ??
       _describeChats(name, args, title) ??
       _describeDestructive(name, args, title) ??
+      _describePremium(name, args, title) ??
       _describeAdmin(name, args, title) ??
       _describeExtra2(name, args, title) ??
       _describeBotFather(name, args) ??

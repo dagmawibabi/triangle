@@ -56,10 +56,16 @@ void main() {
 
   group('tool definitions', () {
     test('every system tool is under System, classified and documented', () {
-      expect(systemToolNames, {'list_api_keys', 'set_api_key', 'delete_api_key', 'load_tools', 'get_app_settings', 'set_appearance', 'set_preferences'});
+      expect(systemToolNames, {
+        'list_api_keys', 'set_api_key', 'delete_api_key', 'load_tools', 'get_app_settings', 'set_appearance', 'set_preferences',
+        'test_api_key', 'api_request', 'api_send', 'ai_balances',
+        'http_diagnose', 'dns_lookup', 'ssl_certificate', 'port_check', 'my_ip', 'whois_lookup', 'url_check',
+      });
+      // The API calls run with the system tools (they can use saved keys) but sit under The web.
+      const web = {'api_request', 'api_send', 'http_diagnose', 'dns_lookup', 'ssl_certificate', 'port_check', 'my_ip', 'whois_lookup', 'url_check'};
       for (final name in systemToolNames) {
         final t = telegramTools.firstWhere((t) => t.name == name);
-        expect(t.category, ToolCategory.system, reason: name);
+        expect(t.category, web.contains(name) ? ToolCategory.web : ToolCategory.system, reason: name);
         expect(t.needsTelegram, isFalse, reason: name);
       }
     });
@@ -74,6 +80,9 @@ void main() {
       expect(tool('set_appearance').access, ToolAccess.modify);
       expect(tool('set_appearance').destructive, isFalse);
       expect(tool('set_preferences').destructive, isFalse);
+      expect(tool('test_api_key').access, ToolAccess.read);
+      expect(tool('api_request').requiresApproval, isFalse);
+      expect(tool('api_send').requiresApproval, isTrue);
     });
 
     test('services cover AI, apps, cloud, web data and money', () {

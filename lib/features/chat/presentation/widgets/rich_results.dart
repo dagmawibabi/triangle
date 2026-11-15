@@ -42,6 +42,12 @@ import 'reference_result_cards.dart';
 import 'world_result_cards.dart';
 import 'food_result_cards.dart';
 import 'sports_result_cards.dart';
+import 'network_result_cards.dart';
+import 'dev/dev_result_cards.dart';
+import 'parcel_result_cards.dart';
+import 'section_result_cards.dart';
+import '../../../components/component_cards.dart';
+import '../../../calls/vapi_ui.dart';
 
 /// Cards for results that are things you'd want to look at: books, YouTube
 /// videos and channels, posts and profiles on X, GitHub repos, releases,
@@ -64,7 +70,7 @@ Widget? richResultFor(ToolPart part) {
       if (x is Map) Map<String, dynamic>.from(x),
   ];
   // Screen time, image tools and the free lookups.
-  if (safetyResultFor(part, j) ?? screenResultFor(part, j) ?? screenTimeResultFor(part, j) ?? imageResultFor(part, j) ?? referenceResultFor(part, j) ?? worldResultFor(part, j) ?? foodResultFor(part, j) ?? sportsResultFor(part, j) case final w?) return w;
+  if (sectionResultFor(part, j) ?? safetyResultFor(part, j) ?? screenResultFor(part, j) ?? screenTimeResultFor(part, j) ?? imageResultFor(part, j) ?? referenceResultFor(part, j) ?? worldResultFor(part, j) ?? foodResultFor(part, j) ?? sportsResultFor(part, j) case final w?) return w;
   return switch (part.name) {
     'search_books' => _Carousel(
       height: 236,
@@ -172,7 +178,7 @@ Widget? richResultFor(ToolPart part) {
     'browser_click' when (j['page'] as Map?)?['url'] is String => _PageCard(
       page: Map<String, dynamic>.from(j['page'] as Map),
     ),
-    _ => marketsResultFor(part, j) ?? newsResultFor(part, j) ?? bibleResultFor(part, j) ?? financeResultFor(part, j) ?? callHistoryResultFor(part, j) ?? libraryResultFor(part, j) ?? exploreResultFor(part, j) ?? pokemonResultFor(part, j) ?? papersResultFor(part, j) ?? appResultFor(part, j) ?? cloudResultFor(part, j) ?? deviceResultFor(part, j) ?? workspaceResultFor(part, j) ?? utilityResultFor(part, j) ?? youtubeResultFor(part, j) ?? verifyResultFor(part, j) ?? retroResultFor(part, j),
+    _ => marketsResultFor(part, j) ?? newsResultFor(part, j) ?? bibleResultFor(part, j) ?? financeResultFor(part, j) ?? callHistoryResultFor(part, j) ?? libraryResultFor(part, j) ?? exploreResultFor(part, j) ?? pokemonResultFor(part, j) ?? papersResultFor(part, j) ?? appResultFor(part, j) ?? cloudResultFor(part, j) ?? devResultFor(part, j) ?? parcelResultFor(part, j) ?? deviceResultFor(part, j) ?? workspaceResultFor(part, j) ?? utilityResultFor(part, j) ?? youtubeResultFor(part, j) ?? verifyResultFor(part, j) ?? retroResultFor(part, j) ?? networkResultFor(part, j) ?? componentResultFor(part, j) ?? vapiResultFor(part, j),
   };
 }
 
@@ -2196,7 +2202,7 @@ class _Badge extends StatelessWidget {
     width: 36,
     height: 36,
     decoration: BoxDecoration(
-      color: AppColors.accent.withValues(alpha: 0.14),
+      color: AppColors.tint.withValues(alpha: 0.14),
       borderRadius: BorderRadius.circular(Radii.m),
     ),
     child: Icon(icon, size: 20, color: AppColors.accent),

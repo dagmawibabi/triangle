@@ -40,6 +40,34 @@ enum WatchMode {
   final String explanation;
 }
 
+/// Whose messages can say a watch's trigger keyword.
+enum KeywordFrom {
+  anyone('Anyone', 'You or anyone else in the chat'),
+  me('Only me', 'Only messages you send'),
+  others('Only others', 'Only messages others send');
+
+  const KeywordFrom(this.label, this.explanation);
+  final String label;
+  final String explanation;
+}
+
+/// Whether [text] says one of [keywords]: case-insensitive, as a whole word
+/// (so "triangle" doesn't match "triangles"), and a command such as
+/// "/agent" also matches "/agent@bot" or at the start of a line.
+bool saysKeyword(String text, List<String> keywords) {
+  if (keywords.isEmpty || text.isEmpty) return false;
+  for (final k in keywords) {
+    final word = k.trim();
+    if (word.isEmpty) continue;
+    final escaped = RegExp.escape(word);
+    // Word edges only where the keyword itself starts/ends with a word char.
+    final start = RegExp(r'^\w').hasMatch(word) ? r'(?<![\w])' : r'(?<![^\s\p{P}])';
+    final end = RegExp(r'\w$').hasMatch(word) ? r'(?![\w])' : '';
+    if (RegExp('$start$escaped$end', caseSensitive: false, unicode: true).hasMatch(text)) return true;
+  }
+  return false;
+}
+
 /// Which model a watch's runs use. Most watches only sort and summarise, so
 /// they start on a free model and move up only when asked to.
 abstract final class WatchModel {
@@ -90,7 +118,18 @@ class Watch {
     this.device,
     this.tools,
     this.model = WatchModel.free,
+    this.keywords = const [],
+    this.keywordFrom = KeywordFrom.anyone,
   });
+
+  /// Trigger words: when set, a message only fires the watch if it says
+  /// one of them (e.g. "Triangle" or "/agent"); everything else is ignored
+  /// without running the AI. Your own messages count too, per [keywordFrom].
+  final List<String> keywords;
+  final KeywordFrom keywordFrom;
+
+  /// Fires only on messages that say a keyword.
+  bool get keywordGated => keywords.any((k) => k.trim().isNotEmpty);
 
   /// For [WatchScope.device]: what on the phone starts it.
   final DeviceCondition? device;
@@ -185,6 +224,8 @@ class Watch {
     ToolAllowlist? tools,
     bool allTools = false,
     String? model,
+    List<String>? keywords,
+    KeywordFrom? keywordFrom,
   }) => Watch(
     id: id,
     name: name ?? this.name,
@@ -211,6 +252,8 @@ class Watch {
     device: device ?? this.device,
     tools: allTools ? null : (tools ?? this.tools),
     model: model ?? this.model,
+    keywords: keywords ?? this.keywords,
+    keywordFrom: keywordFrom ?? this.keywordFrom,
   );
 
   Map<String, dynamic> toJson() => {
@@ -239,6 +282,8 @@ class Watch {
     if (device != null) 'device': device!.toJson(),
     if (tools != null) 'tools': tools!.entries.toList(),
     'model': model,
+    if (keywords.isNotEmpty) 'keywords': keywords,
+    if (keywordFrom != KeywordFrom.anyone) 'keyword_from': keywordFrom.name,
   };
 
   factory Watch.fromJson(Map<String, dynamic> j) => Watch(
@@ -269,6 +314,8 @@ class Watch {
     // Free by default, saved watches included; a run that fails on it is
     // retried on the chat's model.
     model: '${j['model'] ?? WatchModel.free}',
+    keywords: [for (final k in (j['keywords'] as List? ?? const [])) if ('$k'.trim().isNotEmpty) '$k'.trim()],
+    keywordFrom: KeywordFrom.values.asNameMap()[j['keyword_from']] ?? KeywordFrom.anyone,
   );
 
   /// For the assistant and the Watches screen.
@@ -295,6 +342,8 @@ class Watch {
     if (device != null) 'phone_trigger': {...device!.toJson(), 'means': device!.describe()},
     'tools': tools == null ? 'all' : tools!.toModel(),
     'model': model,
+    if (keywordGated) 'keywords': keywords,
+    if (keywordGated) 'keyword_from': keywordFrom.name,
   };
 }
 

@@ -141,7 +141,7 @@ class _LiveBrief extends ConsumerWidget {
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(Radii.l),
-        border: Border.all(color: AppColors.accent.withValues(alpha: 0.5)),
+        border: Border.all(color: AppColors.tint.withValues(alpha: 0.5)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -172,7 +172,7 @@ class _LiveBrief extends ConsumerWidget {
           ),
           if (answer != null) ...[
             const SizedBox(height: Space.m),
-            AssistantMessage(entry: answer, posts: conversation.posts, streaming: true),
+            AssistantMessage(entry: answer, posts: conversation.posts, streaming: true, collapseTools: true),
           ],
         ],
       ),
@@ -279,7 +279,7 @@ class BriefView extends StatelessWidget {
           if (answer == null)
             Text(brief.error ?? 'Nothing was written.', style: context.text.bodySmall)
           else
-            AssistantMessage(entry: answer, posts: brief.conversation.posts, streaming: false),
+            AssistantMessage(entry: answer, posts: brief.conversation.posts, streaming: false, collapseTools: true),
         ],
       ),
     );

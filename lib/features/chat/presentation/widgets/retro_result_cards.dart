@@ -12,6 +12,7 @@ import '../../../../core/widgets/net_image.dart';
 import '../../../retro/retro_games.dart';
 import '../../../web/web_fetch.dart';
 import '../../domain/chat_models.dart';
+import '../../../../core/widgets/fullscreen_image.dart';
 
 /// Cards for retro game search, details and downloads, and the game sheet.
 Widget? retroResultFor(ToolPart part, Map<String, dynamic> j) {
@@ -516,7 +517,7 @@ class _GameSheetState extends State<_GameSheet> {
         body: PageView(
           controller: PageController(initialPage: at),
           children: [
-            for (final s in shots) InteractiveViewer(maxScale: 8, child: Center(child: Image.network(s, filterQuality: FilterQuality.none, fit: BoxFit.contain, width: double.infinity))),
+            for (final s in shots) FullscreenZoomImage(image: NetworkImage(s), maxScale: 8),
           ],
         ),
       ),

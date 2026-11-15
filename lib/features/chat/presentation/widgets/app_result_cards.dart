@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -11,6 +12,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../../../app/theme.dart';
+import '../../../../core/widgets/app_logo.dart';
 import '../../../../core/widgets/app_sheet.dart';
 import '../../../canvas/canvas_store.dart';
 import '../../../canvas/save_to_canvas.dart';
@@ -18,6 +20,8 @@ import '../../../integrations/app_toolkits.dart';
 import '../../../integrations/integrations_store.dart';
 import '../../../telegram/data/telegram_tools.dart';
 import '../../domain/chat_models.dart';
+
+part 'slack_channel_screen.dart';
 
 /// Cards for what connected apps return: an inbox, Slack messages and
 /// channels, Notion pages, events, files, issues and notifications, tasks,
@@ -40,10 +44,17 @@ Widget? appResultFor(ToolPart part, Map<String, dynamic> j) {
     for (final x in (j[k] as List? ?? const []))
       if (x is Map) Map<String, dynamic>.from(x),
   ];
+  // The Slack conversation the call was about, when it named one by id.
+  String? argChannel;
+  try {
+    final args = jsonDecode(part.arguments);
+    final c = args is Map ? '${args['channel'] ?? args['channel_id'] ?? ''}' : '';
+    if (RegExp(r'^[CGD][A-Z0-9]{6,}$').hasMatch(c)) argChannel = c;
+  } catch (_) {}
   final parts = <Widget>[
     if (list('emails').isNotEmpty) _EmailList(app: app, emails: list('emails')),
     if (list('events').isNotEmpty) _EventList(app: app, events: list('events')),
-    if (list('messages').isNotEmpty) _SlackList(messages: list('messages')),
+    if (list('messages').isNotEmpty) _SlackList(messages: list('messages'), channelId: argChannel),
     if (list('channels').isNotEmpty) _ChannelList(channels: list('channels')),
     if (list('notifications').isNotEmpty) _NotificationList(items: list('notifications')),
     if (list('issues').isNotEmpty) _IssueList(app: app, issues: list('issues')),
@@ -102,13 +113,7 @@ class _AppLogo extends StatelessWidget {
     final fallback = Icon(t?.icon ?? Icons.apps_rounded, size: size, color: t?.color ?? AppColors.text2);
     return ClipRRect(
       borderRadius: BorderRadius.circular(size / 4),
-      child: Image.network(
-        'https://logos.composio.dev/api/$app',
-        width: size,
-        height: size,
-        errorBuilder: (_, _, _) => fallback,
-        loadingBuilder: (_, child, p) => p == null ? child : fallback,
-      ),
+      child: AppLogo(app, size: size, fallback: fallback),
     );
   }
 }
@@ -745,33 +750,49 @@ class _EventRow extends StatelessWidget {
 // ---- slack -------------------------------------------------------------------
 
 class _SlackList extends StatelessWidget {
-  const _SlackList({required this.messages});
+  const _SlackList({required this.messages, this.channelId});
   final List<Map<String, dynamic>> messages;
+
+  /// The channel the call read, when the messages don't say.
+  final String? channelId;
 
   @override
   Widget build(BuildContext context) {
     final channels = {for (final m in messages) if (m['channel'] != null) '${m['channel']}'};
+    final ids = {for (final m in messages) if (m['channel_id'] != null) '${m['channel_id']}'};
+    // One channel: it can open full screen.
+    final id = ids.length == 1 ? ids.first : (ids.isEmpty ? channelId : null);
+    final name = channels.length == 1 && channels.first != id ? channels.first : null;
     return _Panel(
       children: [
         _Header(
           app: 'slack',
-          title: 'Slack · ${messages.length} message${messages.length == 1 ? '' : 's'}${channels.length == 1 ? ' in #${channels.first}' : ''}',
+          title: 'Slack · ${messages.length} message${messages.length == 1 ? '' : 's'}${name != null ? ' in #$name' : ''}',
         ),
-        _Rows(rows: [for (final m in messages) _SlackRow(message: m, showChannel: channels.length > 1)], shown: 6),
+        _Rows(rows: [for (final m in messages) _SlackRow(message: m, showChannel: channels.length > 1, channelId: id)], shown: 6),
+        if (id != null)
+          TextButton.icon(
+            onPressed: () => openSlackChannel(context, id: id, name: name),
+            icon: const Icon(Icons.open_in_full_rounded, size: 16),
+            label: Text(name == null ? 'Open channel' : 'Open #$name'),
+          ),
       ],
     );
   }
 }
 
 class _SlackRow extends StatelessWidget {
-  const _SlackRow({required this.message, required this.showChannel});
+  const _SlackRow({required this.message, required this.showChannel, this.channelId});
   final Map<String, dynamic> message;
   final bool showChannel;
+  final String? channelId;
 
   @override
   Widget build(BuildContext context) {
     final author = '${message['author'] ?? ''}';
     final text = _slackText('${message['text'] ?? ''}');
+    final channel = message['channel_id'] as String? ?? channelId;
+    final channelName = message['channel'] != null && message['channel'] != channel ? '${message['channel']}' : null;
     return InkWell(
       onTap: () => _sheet(
         context,
@@ -800,6 +821,17 @@ class _SlackRow extends StatelessWidget {
             const SizedBox(height: Space.l),
             MarkdownBody(data: text, selectable: true, onTapLink: (_, href, _) => _open(href)),
             const SizedBox(height: Space.l),
+            if (channel != null) ...[
+              FilledButton.icon(
+                onPressed: () {
+                  Navigator.pop(context);
+                  openSlackChannel(context, id: channel, name: channelName);
+                },
+                icon: const Icon(Icons.open_in_full_rounded, size: 18),
+                label: Text(channelName == null ? 'Open the channel' : 'Open #$channelName'),
+              ),
+              const SizedBox(height: Space.s),
+            ],
             if (message['permalink'] is String)
               FilledButton.tonalIcon(
                 onPressed: () => _open(message['permalink'] as String),
@@ -879,10 +911,17 @@ class _ChannelList extends StatelessWidget {
           for (final c in channels)
             ListTile(
               dense: true,
+              onTap: c['id'] == null ? null : () => openSlackChannel(context, id: '${c['id']}', name: '${c['name']}'),
               leading: lead(Icon(c['private'] == true ? Icons.lock_outline_rounded : Icons.tag_rounded, size: 20, color: AppColors.text2)),
               title: Text('${c['name']}', style: const TextStyle(fontWeight: FontWeight.w600)),
               subtitle: c['topic'] == null ? null : Text('${c['topic']}', maxLines: 1, overflow: TextOverflow.ellipsis),
-              trailing: c['members'] == null ? null : Text('${c['members']}', style: context.text.labelSmall),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (c['members'] != null) Text('${c['members']}', style: context.text.labelSmall),
+                  Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.text3),
+                ],
+              ),
             ),
         ],
       ),
@@ -1024,7 +1063,12 @@ class _PageList extends StatelessWidget {
           for (final p in pages)
             ListTile(
               dense: true,
-              onTap: () => _open(p['url'] as String?),
+              // Pages open here, read from Notion; databases (and a long
+              // press on anything) open in Notion.
+              onTap: p['kind'] == 'database' || p['id'] == null
+                  ? () => _open(p['url'] as String?)
+                  : () => showNotionPage(context, p),
+              onLongPress: p['url'] == null ? null : () => _open(p['url'] as String?),
               leading: lead(SizedBox(
                 width: 24,
                 child: Center(
@@ -1037,12 +1081,168 @@ class _PageList extends StatelessWidget {
               subtitle: Text(
                 [p['kind'] == 'database' ? 'Database' : 'Page', if (p['edited'] != null) 'edited ${_when(p['edited'], time: false)}', if (p['archived'] == true) 'archived'].join(' · '),
               ),
-              trailing: p['url'] == null ? null : Icon(Icons.open_in_new_rounded, size: 16, color: AppColors.text3),
+              trailing: p['kind'] == 'database'
+                  ? (p['url'] == null ? null : Icon(Icons.open_in_new_rounded, size: 16, color: AppColors.text3))
+                  : Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.text3),
             ),
         ],
       ),
     ],
   );
+}
+
+/// A Notion page read in a sheet: fetched as Markdown through the Notion
+/// connection and shown here, with a way out to Notion itself.
+void showNotionPage(BuildContext context, Map<String, dynamic> page) => showAppSheet<void>(
+  context,
+  initialSize: 0.92,
+  builder: (_, scroll) => _NotionPageReader(page: page, scroll: scroll),
+);
+
+class _NotionPageReader extends ConsumerStatefulWidget {
+  const _NotionPageReader({required this.page, required this.scroll});
+  final Map<String, dynamic> page;
+  final ScrollController scroll;
+
+  @override
+  ConsumerState<_NotionPageReader> createState() => _NotionPageReaderState();
+}
+
+class _NotionPageReaderState extends ConsumerState<_NotionPageReader> {
+  String? _text;
+  String? _error;
+  int? _fullLength;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetch();
+  }
+
+  Future<void> _fetch() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final r = await ref.read(toolRunnerProvider).run('notion_get_page_markdown', {'page_id': widget.page['id']});
+      if (!mounted) return;
+      final doc = r.json['document'];
+      final text = doc is Map ? '${doc['text'] ?? ''}' : '';
+      setState(() {
+        _loading = false;
+        if (r.json['error'] != null) {
+          _error = '${r.json['error']}';
+        } else if (text.trim().isEmpty) {
+          _text = '';
+        } else {
+          _text = _clean(text);
+          _fullLength = doc is Map ? (doc['truncated_from_chars'] as num?)?.toInt() : null;
+        }
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = '$e';
+        });
+      }
+    }
+  }
+
+  /// Notion-flavoured Markdown wraps some blocks in tags (<callout>,
+  /// <details>, <empty-block/>…) the Markdown view would print as text:
+  /// keep what's inside them, drop the tags.
+  static String _clean(String md) => md
+      .replaceAll(RegExp(r'<empty-block\s*/?>'), '')
+      .replaceAll(RegExp(r'</?(callout|details|summary|columns?|page|database|mention-\w+|table_of_contents|synced_block|toggle|span|color)\b[^>]*>'), '')
+      .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+      .trim();
+
+  @override
+  Widget build(BuildContext context) {
+    final p = widget.page;
+    final url = p['url'] as String?;
+    final icon = p['icon'] as String?;
+    return ListView(
+      controller: widget.scroll,
+      padding: const EdgeInsets.fromLTRB(Space.l, 0, Space.l, Space.x4),
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (icon != null) ...[
+              Text(icon, style: const TextStyle(fontSize: 28)),
+              const SizedBox(width: Space.m),
+            ],
+            Expanded(child: Text('${p['title'] ?? 'Untitled'}', style: context.text.headlineSmall)),
+            if (url != null)
+              IconButton(
+                tooltip: 'Open in Notion',
+                icon: const Icon(Icons.open_in_new_rounded, size: 20),
+                onPressed: () => _open(url),
+              ),
+          ],
+        ),
+        if (p['edited'] != null) ...[
+          const SizedBox(height: Space.xs),
+          Text('Edited ${_when(p['edited'])}', style: context.text.bodySmall),
+        ],
+        const SizedBox(height: Space.l),
+        if (_loading)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: Space.x4),
+            child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+          )
+        else if (_error != null) ...[
+          Text('Couldn\'t load this page: $_error', style: context.text.bodyMedium?.copyWith(color: AppColors.danger)),
+          const SizedBox(height: Space.m),
+          Row(
+            children: [
+              OutlinedButton.icon(onPressed: _fetch, icon: const Icon(Icons.refresh_rounded, size: 18), label: const Text('Try again')),
+              if (url != null) ...[
+                const SizedBox(width: Space.s),
+                FilledButton.tonalIcon(onPressed: () => _open(url), icon: const Icon(Icons.open_in_new_rounded, size: 18), label: const Text('Open in Notion')),
+              ],
+            ],
+          ),
+        ] else if (_text!.isEmpty)
+          Text('This page is empty.', style: context.text.bodyMedium?.copyWith(color: AppColors.text3))
+        else ...[
+          MarkdownBody(
+            data: _text!,
+            selectable: true,
+            onTapLink: (_, href, _) => _open(href),
+            styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+              p: context.text.bodyMedium?.copyWith(height: 1.5),
+              blockquoteDecoration: BoxDecoration(
+                color: AppColors.surface2,
+                borderRadius: BorderRadius.circular(Radii.s),
+                border: Border(left: BorderSide(color: AppColors.line, width: 3)),
+              ),
+              codeblockDecoration: BoxDecoration(color: AppColors.surface2, borderRadius: BorderRadius.circular(Radii.s)),
+            ),
+          ),
+          if (_fullLength != null) ...[
+            const SizedBox(height: Space.l),
+            Text(
+              'Showing the first part of a long page (${(_fullLength! / 1000).round()}k characters).',
+              style: context.text.bodySmall,
+            ),
+          ],
+          if (url != null) ...[
+            const SizedBox(height: Space.l),
+            FilledButton.tonalIcon(
+              onPressed: () => _open(url),
+              icon: const Icon(Icons.open_in_new_rounded, size: 18),
+              label: const Text('Open in Notion'),
+            ),
+          ],
+        ],
+      ],
+    );
+  }
 }
 
 // ---- todoist -----------------------------------------------------------------
@@ -1159,7 +1359,8 @@ class _DocCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final text = '${doc['text'] ?? ''}';
+    final raw = '${doc['text'] ?? ''}';
+    final text = app == 'notion' ? _NotionPageReaderState._clean(raw) : raw;
     final title = '${doc['title'] ?? ''}'.trim();
     void open() => _sheet(
       context,

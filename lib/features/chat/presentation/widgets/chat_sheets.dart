@@ -281,7 +281,7 @@ class CompactionDivider extends StatelessWidget {
         onTap: compacting ? null : onTap,
         child: Row(
           children: [
-            Expanded(child: Divider(color: compacting ? AppColors.accent.withValues(alpha: 0.5) : AppColors.line)),
+            Expanded(child: Divider(color: compacting ? AppColors.tint.withValues(alpha: 0.5) : AppColors.line)),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: Space.m, vertical: Space.xs),
               child: Row(
@@ -299,7 +299,7 @@ class CompactionDivider extends StatelessWidget {
                 ],
               ),
             ),
-            Expanded(child: Divider(color: compacting ? AppColors.accent.withValues(alpha: 0.5) : AppColors.line)),
+            Expanded(child: Divider(color: compacting ? AppColors.tint.withValues(alpha: 0.5) : AppColors.line)),
           ],
         ),
       ),

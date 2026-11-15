@@ -7,6 +7,23 @@ import '../data/settings.dart';
 
 enum _Sort { recommended, cheapest, newest, context, name }
 
+/// The model picker as a tall bottom sheet: the same search, router
+/// toggle, filters and full model details as the Settings page. Returns the
+/// chosen model's id.
+Future<String?> showModelPickerSheet(
+  BuildContext context, {
+  required String current,
+  ModelType kind = ModelType.text,
+}) => showModalBottomSheet<String>(
+  context: context,
+  isScrollControlled: true,
+  useSafeArea: true,
+  builder: (_) => FractionallySizedBox(
+    heightFactor: 0.92,
+    child: ModelPickerScreen(current: current, kind: kind, sheet: true),
+  ),
+);
+
 /// Browse chat models from the Vercel AI Gateway and OpenRouter, with
 /// models.dev details, the way the dnd app does it.
 class ModelPickerScreen extends ConsumerStatefulWidget {
@@ -14,9 +31,13 @@ class ModelPickerScreen extends ConsumerStatefulWidget {
     super.key,
     required this.current,
     this.kind = ModelType.text,
+    this.sheet = false,
   });
   final String current;
   final ModelType kind;
+
+  /// Shown in a bottom sheet rather than as its own page.
+  final bool sheet;
 
   @override
   ConsumerState<ModelPickerScreen> createState() => _ModelPickerScreenState();
@@ -177,10 +198,7 @@ class _ModelPickerScreenState extends ConsumerState<ModelPickerScreen> {
         _router != null &&
         !hasKeyFor(settings, _router!);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.kind.pickerTitle),
-        actions: [
+    final actions = <Widget>[
           IconButton(
             tooltip: 'Enter an ID',
             icon: const Icon(Icons.edit_outlined),
@@ -198,9 +216,8 @@ class _ModelPickerScreenState extends ConsumerState<ModelPickerScreen> {
                   )
                 : const Icon(Icons.refresh_rounded),
           ),
-        ],
-      ),
-      body: Center(
+        ];
+    final content = Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 760),
           child: Column(
@@ -434,6 +451,32 @@ class _ModelPickerScreenState extends ConsumerState<ModelPickerScreen> {
             ],
           ),
         ),
+      );
+    if (!widget.sheet) {
+      return Scaffold(
+        appBar: AppBar(title: Text(widget.kind.pickerTitle), actions: actions),
+        body: content,
+      );
+    }
+    // As a bottom sheet (from the chat's model chip): the same list, with
+    // the title and actions in a header row instead of an app bar.
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(Space.xl, 0, Space.s, Space.xs),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(widget.kind.pickerTitle, style: context.text.titleLarge),
+                ),
+                ...actions,
+              ],
+            ),
+          ),
+          Expanded(child: content),
+        ],
       ),
     );
   }
@@ -564,7 +607,7 @@ class _ModelTile extends StatelessWidget {
             borderRadius: BorderRadius.circular(Radii.l),
             border: Border.all(
               color: selected
-                  ? AppColors.accent.withValues(alpha: 0.6)
+                  ? AppColors.tint.withValues(alpha: 0.6)
                   : AppColors.line,
             ),
           ),

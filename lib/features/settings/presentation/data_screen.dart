@@ -10,7 +10,18 @@ import 'package:intl/intl.dart';
 
 import '../../../app/theme.dart';
 import '../../../core/widgets/app_sheet.dart';
+import '../../brief/brief_store.dart';
+import '../../canvas/canvas_store.dart';
+import '../../chat/data/chat_controller.dart';
+import '../../telegram/presentation/chat_actions.dart' show confirmAction;
+import 'package:handy_tdlib/api.dart' as td;
+import 'package:path_provider/path_provider.dart';
+import '../../../infrastructure/telegram/accounts.dart';
+import '../../../infrastructure/telegram/td_compat.dart' show inputDocument;
+import '../../auth/data/auth_controller.dart' show telegramConnectedProvider;
+import '../../telegram/data/telegram_tools.dart' show toolRunnerFamily;
 import '../data/app_data.dart';
+import '../data/settings.dart';
 
 /// Back up the app's setup to a file, bring it back after a reinstall, or
 /// wipe everything the assistant keeps on this phone.
@@ -25,7 +36,30 @@ class _DataScreenState extends ConsumerState<DataScreen> {
   bool _keys = true;
   bool _chats = false;
   bool _vault = true;
+  bool _media = true;
+
+  /// Also sends the file to the person's Saved Messages in Telegram.
+  bool _toSaved = false;
   bool _busy = false;
+
+  /// Sends [bytes] as [name] to the open account's Saved Messages.
+  Future<void> _sendToSaved(String name, List<int> bytes) async {
+    final account = ref.read(activeAccountIdProvider);
+    final client = ref.read(telegramClientFamily(account));
+    final me = await client.send<td.User>(const td.GetMe());
+    final chat = await client.send<td.Chat>(td.CreatePrivateChat(userId: me.id, force: false));
+    final f = File('${(await getTemporaryDirectory()).path}/$name');
+    await f.writeAsBytes(bytes);
+    await ref.read(toolRunnerFamily(account)).sendAndSettle(
+      td.SendMessage(
+        chatId: chat.id,
+        inputMessageContent: td.InputMessageDocument(
+          document: inputDocument(f.path, keepAsFile: true),
+          caption: td.FormattedText(text: '🔺 Triangle profile backup · ${DateFormat('d MMM y, HH:mm').format(DateTime.now())}\nRestore it in Settings → Data → Import profile.', entities: const []),
+        ),
+      ),
+    );
+  }
 
   Future<void> _guard(Future<void> Function() work) async {
     setState(() => _busy = true);
@@ -39,8 +73,14 @@ class _DataScreenState extends ConsumerState<DataScreen> {
   }
 
   Future<void> _export() => _guard(() async {
-    final profile = await AppData.export(keys: _keys, chats: _chats, vault: _vault);
+    final profile = await AppData.export(keys: _keys, chats: _chats, vault: _vault, media: _media);
     final name = 'triangle-profile-${DateFormat('yyyy-MM-dd').format(DateTime.now())}.json';
+    if (_toSaved) {
+      await _sendToSaved(name, AppData.encode(profile));
+      await (await SharedPreferences.getInstance()).setString(AppData.lastBackupKey, DateTime.now().toIso8601String());
+      if (mounted) showSnack(context, 'Sent to your Saved Messages', icon: Icons.bookmark_rounded);
+      return;
+    }
     final path = await FilePicker.saveFile(
       dialogTitle: 'Save your Triangle profile',
       fileName: name,
@@ -92,6 +132,13 @@ class _DataScreenState extends ConsumerState<DataScreen> {
               if (counts['transactions']! > 0) '${counts['transactions']} transactions',
               if (counts['widgets']! > 0) '${counts['widgets']} widgets',
               if (counts['skills']! > 0) '${counts['skills']} skills',
+              if ((counts['folders'] ?? 0) > 0) '${counts['folders']} folders',
+              if ((counts['packages'] ?? 0) > 0) '${counts['packages']} tracked packages',
+              if ((counts['playlists'] ?? 0) > 0) '${counts['playlists']} playlists',
+              if ((counts['stores'] ?? 0) > 0) '${counts['stores']} stores',
+              if ((counts['video_channels'] ?? 0) > 0) '${counts['video_channels']} video channels',
+              if ((counts['books'] ?? 0) > 0) '${counts['books']} books',
+              if ((counts['gallery_sources'] ?? 0) > 0) '${counts['gallery_sources']} gallery sources',
               if (counts['mcp']! > 0) '${counts['mcp']} MCP servers${counts['keys'] == 0 ? ' (add their keys again)' : ''}',
             ].join(' · '),
             style: context.text.bodySmall,
@@ -115,6 +162,21 @@ class _DataScreenState extends ConsumerState<DataScreen> {
     await ref.read(appDataProvider).restore(profile);
     if (mounted) showSnack(context, 'Profile restored');
   });
+
+  /// Deletes one kind of thing after the person confirms.
+  Future<void> _clearOne({
+    required String title,
+    required String message,
+    required String action,
+    required String done,
+    required Future<void> Function() work,
+  }) async {
+    if (!await confirmAction(context, title: title, message: message, action: action)) return;
+    await _guard(() async {
+      await work();
+      if (mounted) showSnack(context, done);
+    });
+  }
 
   Future<void> _clear() async {
     var settings = false;
@@ -234,11 +296,32 @@ class _DataScreenState extends ConsumerState<DataScreen> {
                   value: _chats,
                   onChanged: (v) => setState(() => _chats = v),
                 ),
+                SwitchListTile(
+                  secondary: lead(const Icon(Icons.image_outlined)),
+                  title: const Text('Include covers'),
+                  subtitle: Text(
+                    'Playlist and book cover pictures. Playlists, Marketplace, Movies, Books and Gallery always come along; books and media stay in their chats.',
+                    style: context.text.bodySmall,
+                  ),
+                  value: _media,
+                  onChanged: (v) => setState(() => _media = v),
+                ),
+                if (ref.watch(telegramConnectedProvider))
+                  SwitchListTile(
+                    secondary: lead(const Icon(Icons.bookmark_outline_rounded)),
+                    title: const Text('Send to Saved Messages'),
+                    subtitle: Text(
+                      _toSaved ? 'The file goes to your Telegram Saved Messages instead of a folder.' : 'Off: you pick where to save the file.',
+                      style: context.text.bodySmall,
+                    ),
+                    value: _toSaved,
+                    onChanged: (v) => setState(() => _toSaved = v),
+                  ),
                 const Divider(indent: Space.l, endIndent: Space.l),
                 ListTile(
                   leading: lead(const Icon(Icons.upload_file_rounded)),
                   title: const Text('Export profile'),
-                  subtitle: Text('Save it as a .json file', style: context.text.bodySmall),
+                  subtitle: Text(_toSaved ? 'Send it to your Saved Messages' : 'Save it as a .json file', style: context.text.bodySmall),
                   enabled: !_busy,
                   onTap: _export,
                 ),
@@ -253,6 +336,60 @@ class _DataScreenState extends ConsumerState<DataScreen> {
               ]),
               header('CLEAR'),
               card([
+                ListTile(
+                  leading: lead(Icon(Icons.delete_sweep_outlined, color: AppColors.danger)),
+                  title: const Text('Delete all AI conversations'),
+                  subtitle: Text('Your Telegram is not touched', style: context.text.bodySmall),
+                  enabled: !_busy,
+                  onTap: () => _clearOne(
+                    title: 'Delete every AI conversation?',
+                    message: 'All chats with the assistant on this phone go. Watches keep running.',
+                    action: 'Delete all',
+                    done: 'Conversations deleted',
+                    work: () => ref.read(chatControllerProvider.notifier).deleteAll(),
+                  ),
+                ),
+                const Divider(indent: 56),
+                ListTile(
+                  leading: lead(Icon(Icons.wb_twilight_rounded, color: AppColors.danger)),
+                  title: const Text('Delete all briefs'),
+                  enabled: !_busy,
+                  onTap: () => _clearOne(
+                    title: 'Delete every brief?',
+                    message: 'Saved briefs go.',
+                    action: 'Delete',
+                    done: 'Briefs deleted',
+                    work: () => ref.read(briefStoreProvider.notifier).deleteAll(),
+                  ),
+                ),
+                const Divider(indent: 56),
+                ListTile(
+                  leading: lead(Icon(Icons.dashboard_customize_outlined, color: AppColors.danger)),
+                  title: const Text('Empty the Content Canvas'),
+                  enabled: !_busy,
+                  onTap: () => _clearOne(
+                    title: 'Empty the canvas?',
+                    message: 'Every folder and saved item goes. Telegram is not touched.',
+                    action: 'Empty',
+                    done: 'Canvas emptied',
+                    work: () => ref.read(canvasProvider.notifier).clear(),
+                  ),
+                ),
+                const Divider(indent: 56),
+                ListTile(
+                  leading: lead(const Icon(Icons.restart_alt_rounded)),
+                  title: const Text('Reset preferences'),
+                  subtitle: Text('Every setting back to its default. Keys, models and instructions stay.', style: context.text.bodySmall),
+                  enabled: !_busy,
+                  onTap: () => _clearOne(
+                    title: 'Reset all preferences?',
+                    message: 'Tools, appearance, voice and automation settings go back to their defaults.',
+                    action: 'Reset',
+                    done: 'Preferences reset',
+                    work: () => ref.read(settingsProvider.notifier).resetPreferences(),
+                  ),
+                ),
+                const Divider(indent: 56),
                 ListTile(
                   leading: lead(Icon(Icons.delete_forever_outlined, color: AppColors.danger)),
                   title: Text('Clear all data', style: TextStyle(color: AppColors.danger)),

@@ -74,10 +74,14 @@ dependencies:
   # The browser's desktop view sets Android's wide viewport (browser_mode.dart).
   webview_flutter_android: ^4.14.1
   pdf: ^3.13.1
+  # The Library's PDF reader (PDFium, native).
+  pdfrx: ^2.12.1
   # Every AI call (the chat agent and its tools, images, voices,
   # dictation, model lists) and the Composio, E2B, Cloudflare, Exa,
   # sandbox and browser clients.
-  omni_ai: ^0.8.0
+  omni_ai: ^0.9.0
+  # Composio app logos are SVG (already installed through omni_ai).
+  flutter_svg: ^2.4.0
   speech_to_text: ^7.5.0
   markdown: ^7.3.1
   # App lock: fingerprint/face unlock, and the hashed passcode.
@@ -85,6 +89,7 @@ dependencies:
   crypto: ^3.0.6
   # Typesetting LaTeX in paper titles and abstracts.
   flutter_math_fork: ^0.7.4
+  mongo_dart: ^0.10.10
 
 dependency_overrides:
   # 2.5.x (Pigeon JNI) keeps one native handle for the whole process: when a

@@ -41,7 +41,7 @@ class FeatureToolsTab extends ConsumerWidget {
                   Container(
                     width: 36,
                     height: 36,
-                    decoration: BoxDecoration(color: AppColors.accent.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(10)),
+                    decoration: BoxDecoration(color: AppColors.tint.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(10)),
                     child: Icon(Icons.handyman_outlined, size: 19, color: AppColors.accent),
                   ),
                   const SizedBox(width: Space.m),

@@ -29,6 +29,9 @@ import 'chat_pages.dart';
 import 'expression_panel.dart';
 import 'chat_profile_screen.dart';
 import 'content_canvas_screen.dart' show saveManyToCanvas;
+import '../../playlists/playlists.dart' show PlaylistTrack;
+import '../../../infrastructure/telegram/accounts.dart' show activeAccountIdProvider;
+import '../../playlists/playlist_widgets.dart' show showAddToPlaylist;
 import 'direct_messages_topics.dart';
 import 'pending_draft.dart';
 import 'forum_topics.dart';
@@ -641,7 +644,7 @@ class _ChatViewScreenState extends ConsumerState<ChatViewScreen> {
               AnimatedContainer(
                 duration: const Duration(milliseconds: 300),
                 decoration: BoxDecoration(
-                  color: lit ? AppColors.accent.withValues(alpha: 0.14) : Colors.transparent,
+                  color: lit ? AppColors.tint.withValues(alpha: 0.14) : Colors.transparent,
                   borderRadius: BorderRadius.circular(Radii.m),
                 ),
                 child: MessageTile(
@@ -680,34 +683,9 @@ class _ChatViewScreenState extends ConsumerState<ChatViewScreen> {
       );
     }
 
-    return Scaffold(
-      extendBodyBehindAppBar: true,
-      body: Column(
-        children: [
-          Expanded(
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: ChatBackdrop(background: chat?.background, child: body),
-                ),
-                if (!forumRoot)
-                  Positioned(
-                    right: Space.m,
-                    bottom: Space.s,
-                    child: _DownArrow(
-                      visible: (_scrolledUp || _detached) && !_selecting,
-                      count: _newBelow,
-                      onTap: _toBottom,
-                    ),
-                  ),
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  child: Column(
-                    children: [
-                      if (_selecting)
-                        _SelectionBar(
+    final selectionBar = !_selecting
+        ? null
+        : _SelectionBar(
                           count: _selected.length,
                           onClose: () => setState(_selected.clear),
                           onForward: () async {
@@ -727,6 +705,14 @@ class _ChatViewScreenState extends ConsumerState<ChatViewScreen> {
                             await saveManyToCanvas(context, ref, _picked, chat?.title ?? title);
                             if (mounted) setState(_selected.clear);
                           },
+                          onPlaylist: () {
+                            final account = ref.read(activeAccountIdProvider);
+                            final tracks = [for (final m in _picked) ?PlaylistTrack.fromMessage(m, store, account)];
+                            if (tracks.isEmpty) return null;
+                            return () async {
+                              if (await showAddToPlaylist(context, ref, tracks) != null && mounted) setState(_selected.clear);
+                            };
+                          }(),
                           onAskAi: () {
                             final refs = [for (final m in _picked) '[${chat?.title ?? 'msg'}](post:${m.chatId}:${m.id})'];
                             final controller = ref.read(chatControllerProvider.notifier);
@@ -772,7 +758,35 @@ class _ChatViewScreenState extends ConsumerState<ChatViewScreen> {
                               }
                             }
                           },
-                        )
+                        );
+    return Scaffold(
+      extendBodyBehindAppBar: true,
+      body: Column(
+        children: [
+          Expanded(
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: ChatBackdrop(background: chat?.background, child: body),
+                ),
+                if (!forumRoot)
+                  Positioned(
+                    right: Space.m,
+                    bottom: Space.s,
+                    child: _DownArrow(
+                      visible: (_scrolledUp || _detached) && !_selecting,
+                      count: _newBelow,
+                      onTap: _toBottom,
+                    ),
+                  ),
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: Column(
+                    children: [
+                      if (_selecting)
+                        selectionBar!
                       else if (widget.commentsOn case final post?)
                         ChatPageHeader(
                           chatId: post.chatId,
@@ -822,7 +836,9 @@ class _ChatViewScreenState extends ConsumerState<ChatViewScreen> {
               padding: const EdgeInsets.fromLTRB(Space.m, 0, Space.m, 0),
               child: SingleChildScrollView(child: BotButtons(message: k)),
             ),
-          if (chat != null && !forumRoot)
+          if (selectionBar != null)
+            selectionBar.bottomPart()
+          else if (chat != null && !forumRoot)
             store.canPost(chat) || widget.commentsOn != null
                 ? _ChatComposer(
                     chatId: widget.chatId,
@@ -1098,7 +1114,9 @@ class _Header extends ConsumerWidget {
   }
 }
 
-/// Replaces the header while messages are selected.
+/// While messages are selected: a slim bar at the top (how many, copy,
+/// forward, delete) and the rest (canvas, Ask AI, playlist) along the
+/// bottom where the composer was, so neither is crowded.
 class _SelectionBar extends StatelessWidget {
   const _SelectionBar({
     required this.count,
@@ -1108,38 +1126,101 @@ class _SelectionBar extends StatelessWidget {
     required this.onCanvas,
     required this.onAskAi,
     required this.onDelete,
+    this.onPlaylist,
+    this.bottom = false,
   });
   final int count;
   final VoidCallback onClose, onForward, onCopy, onCanvas, onAskAi, onDelete;
 
+  /// Shown when the selection holds songs, voice messages or audio files.
+  final VoidCallback? onPlaylist;
+
+  /// The bottom half rather than the top.
+  final bool bottom;
+
+  _SelectionBar bottomPart() => _SelectionBar(
+    count: count,
+    onClose: onClose,
+    onForward: onForward,
+    onCopy: onCopy,
+    onCanvas: onCanvas,
+    onAskAi: onAskAi,
+    onDelete: onDelete,
+    onPlaylist: onPlaylist,
+    bottom: true,
+  );
+
   @override
-  Widget build(BuildContext context) => SafeArea(
-    bottom: false,
-    child: Padding(
-      padding: const EdgeInsets.fromLTRB(Space.m, Space.s, Space.m, 0),
-      child: Glass(
-        child: Row(
-          children: [
-            IconButton(tooltip: 'Cancel', icon: const Icon(Icons.close_rounded), onPressed: onClose),
-            Expanded(child: Text('$count selected', style: context.text.titleMedium)),
-            IconButton(tooltip: 'Forward', icon: const Icon(Icons.forward_rounded), onPressed: onForward),
-            IconButton(tooltip: 'Copy', icon: const Icon(Icons.copy_rounded), onPressed: onCopy),
-            IconButton(
-              tooltip: 'Save to Content Canvas',
-              icon: const Icon(Icons.dashboard_customize_outlined),
-              onPressed: onCanvas,
+  Widget build(BuildContext context) {
+    if (bottom) {
+      Widget action(IconData icon, String label, VoidCallback onTap) => Expanded(
+        child: InkWell(
+          borderRadius: BorderRadius.circular(Radii.m),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 21, color: AppColors.text),
+                const SizedBox(height: 3),
+                Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11, color: AppColors.text2)),
+              ],
             ),
-            IconButton(tooltip: 'Ask AI', icon: const Icon(Icons.auto_awesome_outlined), onPressed: onAskAi),
-            IconButton(
-              tooltip: 'Delete',
-              icon: Icon(Icons.delete_outline_rounded, color: AppColors.danger),
-              onPressed: onDelete,
+          ),
+        ),
+      );
+      return SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(Space.m, Space.xs, Space.m, Space.m),
+          child: Glass(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: Space.xs, vertical: 2),
+              child: Row(
+                children: [
+                  action(Icons.forward_rounded, 'Forward', onForward),
+                  action(Icons.dashboard_customize_outlined, 'Canvas', onCanvas),
+                  if (onPlaylist != null) action(Icons.playlist_add_rounded, 'Playlist', onPlaylist!),
+                  action(Icons.auto_awesome_outlined, 'Ask AI', onAskAi),
+                ],
+              ),
             ),
-          ],
+          ),
+        ),
+      );
+    }
+    return SafeArea(
+      bottom: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(Space.m, Space.s, Space.m, 0),
+        child: Glass(
+          child: Row(
+            children: [
+              IconButton(tooltip: 'Cancel', visualDensity: VisualDensity.compact, icon: const Icon(Icons.close_rounded, size: 22), onPressed: onClose),
+              const SizedBox(width: 2),
+              Expanded(
+                child: Text(
+                  '$count selected',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: AppColors.text),
+                ),
+              ),
+              IconButton(tooltip: 'Copy', visualDensity: VisualDensity.compact, icon: const Icon(Icons.copy_rounded, size: 20), onPressed: onCopy),
+              IconButton(
+                tooltip: 'Delete',
+                visualDensity: VisualDensity.compact,
+                icon: Icon(Icons.delete_outline_rounded, size: 21, color: AppColors.danger),
+                onPressed: onDelete,
+              ),
+              const SizedBox(width: 2),
+            ],
+          ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class _DaySeparator extends StatelessWidget {
@@ -1344,7 +1425,7 @@ class _ChatComposerState extends ConsumerState<_ChatComposer> {
                       child: Container(
                         padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
-                          color: e.id == _effect ? AppColors.accent.withValues(alpha: 0.2) : null,
+                          color: e.id == _effect ? AppColors.tint.withValues(alpha: 0.2) : null,
                           borderRadius: BorderRadius.circular(Radii.m),
                         ),
                         child: Opacity(opacity: e.isPremium && !premium ? 0.35 : 1, child: Text(e.emoji, style: const TextStyle(fontSize: 28))),
@@ -1505,7 +1586,7 @@ class _ChatComposerState extends ConsumerState<_ChatComposer> {
                 color: AppColors.surface2,
                 borderRadius: BorderRadius.circular(Radii.xl + 4),
                 border: Border.all(
-                  color: dictation.listening ? AppColors.accent.withValues(alpha: 0.6) : AppColors.line,
+                  color: dictation.listening ? AppColors.tint.withValues(alpha: 0.6) : AppColors.line,
                 ),
               ),
               padding: const EdgeInsets.all(5),

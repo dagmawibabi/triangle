@@ -93,7 +93,7 @@
 	<title>All tools: Triangle</title>
 	<meta
 		name="description"
-		content={`Every tool in Triangle, by what it works with: ${data.toolCount} tools for Telegram, your apps, your phone, your money, your PC, the web, everyday questions and the cloud.`}
+		content={`Every tool in Triangle, by what it works with: ${data.toolCount} tools for Telegram, your apps, your phone, your money, your PC, channels as apps, the web, everyday questions and the cloud.`}
 	/>
 	<meta property="og:title" content="All Triangle tools" />
 	<meta property="og:type" content="website" />

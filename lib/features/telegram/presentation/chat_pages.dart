@@ -196,7 +196,7 @@ class PinnedMessageBar extends ConsumerWidget {
                           Expanded(
                             child: Container(
                               decoration: BoxDecoration(
-                                color: s == active ? AppColors.accent : AppColors.accent.withValues(alpha: 0.3),
+                                color: s == active ? AppColors.accent : AppColors.tint.withValues(alpha: 0.3),
                                 borderRadius: BorderRadius.circular(2),
                               ),
                             ),

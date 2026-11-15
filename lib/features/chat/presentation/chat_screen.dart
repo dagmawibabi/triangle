@@ -22,6 +22,7 @@ import '../../voice/dictation.dart';
 import '../../voice/player_sheet.dart';
 import '../../voice/voice_mode_screen.dart';
 import '../../voice/voice_note_recorder.dart';
+import '../../media/audio_center.dart' show audioCenterProvider;
 import '../../media/audio_player_ui.dart';
 import '../../../app/app.dart' show appRouteObserver;
 import '../../telegram/presentation/attach_sheet.dart';
@@ -34,6 +35,7 @@ import 'widgets/message_view.dart';
 import 'widgets/chat_date_divider.dart';
 import '../../account/account_switcher.dart';
 import '../../account/account_router.dart';
+import 'widgets/tool_runner.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key});
@@ -111,6 +113,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   late final _scroll = _HoldingScrollController(hold: () => _streaming);
   bool _pinnedToBottom = true;
 
+  /// The jump-to-bottom arrow, hidden by a long press until the next chat.
+  bool _arrowHidden = false;
+
+  /// Double-tapping the arrow moves it to the right edge and back.
+  static bool _arrowRight = false;
+
   @override
   void initState() {
     super.initState();
@@ -135,6 +143,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     // Signed in from here on: watches may run, and a tapped notification
     // opens the conversation it came from.
     ref.read(watchEngineProvider).start();
+    _playerTaps = ref.read(appNotifierProvider).mediaTaps.stream.listen((_) {
+      if (mounted && ref.read(audioCenterProvider).current != null) showAudioPlayer(context);
+    });
     _taps = ref.read(appNotifierProvider).taps.stream.listen((id) {
       if (!mounted) return;
       Navigator.of(context).popUntil((r) => r.isFirst);
@@ -168,6 +179,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   }
 
   StreamSubscription<String>? _taps;
+  StreamSubscription<void>? _playerTaps;
   final _composerKey = GlobalKey<_ComposerState>();
 
   /// Shared from another app: selected text opens Ask Triangle; text and
@@ -193,6 +205,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   @override
   void dispose() {
     _taps?.cancel();
+    _playerTaps?.cancel();
     appRouteObserver.unsubscribe(this);
     WidgetsBinding.instance.removeObserver(this);
     _input.dispose();
@@ -204,6 +217,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   void _send(String value, [List<Attachment> attachments = const []]) {
     value = value.trim();
     if (value.isEmpty && attachments.isEmpty) return;
+    // /tool [name or search]: run any tool by hand, no AI.
+    if (RegExp(r'^/tools?(\s|$)').hasMatch(value) && attachments.isEmpty) {
+      _input.clear();
+      showToolPicker(context, query: value.replaceFirst(RegExp(r'^/tools?\s*'), ''));
+      return;
+    }
     final settings = ref.read(settingsProvider);
     if (!settings.hasAnyKey) {
       _openAiSettings();
@@ -237,9 +256,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
   Future<void> _pickModel() async {
     final current = ref.read(settingsProvider).model;
-    final id = await Navigator.of(context).push<String>(
-      MaterialPageRoute(builder: (_) => ModelPickerScreen(current: current)),
-    );
+    final id = await showModelPickerSheet(context, current: current);
     if (id != null) await ref.read(settingsProvider.notifier).setModel(id);
   }
 
@@ -248,6 +265,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     // A new chat is a clean slate: nothing typed or attached carries over
     // from the one before (the model only ever sees the chat on screen).
     ref.listen(chatControllerProvider.select((s) => s.conversation.id), (before, now) {
+      if (before != now && _arrowHidden) setState(() => _arrowHidden = false);
       if (before == now || ref.read(chatControllerProvider).conversation.entries.isNotEmpty) return;
       _input.clear();
       _composerKey.currentState?.clearAttachments();
@@ -257,6 +275,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final catalog = ref.watch(modelCatalogProvider);
     final model = catalog.byId(settings.model);
     final entries = chat.conversation.entries;
+    // The history list carries the generated or renamed title.
+    final summary = chat.history.where((h) => h.id == chat.conversation.id).firstOrNull;
+    final chatTitle = summary?.title ?? chat.conversation.title;
 
     return Scaffold(
       drawer: HistoryDrawer(onOpenSettings: _openSettings),
@@ -276,9 +297,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           ),
         )),
         titleSpacing: 0,
-        title: _ModelButton(
-          name: model?.name ?? modelLabel(settings.model).split('/').last,
-          onTap: _pickModel,
+        title: _ChatTitle(
+          title: chatTitle,
+          // A saved chat can be renamed from here.
+          onTap: summary == null
+              ? null
+              : () => showRenameSheet(context, id: summary.id, title: summary.title),
         ),
         actions: [
           // The account the assistant's Telegram tools use by default.
@@ -317,12 +341,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                           conversation: chat.conversation,
                           busy: _streaming = chat.busy,
                         ),
-                        if (!_pinnedToBottom)
+                        if (!_pinnedToBottom && !_arrowHidden && settings.showScrollToBottom)
                           Positioned(
                             bottom: Space.m,
                             left: 0,
-                            right: 0,
-                            child: Center(
+                            right: _arrowRight ? Space.l : 0,
+                            child: Align(
+                              alignment: _arrowRight ? Alignment.centerRight : Alignment.center,
                               child: Material(
                                 color: AppColors.surface3,
                                 shape: CircleBorder(
@@ -331,6 +356,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                 child: InkWell(
                                   customBorder: const CircleBorder(),
                                   onTap: _toBottom,
+                                  onDoubleTap: () => setState(() => _arrowRight = !_arrowRight),
+                                  onLongPress: () {
+                                    setState(() => _arrowHidden = true);
+                                    showSnack(context, 'Arrow hidden for this chat', icon: Icons.visibility_off_outlined);
+                                  },
                                   child: const Padding(
                                     padding: EdgeInsets.all(Space.s),
                                     child: Icon(
@@ -346,7 +376,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                     ),
             ),
             const NowReadingBar(),
-            if (ref.watch(settingsProvider.select((s) => s.aiChatEnabled)))
+            if (ref.watch(settingsProvider.select((s) => s.aiChatEnabled))) ...[
+              if (settings.showModelChip)
+              _ModelChip(
+                name: model?.name ?? modelLabel(settings.model).split('/').last,
+                onTap: _pickModel,
+              ),
               _Composer(
                 key: _composerKey,
                 controller: _input,
@@ -354,8 +389,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 busy: chat.busy,
                 onSend: _send,
                 onStop: () => ref.read(chatControllerProvider.notifier).stop(),
-              )
-            else
+              ),
+            ] else
               const _ChatOffBar(),
           ],
         ),
@@ -394,10 +429,11 @@ class _ChatOffBar extends ConsumerWidget {
   );
 }
 
-class _ModelButton extends StatelessWidget {
-  const _ModelButton({required this.name, required this.onTap});
-  final String name;
-  final VoidCallback onTap;
+/// The open chat's name in the app bar.
+class _ChatTitle extends StatelessWidget {
+  const _ChatTitle({required this.title, this.onTap});
+  final String title;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -409,24 +445,70 @@ class _ModelButton extends StatelessWidget {
           horizontal: Space.s,
           vertical: Space.xs,
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Flexible(
-              child: Text(
-                name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: context.text.titleMedium,
+        child: Text(
+          title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: context.text.titleMedium,
+        ),
+      ),
+    );
+  }
+}
+
+/// A pill above the input box naming the model; tapping it opens the
+/// model picker sheet.
+class _ModelChip extends StatelessWidget {
+  const _ModelChip({required this.name, required this.onTap});
+  final String name;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(Space.m, Space.xs, Space.m, 0),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Material(
+              color: AppColors.surface2,
+              shape: StadiumBorder(side: BorderSide(color: AppColors.line)),
+              child: InkWell(
+                customBorder: const StadiumBorder(),
+                onTap: onTap,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 5, 6, 5),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.memory_rounded, size: 15, color: AppColors.text2),
+                      const SizedBox(width: 6),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 220),
+                        child: Text(
+                          name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: context.text.labelLarge?.copyWith(
+                            fontSize: 12.5,
+                            color: AppColors.text,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                      Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        size: 18,
+                        color: AppColors.text3,
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
-            const SizedBox(width: 2),
-            Icon(
-              Icons.keyboard_arrow_down_rounded,
-              size: 20,
-              color: AppColors.text3,
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -1033,7 +1115,7 @@ class _ComposerState extends ConsumerState<_Composer> {
               borderRadius: BorderRadius.circular(Radii.xl + 4),
               border: Border.all(
                 color: listening
-                    ? AppColors.accent.withValues(alpha: 0.6)
+                    ? AppColors.tint.withValues(alpha: 0.6)
                     : AppColors.line,
               ),
             ),
@@ -1041,6 +1123,22 @@ class _ComposerState extends ConsumerState<_Composer> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // Typing "/" offers the /tool command.
+                if (widget.controller.text.startsWith('/') && !widget.controller.text.contains(' ') && '/tool'.startsWith(widget.controller.text))
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(4, 2, 4, 4),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: ActionChip(
+                        avatar: const Icon(Icons.build_circle_outlined, size: 18),
+                        label: const Text('/tool · run any tool yourself'),
+                        onPressed: () {
+                          widget.controller.clear();
+                          showToolPicker(context);
+                        },
+                      ),
+                    ),
+                  ),
                 if (_files.isNotEmpty || _adding)
                   SizedBox(
                     height: 64,
@@ -1271,7 +1369,7 @@ class _MicButton extends StatelessWidget {
           boxShadow: listening
               ? [
                   BoxShadow(
-                    color: AppColors.accent.withValues(alpha: 0.35),
+                    color: AppColors.tint.withValues(alpha: 0.35),
                     blurRadius: 4 + level * 14,
                     spreadRadius: level * 4,
                   ),

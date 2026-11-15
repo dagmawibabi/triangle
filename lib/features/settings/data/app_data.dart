@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -31,6 +32,19 @@ import '../../canvas/canvas_store.dart';
 import '../../chat/data/chat_controller.dart';
 import '../../integrations/integrations_store.dart';
 import '../../usage/usage.dart';
+import '../../bible/bible.dart' show bibleSettingsProvider;
+import '../../calls/vapi.dart' show VapiStore;
+import '../../components/components.dart' show componentPrefsProvider;
+import '../../custom_folders/custom_folders.dart' show customFoldersProvider;
+import '../../books/books.dart' show BooksStore, booksProvider, bookFeedProvider;
+import '../../gallery/gallery.dart' show GalleryStore, galleryProvider, galleryFeedProvider;
+import '../../marketplace/market.dart' show MarketStore, marketProvider, marketFeedProvider;
+import '../../media/music_stats.dart' show musicStatsProvider;
+import '../../movies/movies.dart' show MoviesStore, moviesProvider, videoFeedProvider;
+import '../../playlists/playlists.dart' show playlistsProvider;
+import '../../development/mongo_session.dart';
+import '../../info/info_keys.dart';
+import '../../integrations/mcp_permissions.dart' show mcpPermissionsProvider;
 import 'settings.dart';
 
 /// What the app keeps on this phone, besides Telegram's own database: one
@@ -72,7 +86,19 @@ abstract final class AppData {
   static const _activeAccountKey = 'tg_active_account';
 
   /// Settings that hold Telegram account ids, remapped on restore.
-  static const _accountPrefs = ['watches.v1', 'reminders.v1', 'brief_prefs.v1', 'approval_rules.v1'];
+  static const _accountPrefs = ['watches.v1', 'reminders.v1', 'brief_prefs.v1', 'approval_rules.v1', _customFoldersKey, ..._sectionKeys];
+
+  /// Playlists and the sections built from chats (Marketplace, Movies,
+  /// Books, Gallery): their sources and tracks name their account as
+  /// `a` (books as `ac`), and their items' keys start with it.
+  static const _sectionKeys = ['playlists.v1', MarketStore.key, MarketStore.listingsKey, MoviesStore.key, BooksStore.key, BooksStore.notesKey, GalleryStore.key];
+
+  /// Pictures a profile carries (small ones): playlist covers and book
+  /// covers, by their path under the app's folder.
+  static const _mediaFolders = ['playlist_covers', 'books'];
+
+  /// My folders: each chat in one names its account as `a`.
+  static const _customFoldersKey = 'custom_folders.v1';
 
   /// Files under the app's folder that belong in a profile.
   static const _profileFiles = ['content_canvas.json', 'usage.json', 'finance.json'];
@@ -105,7 +131,7 @@ abstract final class AppData {
   /// and (when [keys]) API keys, bot tokens and MCP headers. [vault] adds
   /// the vault's items, [chats] the AI conversations. Widget pictures
   /// aren't copied: they're fetched again from their links.
-  static Future<Map<String, dynamic>> export({bool keys = true, bool chats = false, bool vault = true}) async {
+  static Future<Map<String, dynamic>> export({bool keys = true, bool chats = false, bool vault = true, bool media = true}) async {
     final prefs = await SharedPreferences.getInstance();
     final root = await _root();
     final files = <String, String>{};
@@ -125,7 +151,24 @@ abstract final class AppData {
     }
     final secrets = await const FlutterSecureStorage().readAll();
     final vaultRaw = secrets[_vaultKey];
+    // Covers: playlist pictures, and each book's cover.jpg (not the books).
+    final pictures = <String, String>{};
+    if (media) {
+      for (final folder in _mediaFolders) {
+        final dir = Directory('$root/$folder');
+        if (!await dir.exists()) continue;
+        await for (final e in dir.list(recursive: true)) {
+          if (e is! File) continue;
+          final rel = e.path.substring(root.length + 1).replaceAll('\\', '/');
+          final isCover = folder == 'playlist_covers' || rel.endsWith('/cover.jpg');
+          if (!isCover || await e.length() > 2 << 20) continue;
+          pictures[rel] = base64Encode(await e.readAsBytes());
+        }
+      }
+    }
     return {
+      'root': root,
+      if (pictures.isNotEmpty) 'media': pictures,
       'format': format,
       'version': version,
       'exported_at': DateTime.now().toIso8601String(),
@@ -175,6 +218,22 @@ abstract final class AppData {
     }
   }
 
+  static int _folderCount(Map prefs) {
+    try {
+      return (((jsonDecode('${prefs[_customFoldersKey] ?? '{}'}') as Map)['folders'] as List?) ?? const []).length;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  static int _inner(Map prefs, String key, String list) {
+    try {
+      return (((jsonDecode('${prefs[key] ?? '{}'}') as Map)[list] as List?) ?? const []).length;
+    } catch (_) {
+      return 0;
+    }
+  }
+
   /// Short counts of what [profile] holds, to show before restoring it.
   static Map<String, int> describe(Map<String, dynamic> profile) {
     final files = (profile['files'] as Map?) ?? const {};
@@ -199,6 +258,13 @@ abstract final class AppData {
       'watches': _count(prefs, 'watches.v1'),
       'widgets': _count(prefs, 'home_widgets.v1'),
       'skills': _count(prefs, 'omni_ai.skills'),
+      'folders': _folderCount(prefs),
+      'packages': _count(prefs, 'tracked_packages'),
+      'playlists': _inner(prefs, 'playlists.v1', 'playlists'),
+      'stores': _inner(prefs, MarketStore.key, 'sources'),
+      'video_channels': _inner(prefs, MoviesStore.key, 'sources'),
+      'books': _inner(prefs, BooksStore.key, 'books'),
+      'gallery_sources': _inner(prefs, GalleryStore.key, 'sources'),
       'mcp': mcp != null ? _count({'m': mcp}, 'm') : ((profile['mcp_servers'] as List?) ?? const []).length,
     };
   }
@@ -215,11 +281,17 @@ abstract final class AppData {
     if (saved[_accountsKey] case final String raw) {
       accountIds = ref.read(accountsProvider.notifier).applyRestored(_decodeList(raw));
     }
+    final root = await _root();
+    final oldRoot = '${profile['root'] ?? ''}';
     for (final e in saved.entries) {
       final k = '${e.key}';
       if (_devicePref(k)) continue;
       var v = e.value;
       if (accountIds != null && v is String && _accountPrefs.contains(k)) v = remapAccounts(k, v, accountIds);
+      // Paths saved on another install point into this one's folder.
+      if (v is String && oldRoot.isNotEmpty && oldRoot != root && _sectionKeys.contains(k)) {
+        v = v.replaceAll(jsonEncode(oldRoot).replaceAll('"', ''), jsonEncode(root).replaceAll('"', ''));
+      }
       switch (v) {
         case bool():
           await prefs.setBool(k, v);
@@ -248,7 +320,15 @@ abstract final class AppData {
       final here = (await secure.readAll()).entries.where((e) => e.key.endsWith(_mcpKey)).firstOrNull?.value;
       if (here == null || here == '[]') await prefs.setString(_mcpKey, jsonEncode(servers));
     }
-    final root = await _root();
+    for (final e in ((profile['media'] as Map?) ?? const {}).entries) {
+      final name = '${e.key}';
+      if (name.contains('..') || !_mediaFolders.any((f) => name.startsWith('$f/'))) continue;
+      try {
+        final f = File('$root/$name');
+        await f.parent.create(recursive: true);
+        await f.writeAsBytes(base64Decode('${e.value}'));
+      } catch (_) {}
+    }
     for (final e in ((profile['files'] as Map?) ?? const {}).entries) {
       final name = '${e.key}';
       // Only the files a profile writes, never a path outside the app.
@@ -293,6 +373,7 @@ abstract final class AppData {
       'routines.v1',
       'activity_log.v1',
       'library_favorites.v1',
+      'tracked_packages',
       'home_widgets.v1',
       HomeWidgetStore.bindingsKey,
       HomeWidgetStore.defaultKey,
@@ -334,6 +415,11 @@ abstract final class AppData {
   }
 
   static void _reload(Ref ref) {
+    // Keys cached outside providers, and a database connection made with
+    // the old connection string, are read again on next use.
+    VapiStore.forget();
+    InfoKeysNotifier.forget();
+    unawaited(MongoSession.instance.close());
     ref
       ..invalidate(settingsProvider)
       ..invalidate(decisionSettingsProvider)
@@ -356,7 +442,22 @@ abstract final class AppData {
       ..invalidate(contentFiltersProvider)
       ..invalidate(financeStoreProvider)
       ..invalidate(libraryFavoritesProvider)
-      ..invalidate(assistOpensProvider);
+      ..invalidate(assistOpensProvider)
+      ..invalidate(customFoldersProvider)
+      ..invalidate(playlistsProvider)
+      ..invalidate(musicStatsProvider)
+      ..invalidate(marketProvider)
+      ..invalidate(marketFeedProvider)
+      ..invalidate(moviesProvider)
+      ..invalidate(videoFeedProvider)
+      ..invalidate(booksProvider)
+      ..invalidate(bookFeedProvider)
+      ..invalidate(galleryProvider)
+      ..invalidate(galleryFeedProvider)
+      ..invalidate(componentPrefsProvider)
+      ..invalidate(mcpPermissionsProvider)
+      ..invalidate(bibleSettingsProvider)
+      ..invalidate(infoKeysProvider);
   }
 
   /// [raw] (the setting [key] as JSON) with the Telegram account ids it
@@ -378,8 +479,11 @@ abstract final class AppData {
         if (k == 'accounts' && x is List) {
           final mapped = [for (final id in x) ?ids['$id']];
           if (mapped.isNotEmpty) out[k] = mapped;
-        } else if ((k == 'account' || k == 'folder_account') && x is String) {
+        } else if ((k == 'account' || k == 'folder_account' || (k == 'a' && (key == _customFoldersKey || _sectionKeys.contains(key))) || (k == 'ac' && key == BooksStore.key)) && x is String) {
           out[k] = ids[x] ?? x;
+        } else if (_sectionKeys.contains(key) && x is String && x.contains(':')) {
+          // Item keys ("account:chat:message") and the like.
+          out[k] = _remapKey(x, ids);
         } else {
           out[k] = walk(x);
         }
@@ -387,11 +491,27 @@ abstract final class AppData {
       return out;
     }
 
+    Object? keys(Object? v) {
+      if (!_sectionKeys.contains(key)) return v;
+      if (v is List) return [for (final e in v) e is String ? _remapKey(e, ids) : keys(e)];
+      if (v is Map) return {for (final e in v.entries) _remapKey('${e.key}', ids): keys(e.value)};
+      return v;
+    }
+
     try {
-      return jsonEncode(walk(jsonDecode(raw)));
+      return jsonEncode(keys(walk(jsonDecode(raw))));
     } catch (_) {
       return raw;
     }
+  }
+
+  /// "old:chat:message" → "new:chat:message" when it starts with a known
+  /// account.
+  static String _remapKey(String s, Map<String, String> ids) {
+    for (final e in ids.entries) {
+      if (s.startsWith('${e.key}:') && RegExp(r':-?\d+:\d+$').hasMatch(s)) return '${e.value}${s.substring(e.key.length)}';
+    }
+    return s;
   }
 
   /// [profile] as a pretty JSON file's bytes.

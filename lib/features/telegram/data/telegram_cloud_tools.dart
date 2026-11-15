@@ -3,7 +3,7 @@ part of 'telegram_tools.dart';
 // Cloudflare (zones, DNS, cache, Workers, Pages, KV, R2 storage) with the
 // user's API token and R2 access key, and E2B cloud sandboxes that run
 // code, the two services ScholarXIV uses for storage and executePython.
-// Keys and options are under Settings → Apps & web (Cloudflare and E2B tabs).
+// Keys and options: Settings → Development → Cloudflare, Settings → Apps & web → E2B.
 
 const _zoneParam = {'type': 'string', 'description': 'Zone id or domain name, e.g. example.com.'};
 const _bucketParam = {'type': 'string', 'description': 'R2 bucket name. Default: the bucket set in Settings.'};
@@ -517,13 +517,13 @@ extension _CloudToolRuns on TelegramToolRunner {
 
   String _bucket(Map<String, dynamic> a) {
     final b = _arg(a, 'bucket').isEmpty ? _settings.r2Bucket : _arg(a, 'bucket');
-    if (b.isEmpty) throw AiException('Which bucket? Name one, or set a default in Settings → Apps & web → Cloudflare.', provider: 'cloudflare');
+    if (b.isEmpty) throw AiException('Which bucket? Name one, or set a default in Settings → Development → Cloudflare.', provider: 'cloudflare');
     return b;
   }
 
   Future<ToolOutput> _cloudflare(String name, Map<String, dynamic> a) async {
     if (!_settings.hasCloudflare) {
-      return const ToolOutput({'error': 'No Cloudflare token. The user can add one in Settings → Apps & web → Cloudflare.'});
+      return const ToolOutput({'error': 'No Cloudflare token. The user can add one in Settings → Development → Cloudflare.'});
     }
     final c = _cf();
     // R2's S3 endpoint is account-scoped; find the account from the token.
@@ -810,3 +810,11 @@ extension _CloudToolRuns on TelegramToolRunner {
     };
   }
 }
+
+/// What a Vercel, Resend or MongoDB tool still needs, for the Tools list.
+String? devToolNeeds(TelegramTool t, AppSettings s) => switch (t.category) {
+  ToolCategory.vercel when !s.hasVercelToken => 'Needs a Vercel token',
+  ToolCategory.resend when !s.hasResendKey => 'Needs a Resend key',
+  ToolCategory.mongodb when !s.hasMongoUri => 'Needs a MongoDB connection string',
+  _ => null,
+};

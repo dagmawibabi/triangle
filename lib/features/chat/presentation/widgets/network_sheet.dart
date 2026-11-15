@@ -477,7 +477,7 @@ class _Toggle extends StatelessWidget {
     final active = on == true;
     final known = on is bool;
     return Material(
-      color: active ? AppColors.accent.withValues(alpha: 0.16) : AppColors.surface2,
+      color: active ? AppColors.tint.withValues(alpha: 0.16) : AppColors.surface2,
       borderRadius: BorderRadius.circular(Radii.l),
       child: InkWell(
         borderRadius: BorderRadius.circular(Radii.l),

@@ -2448,7 +2448,11 @@ footer {
 /* Money: a short ledger and a budget bar filling. */
 .cell-money .art,
 .cell-mute .art,
-.cell-everyday .art {
+.cell-everyday .art,
+.cell-sections .art,
+.cell-playlists .art,
+.cell-dev .art,
+.cell-parcels .art {
 	align-items: stretch;
 	flex-direction: column;
 	justify-content: center;
@@ -2564,6 +2568,51 @@ footer {
 			color 0.3s var(--snap);
 	}
 	.cell-everyday:hover .topics li:nth-child(odd) {
+		background: var(--white);
+		color: #000;
+	}
+}
+
+/* Channels as apps: four sections as tiles. */
+.section-tiles {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px;
+	font-weight: 400;
+}
+.section-tiles li {
+	display: grid;
+	gap: 18px;
+	padding: 12px;
+	border: 1px solid #555;
+}
+.section-tiles b {
+	font-size: 13px;
+	font-weight: 500;
+	color: var(--white);
+}
+.section-tiles span {
+	font-size: 12px;
+	color: #a8a8ad;
+}
+@media (prefers-reduced-motion: no-preference) {
+	.section-tiles li,
+	.section-tiles b,
+	.section-tiles span {
+		transition:
+			background 0.3s var(--snap),
+			border-color 0.3s var(--snap),
+			color 0.3s var(--snap);
+	}
+	.cell-sections:hover .section-tiles li:nth-child(3n + 1) {
+		background: var(--white);
+		border-color: var(--white);
+	}
+	.cell-sections:hover .section-tiles li:nth-child(3n + 1) b,
+	.cell-sections:hover .section-tiles li:nth-child(3n + 1) span {
+		color: #000;
+	}
+	.cell-dev:hover .topics li:nth-child(even) {
 		background: var(--white);
 		color: #000;
 	}

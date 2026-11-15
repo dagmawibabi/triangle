@@ -18,7 +18,7 @@ class MoreAppsScreen extends StatelessWidget {
   const MoreAppsScreen({super.key, this.initialTab = 0});
   final int initialTab;
 
-  static const tabs = ['Markets & travel', 'Bible', 'News', 'Library', 'Explore', 'Phone tools', 'Lookups', 'YouTube', 'Papers', 'Sports'];
+  static const tabs = ['Markets & travel', 'Bible', 'News', 'Library', 'Explore', 'Phone tools', 'Lookups', 'YouTube', 'Papers', 'Sports', 'Packages'];
 
   @override
   Widget build(BuildContext context) => DefaultTabController(
@@ -34,7 +34,7 @@ class MoreAppsScreen extends StatelessWidget {
         ),
       ),
       body: const TabBarView(
-        children: [_MarketsTab(), BibleSettingsView(), _NewsTab(), _LibraryTab(), _ExploreTab(), _PhoneToolsTab(), _LookupsTab(), _YoutubeTab(), _PapersTab(), _SportsTab()],
+        children: [_MarketsTab(), BibleSettingsView(), _NewsTab(), _LibraryTab(), _ExploreTab(), _PhoneToolsTab(), _LookupsTab(), _YoutubeTab(), _PapersTab(), _SportsTab(), _PackagesTab()],
       ),
     ),
   );
@@ -530,6 +530,40 @@ class _SportsTab extends ConsumerWidget {
         Text('Players come from TheSportsDB. A personal key only raises its limits.', style: context.text.bodySmall?.copyWith(color: AppColors.text3)),
       ],
       sources: 'Sources: ESPN (public scoreboard API), Jolpica (Ergast F1), TheSportsDB, football-data.org. Try: "Premier League scores", "NBA standings", "next F1 race", "Arsenal form", "who is Erling Haaland".',
+    );
+  }
+}
+
+
+class _PackagesTab extends ConsumerWidget {
+  const _PackagesTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final k = ref.watch(infoKeysProvider);
+    return _AppTab(
+      intro: 'Track parcels from any carrier by their number: UPS, FedEx, DHL, USPS, Ethiopian Post and other postal services, '
+          'AliExpress and more. The assistant keeps a list of what you are waiting for, with the latest scan of each.',
+      categories: const [ToolCategory.parcels],
+      setup: [
+        _heading(context, '17TRACK'),
+        KeyField(
+          label: '17TRACK API key',
+          hint: 'api.17track.net → Settings → Security (free plan)',
+          value: k.trackKey,
+          secret: true,
+          onSave: ref.read(infoKeysProvider.notifier).setTrackKey,
+          help: Uri.parse('https://api.17track.net/en/admin/settings'),
+        ),
+        const SizedBox(height: Space.xs),
+        Text(
+          k.hasTrackKey
+              ? 'Live tracking is on. The free plan includes a monthly quota of new numbers; checking one again is free.'
+              : 'Without a key the assistant names the likely carrier and links its tracking page. A free key adds live status and every scan.',
+          style: context.text.bodySmall?.copyWith(color: AppColors.text3),
+        ),
+      ],
+      sources: 'Try: "track 1Z999AA10123456784", "where is my AliExpress order LP00123456789012", "what are my packages doing?".',
     );
   }
 }

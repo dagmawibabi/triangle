@@ -1,3 +1,4 @@
+import 'dev/dev_card_kit.dart' show looksLikeHtml, showHtmlPreview;
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -22,6 +23,7 @@ import 'post_sources.dart';
 import 'thinking_block.dart';
 import 'tool_card.dart';
 import '../../../telegram/presentation/link_opener.dart';
+import '../../../../core/widgets/fullscreen_image.dart';
 
 final _postRef = RegExp(r'post:(-?\d+):(\d+)');
 
@@ -168,10 +170,15 @@ class AssistantMessage extends ConsumerWidget {
     required this.entry,
     required this.posts,
     required this.streaming,
+    this.collapseTools = false,
   });
 
   final AssistantEntry entry;
   final Map<String, PostSnapshot> posts;
+
+  /// Fold every tool card into one "N tools used" row that opens on tap
+  /// (brief pages, where dozens of reads sit above the text).
+  final bool collapseTools;
 
   /// This is the reply still being written.
   final bool streaming;
@@ -215,6 +222,7 @@ class AssistantMessage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final children = <Widget>[];
     final prefs = ref.watch(settingsProvider);
+    final folded = <ToolPart>[];
     for (final (i, s) in entry.steps.indexed) {
       final last = i == entry.steps.length - 1;
       if (s.reasoning.trim().isNotEmpty && prefs.showThinking) {
@@ -232,7 +240,7 @@ class AssistantMessage extends ConsumerWidget {
             // Long-press: the answer in a sheet where any of it can be selected.
             onLongPress: () {
               HapticFeedback.selectionClick();
-              showSelectableAnswer(context, entry);
+              showSelectableAnswer(context, entry, style: _markdownStyle, onLink: _openLink);
             },
             child: Padding(
             padding: const EdgeInsets.only(bottom: Space.s),
@@ -240,7 +248,7 @@ class AssistantMessage extends ConsumerWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 // Tables are drawn apart, so they can scroll sideways.
-                for (final part in splitTables(s.text))
+                for (final part in splitTables(linkPostRefs(s.text, posts)))
                   if (part.markdown != null)
                     MarkdownBody(
                       data: part.markdown!,
@@ -262,7 +270,10 @@ class AssistantMessage extends ConsumerWidget {
       }
       for (final t in s.tools) {
         // With tool cards hidden, approvals still show: they need a tap.
-        if (prefs.showToolCalls || t.status == ToolStatus.awaitingApproval) {
+        if (collapseTools && t.status != ToolStatus.awaitingApproval) {
+          if (folded.isEmpty) children.add(_FoldedTools(key: const ValueKey('folded-tools'), tools: folded, streaming: streaming));
+          folded.add(t);
+        } else if (prefs.showToolCalls || t.status == ToolStatus.awaitingApproval) {
           children.add(ToolCallCard(key: ValueKey(t.callId), part: t));
         }
       }
@@ -421,7 +432,7 @@ class AssistantMessage extends ConsumerWidget {
       a: body.copyWith(
         color: AppColors.activeAccent,
         decoration: TextDecoration.underline,
-        decorationColor: AppColors.accent.withValues(alpha: 0.4),
+        decorationColor: AppColors.tint.withValues(alpha: 0.4),
       ),
       strong: body.copyWith(fontWeight: FontWeight.w700),
       h1: context.text.titleLarge,
@@ -502,7 +513,12 @@ class _CodeHighlighter extends SyntaxHighlighter {
 }
 
 /// An answer in a sheet whose text can be selected word by word and copied.
-Future<void> showSelectableAnswer(BuildContext context, AssistantEntry entry) {
+Future<void> showSelectableAnswer(
+  BuildContext context,
+  AssistantEntry entry, {
+  required MarkdownStyleSheet Function(BuildContext) style,
+  required void Function(BuildContext, String?) onLink,
+}) {
   final text = entry.steps.map((s) => s.text.trim()).where((t) => t.isNotEmpty).join('\n\n');
   return showAppSheet<void>(
     context,
@@ -526,13 +542,31 @@ Future<void> showSelectableAnswer(BuildContext context, AssistantEntry entry) {
         ),
         Text('Press and hold a word, then drag the handles.', style: context.text.bodySmall),
         const SizedBox(height: Space.l),
-        MarkdownBody(
-          data: text,
-          selectable: true,
-          styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
-            p: context.text.bodyLarge,
-            code: TextStyle(fontFamily: 'monospace', fontSize: 13.5, backgroundColor: AppColors.surface2),
-          ),
+        // Drawn like the chat (tables apart, scrolling sideways, same style),
+        // inside one SelectionArea so a selection can run across blocks and
+        // table cells.
+        Consumer(
+          builder: (context, ref, _) {
+            final highlighter = _CodeHighlighter(ref.watch(settingsProvider).codeTheme);
+            return SelectionArea(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final part in splitTables(text))
+                    if (part.markdown != null)
+                      MarkdownBody(
+                        data: part.markdown!,
+                        styleSheet: style(context),
+                        syntaxHighlighter: highlighter,
+                        builders: {'pre': _CodeBlockBuilder(highlighter)},
+                        onTapLink: (text, href, title) => onLink(context, href),
+                      )
+                    else
+                      MarkdownTable(head: part.head!, rows: part.rows!, onLink: (href) => onLink(context, href)),
+                ],
+              ),
+            );
+          },
         ),
       ],
     ),
@@ -607,6 +641,13 @@ class _CodeBlock extends StatelessWidget {
                 children: [
                   Text(language.isEmpty ? 'code' : language, style: context.text.labelSmall),
                   const Spacer(),
+                  if (looksLikeHtml(code, language))
+                    TextButton.icon(
+                      style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                      icon: const Icon(Icons.visibility_outlined, size: 16),
+                      label: const Text('Preview'),
+                      onPressed: () => showHtmlPreview(context, code),
+                    ),
                   IconButton(
                     tooltip: 'Copy',
                     visualDensity: VisualDensity.compact,
@@ -745,20 +786,7 @@ class _SentAttachment extends StatelessWidget {
     final file = File(a.path);
     if (a.isImage && file.existsSync()) {
       return GestureDetector(
-        onTap: () => Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (_) => Scaffold(
-              backgroundColor: Colors.black,
-              appBar: AppBar(
-                backgroundColor: Colors.black,
-                title: Text(a.name),
-              ),
-              body: Center(
-                child: InteractiveViewer(maxScale: 5, child: Image.file(file)),
-              ),
-            ),
-          ),
-        ),
+        onTap: () => openFullscreenFile(context, a.path, title: a.name),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(Radii.l),
           child: Image.file(file, width: 160, height: 160, fit: BoxFit.cover),
@@ -1001,7 +1029,7 @@ class _MarkdownTableState extends State<MarkdownTable> {
       'a' => style.copyWith(
         color: AppColors.activeAccent,
         decoration: TextDecoration.underline,
-        decorationColor: AppColors.accent.withValues(alpha: 0.4),
+        decorationColor: AppColors.tint.withValues(alpha: 0.4),
       ),
       _ => style,
     };
@@ -1082,6 +1110,130 @@ class _MarkdownTableState extends State<MarkdownTable> {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+
+/// Matches a Markdown link (kept as is) or a bare post ref, with an
+/// optional bracket, paren or backtick around it.
+final _bareRef = RegExp(r'\[[^\]\n]*\]\([^)\s]*\)|([\[(`])?post:(-?\d+):(\d+)([\])`])?');
+
+/// Bare `post:<chat>:<id>` refs in [text] as tappable links named after their
+/// chat, so a reply that forgot the `[Name](post:…)` form still opens the
+/// post. Refs already inside a link, and fenced code, are left alone.
+String linkPostRefs(String text, Map<String, PostSnapshot> posts) {
+  if (!text.contains('post:')) return text;
+  final out = StringBuffer();
+  var fenced = false;
+  for (final (i, line) in text.split('\n').indexed) {
+    if (i > 0) out.write('\n');
+    if (line.trimLeft().startsWith('```')) fenced = !fenced;
+    if (fenced || !line.contains('post:')) {
+      out.write(line);
+      continue;
+    }
+    out.write(
+      line.replaceAllMapped(_bareRef, (m) {
+        if (m[2] == null) return m[0]!;
+        final open = m[1] ?? '';
+        final close = m[4] ?? '';
+        final paired = switch (open) { '[' => close == ']', '(' => close == ')', '`' => close == '`', _ => false };
+        final key = '${m[2]}:${m[3]}';
+        final name = (posts[key]?.chatTitle ?? 'Post').replaceAll(RegExp(r'[\[\]]'), '');
+        final link = '[$name](post:$key)';
+        return paired ? link : '$open$link$close';
+      }),
+    );
+  }
+  return out.toString();
+}
+
+/// Tool cards folded into one row: "12 tools used", opening to the list.
+class _FoldedTools extends StatefulWidget {
+  const _FoldedTools({super.key, required this.tools, required this.streaming});
+  final List<ToolPart> tools;
+  final bool streaming;
+
+  @override
+  State<_FoldedTools> createState() => _FoldedToolsState();
+}
+
+class _FoldedToolsState extends State<_FoldedTools> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final tools = widget.tools;
+    final failed = tools.where((t) => t.status == ToolStatus.error).length;
+    final running = tools.where((t) => t.status == ToolStatus.running).length;
+    final label = '${tools.length} tool${tools.length == 1 ? '' : 's'} used';
+    final detail = [
+      if (running > 0) '$running running',
+      if (failed > 0) '$failed failed',
+    ].join(' · ');
+    return Padding(
+      padding: const EdgeInsets.only(bottom: Space.s),
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(Radii.m),
+          border: Border.all(color: AppColors.line),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            InkWell(
+              onTap: () => setState(() => _open = !_open),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: Space.m, vertical: Space.s + 2),
+                child: Row(
+                  children: [
+                    if (running > 0 && widget.streaming)
+                      const SizedBox.square(dimension: 14, child: CircularProgressIndicator(strokeWidth: 1.8))
+                    else
+                      Icon(Icons.handyman_outlined, size: 16, color: AppColors.text2),
+                    const SizedBox(width: Space.s),
+                    Text(label, style: context.text.labelLarge?.copyWith(color: AppColors.text)),
+                    if (detail.isNotEmpty) ...[
+                      const SizedBox(width: Space.s),
+                      Flexible(
+                        child: Text(
+                          detail,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: context.text.labelSmall?.copyWith(color: failed > 0 ? AppColors.danger : AppColors.text3),
+                        ),
+                      ),
+                    ],
+                    const Spacer(),
+                    AnimatedRotation(
+                      turns: _open ? 0.5 : 0,
+                      duration: const Duration(milliseconds: 180),
+                      child: Icon(Icons.expand_more_rounded, size: 20, color: AppColors.text2),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            AnimatedSize(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              alignment: Alignment.topCenter,
+              child: _open
+                  ? Padding(
+                      padding: const EdgeInsets.fromLTRB(Space.s, 0, Space.s, Space.s),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [for (final t in tools) ToolCallCard(key: ValueKey(t.callId), part: t)],
+                      ),
+                    )
+                  : const SizedBox(width: double.infinity),
+            ),
+          ],
         ),
       ),
     );

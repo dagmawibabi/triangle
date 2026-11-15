@@ -10,6 +10,7 @@ import '../../../../core/widgets/net_image.dart';
 import '../../../../core/widgets/app_sheet.dart';
 import '../../../bible/bible.dart';
 import '../../domain/chat_models.dart';
+import '../../../../core/widgets/fullscreen_image.dart';
 
 /// Cards for the Bible tools: a passage, the verse of the day, a chapter to
 /// read (and page through), translations side by side, versions and books.
@@ -415,7 +416,7 @@ class _VerseSheetState extends State<_VerseSheet> {
       builder: (context) => Scaffold(
         backgroundColor: Colors.black,
         appBar: AppBar(backgroundColor: Colors.black, foregroundColor: Colors.white, title: Text('${widget.p['reference']}')),
-        body: Center(child: InteractiveViewer(maxScale: 5, child: NetImage(_images[_at], fit: BoxFit.contain, placeholder: null))),
+        body: FullscreenZoomImage(image: NetworkImage(_images[_at])),
       ),
     ),
   );

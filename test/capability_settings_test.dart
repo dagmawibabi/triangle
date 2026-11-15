@@ -26,10 +26,10 @@ void main() {
   test('every omni_ai capability tool is an app tool with a policy and reference', () async {
     final ai = omni.OmniAI(loadSavedKeys: false, keyStore: omni.MemoryKeyStore(), jevKey: 'test');
     final package = {
-      for (final t in [...await ai.jev.tools(), ...await ai.mcp.managementTools(), ...await ai.skills.tools()]) t.name,
+      for (final t in [...await ai.jev.tools(), ...await ai.mcp.managementTools(), ...await ai.skills.tools(), ...await ai.vapi.tools()]) t.name,
     };
     expect(capabilityToolNames, package);
-    const categories = {ToolCategory.decisions, ToolCategory.mcp, ToolCategory.skills};
+    const categories = {ToolCategory.decisions, ToolCategory.mcp, ToolCategory.skills, ToolCategory.calls};
     for (final name in capabilityToolNames) {
       final tool = telegramTools.firstWhere((t) => t.name == name);
       expect(categories, contains(tool.category), reason: name);

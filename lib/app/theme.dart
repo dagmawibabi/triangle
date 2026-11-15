@@ -78,6 +78,12 @@ abstract final class AppColors {
   static Color get accent => activeAccent;
   static Color get accentDim => activeAccentDim;
 
+  /// For decoration (tinted backgrounds, gradients, badges, chart colours):
+  /// the accent, except the monochrome accent on a light page, which turns
+  /// near-black and would read as a dark smudge; there a soft slate is used.
+  /// Buttons and links keep [accent].
+  static Color get tint => isLight && activeAccent.computeLuminance() < 0.05 ? const Color(0xFF5B6B8C) : activeAccent;
+
   /// [color] as the accent. On a light page the monochrome (white) accent
   /// turns near-black so it stays visible.
   static void applyAccent(Color color) {

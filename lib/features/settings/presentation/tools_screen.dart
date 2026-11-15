@@ -16,6 +16,7 @@ import '../../telegram/presentation/chat_actions.dart' show confirmAction;
 import '../data/settings.dart';
 import 'apps_screen.dart';
 import 'cloud_settings.dart';
+import '../../development/development_screen.dart';
 import 'settings_screen.dart' show SettingsScreen, SettingsSection;
 import 'telegram_tab.dart';
 import '../../../infrastructure/telegram/accounts.dart';
@@ -26,6 +27,7 @@ import '../../telegram/data/account_tools.dart';
 enum ToolGroup {
   telegram('Telegram', Icons.send_rounded),
   apps('Apps & web', Icons.hub_outlined),
+  development('Development', Icons.terminal_rounded),
   device('Device', Icons.phone_android_rounded);
 
   const ToolGroup(this.label, this.icon);
@@ -33,7 +35,8 @@ enum ToolGroup {
   final IconData icon;
 
   bool has(TelegramTool t) => switch (this) {
-    ToolGroup.apps => t.category.onAppsScreen,
+    ToolGroup.apps => t.category.onAppsScreen && !t.category.isDevelopment,
+    ToolGroup.development => t.category.isDevelopment,
     ToolGroup.device => (t.category == ToolCategory.device || t.category == ToolCategory.code),
     ToolGroup.telegram => !t.category.onAppsScreen && t.category != ToolCategory.device && t.category != ToolCategory.code,
   };
@@ -237,10 +240,16 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
   }
 }
 
+/// The tabs of Settings → Apps & web, in order.
+enum AppsWebTab { composio, exa, e2b, telegram }
+
 /// Settings → Apps & web: the keys and connections behind the app and web
 /// tools, one tab per service (their tools are under Settings → Tools).
 class AppsWebScreen extends ConsumerWidget {
-  const AppsWebScreen({super.key});
+  const AppsWebScreen({super.key, this.tab = AppsWebTab.composio});
+
+  /// The tab it opens on, e.g. Telegram from "Connect Telegram".
+  final AppsWebTab tab;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -248,7 +257,8 @@ class AppsWebScreen extends ConsumerWidget {
     final connected = ref.watch(integrationsProvider).connected.length;
     final ready = ref.watch(authStateProvider).value is td.AuthorizationStateReady;
     return DefaultTabController(
-      length: 5,
+      length: AppsWebTab.values.length,
+      initialIndex: tab.index,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Apps & web'),
@@ -267,13 +277,12 @@ class AppsWebScreen extends ConsumerWidget {
             tabs: [
               Tab(text: s.hasComposioKey ? 'Composio · $connected' : 'Composio'),
               Tab(text: s.hasExaKey ? 'Exa ✓' : 'Exa'),
-              Tab(text: s.hasCloudflare ? 'Cloudflare ✓' : 'Cloudflare'),
               Tab(text: s.hasE2bKey ? 'E2B ✓' : 'E2B'),
               Tab(text: ready ? 'Telegram ✓' : 'Telegram'),
             ],
           ),
         ),
-        body: const TabBarView(children: [AppsTab(), ExaTab(), CloudflareTab(), E2bTab(), TelegramTab()]),
+        body: const TabBarView(children: [AppsTab(), ExaTab(), E2bTab(), TelegramTab()]),
       ),
     );
   }
@@ -360,7 +369,7 @@ class _ToolListState extends ConsumerState<_ToolList> {
                 margin: const EdgeInsets.only(top: Space.m),
                 padding: const EdgeInsets.all(Space.m),
                 decoration: BoxDecoration(
-                  color: AppColors.accent.withValues(alpha: 0.08),
+                  color: AppColors.tint.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(Radii.m),
                 ),
                 child: Row(
@@ -521,6 +530,167 @@ class FeatureTools extends ConsumerWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// A service's tools for its settings page, in three groups: Read (runs
+/// freely), Modify (asks per your approval setting) and Destructive (off
+/// until turned on, always asks). Each row has its switch and tags and
+/// opens the tool's full page; each group can be switched on or off at once.
+class ServiceTools extends ConsumerStatefulWidget {
+  const ServiceTools({super.key, required this.categories});
+  final Set<ToolCategory> categories;
+
+  @override
+  ConsumerState<ServiceTools> createState() => _ServiceToolsState();
+}
+
+class _ServiceToolsState extends ConsumerState<ServiceTools> {
+  ToolAccess? _only;
+  String _q = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final s = ref.watch(settingsProvider);
+    final connected = ref.watch(integrationsProvider).connected;
+    final telegram = ref.watch(authStateProvider).value is td.AuthorizationStateReady;
+    final ready = ref.watch(decisionsReadyProvider);
+    final switches = ToolSwitches.of(ref);
+    final q = _q.trim().toLowerCase();
+    final all = [
+      for (final t in telegramTools)
+        if (widget.categories.contains(t.category) &&
+            (q.isEmpty || t.name.contains(q) || t.label.toLowerCase().contains(q) || t.description.toLowerCase().contains(q)))
+          t,
+    ];
+    Color tint(ToolAccess a) => switch (a) {
+      ToolAccess.read => AppColors.success,
+      ToolAccess.modify => AppColors.warning,
+      ToolAccess.destructive => AppColors.danger,
+    };
+    String intro(ToolAccess a) => switch (a) {
+      ToolAccess.read => 'Look things up and never change anything. Run without asking; the only ones left in read-only mode.',
+      ToolAccess.modify => 'Create, send, deploy or change. Ask first, following your approval setting.',
+      ToolAccess.destructive => 'Delete, drop, revoke or replace. Off until you turn them on, and always ask first.',
+    };
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            ChoiceChip(
+              showCheckmark: false,
+              label: Text('All · ${all.length}'),
+              selected: _only == null,
+              onSelected: (_) => setState(() => _only = null),
+            ),
+            for (final a in ToolAccess.values)
+              ChoiceChip(
+                showCheckmark: false,
+                avatar: Icon(Icons.circle, size: 9, color: tint(a)),
+                label: Text('${a.label} · ${all.where((t) => t.access == a).length}'),
+                selected: _only == a,
+                onSelected: (_) => setState(() => _only = _only == a ? null : a),
+              ),
+          ],
+        ),
+        const SizedBox(height: Space.s),
+        TextField(
+          onChanged: (v) => setState(() => _q = v),
+          decoration: InputDecoration(
+            isDense: true,
+            hintText: 'Search these tools',
+            prefixIcon: Icon(Icons.search_rounded, size: 20, color: AppColors.text3),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(999), borderSide: BorderSide.none),
+            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(999), borderSide: BorderSide.none),
+          ),
+        ),
+        for (final access in ToolAccess.values)
+          if ((_only == null || _only == access) && all.any((t) => t.access == access)) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(Space.xs, Space.xl, 0, Space.xs),
+              child: Row(
+                children: [
+                  Icon(
+                    switch (access) {
+                      ToolAccess.read => Icons.visibility_outlined,
+                      ToolAccess.modify => Icons.edit_outlined,
+                      ToolAccess.destructive => Icons.delete_outline_rounded,
+                    },
+                    size: 16,
+                    color: tint(access),
+                  ),
+                  const SizedBox(width: Space.s),
+                  Expanded(
+                    child: Text(
+                      '${access == ToolAccess.read ? 'NORMAL · READ' : access.label.toUpperCase()} · '
+                      '${all.where((t) => t.access == access && switches.on(t)).length}/${all.where((t) => t.access == access).length} ON',
+                      style: context.text.labelSmall?.copyWith(color: access == ToolAccess.destructive ? AppColors.danger : null),
+                    ),
+                  ),
+                  TextButton(
+                    style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                    onPressed: () async {
+                      final tools = [for (final t in all) if (t.access == access) t];
+                      if (access == ToolAccess.destructive &&
+                          !await confirmAction(
+                            context,
+                            title: 'Turn on ${tools.length} destructive tools?',
+                            message: 'The assistant could then delete, drop and revoke, each time after you approve.',
+                            action: 'Turn on',
+                          )) {
+                        return;
+                      }
+                      await switches.setAll(tools, true);
+                    },
+                    child: Text('All on', style: TextStyle(color: access == ToolAccess.destructive ? AppColors.danger : null)),
+                  ),
+                  TextButton(
+                    style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                    onPressed: () => switches.setAll([for (final t in all) if (t.access == access) t], false),
+                    child: const Text('All off'),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(Space.xs, 0, Space.xs, Space.s),
+              child: Text(intro(access), style: context.text.bodySmall?.copyWith(color: access == ToolAccess.destructive ? AppColors.danger : null)),
+            ),
+            Container(
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(Radii.l),
+                border: Border.all(color: access == ToolAccess.destructive ? AppColors.danger.withValues(alpha: 0.5) : AppColors.line),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Material(
+                type: MaterialType.transparency,
+                child: Column(
+                  children: [
+                    for (final (i, t) in all.where((t) => t.access == access).indexed) ...[
+                      if (i > 0) const Divider(indent: 56),
+                      _ToolRow(
+                        tool: t,
+                        enabled: switches.chosen(t),
+                        blocked: s.readOnlyMode && t.modifiesData,
+                        needs: toolPrerequisiteProblems(t, s, telegram: telegram, connected: connected, decisionsReady: ready).firstOrNull,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
+        if (all.isEmpty)
+          Padding(
+            padding: const EdgeInsets.all(Space.xl),
+            child: Center(child: Text('No tool matches', style: context.text.bodySmall)),
+          ),
+      ],
     );
   }
 }
@@ -788,7 +958,9 @@ class ToolDetailScreen extends ConsumerWidget {
                       onTap: () => open(
                         need.contains('AI & models')
                             ? const SettingsScreen(section: SettingsSection.ai)
-                            : const AppsWebScreen(),
+                            : tool.category.isDevelopment
+                            ? DevelopmentScreen(service: DevService.of(tool.category))
+                            : AppsWebScreen(tab: need.contains('Telegram') ? AppsWebTab.telegram : AppsWebTab.composio),
                       ),
                     ),
                 ],

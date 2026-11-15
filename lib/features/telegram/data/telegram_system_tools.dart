@@ -12,12 +12,14 @@ const apiKeyServiceIds = [
   // AI: chat, images & video, voice, decisions
   'vercel', 'openrouter', 'opencode', 'gemini', 'lmstudio', 'addis', 'elevenlabs', 'jev',
   // Connected apps
-  'composio',
+  'composio', 'vapi',
   // Your cloud
-  'cloudflare', 'cloudflare_account', 'r2_access_key_id', 'r2_secret_key', 'e2b',
+  'cloudflare', 'cloudflare_account', 'r2_access_key_id', 'r2_secret_key', 'r2_bucket', 'e2b', 'e2b_template',
+  // Development
+  'vercel_token', 'vercel_team', 'resend', 'resend_from', 'mongodb', 'mongodb_database',
   // The web
   'exa', 'youtube', 'reddit', 'nasa', 'coingecko', 'scholarxiv', 'metals', 'libretranslate_url', 'libretranslate',
-  'football_data', 'thesportsdb', 'youversion',
+  'football_data', 'thesportsdb', 'seventeentrack', 'youversion',
   // Money
   'verify_et',
 ];
@@ -26,10 +28,12 @@ const _apiKeyService = {
   'type': 'string',
   'enum': apiKeyServiceIds,
   'description': 'The service, as list_api_keys names it. AI: vercel, openrouter, opencode, gemini, lmstudio (server '
-      'address), addis, elevenlabs, jev (decisions). Apps: composio (Gmail, Slack, Notion… through Composio). Cloud: '
-      'cloudflare (API token), cloudflare_account (account id), r2_access_key_id, r2_secret_key, e2b. Web: exa (search), '
+      'address), addis, elevenlabs, jev (decisions). Apps: composio (Gmail, Slack, Notion… through Composio), vapi (phone calls). Cloud: '
+      'cloudflare (API token), cloudflare_account (account id), r2_access_key_id, r2_secret_key, r2_bucket (default '
+      'bucket), e2b, e2b_template (sandbox template; removing it restores the default). Development: vercel_token, '
+      'vercel_team (team id), resend, resend_from (default sender), mongodb (connection string), mongodb_database. Web: exa (search), '
       'youtube, reddit (client id), nasa, coingecko, scholarxiv (papers), metals (metals.dev), libretranslate_url '
-      '(server), libretranslate (key), football_data, thesportsdb, youversion (Bible). Money: verify_et.',
+      '(server), libretranslate (key), football_data, thesportsdb, seventeentrack (package tracking), youversion (Bible). Money: verify_et.',
 };
 
 /// The groups every run starts with when tools load as needed (Settings →
@@ -55,8 +59,9 @@ final _systemTools = <TelegramTool>[
     cost: ToolCost.device,
     description:
         'Lists every service the app can use a key for and whether each has one: AI (chat, images & video, voice, '
-        'decisions), connected apps (Composio), your cloud (Cloudflare, R2, E2B), web data (Exa search, YouTube, '
-        'Reddit, NASA, CoinGecko, papers, metal prices, translation, sports, the Bible) and money (Verify.ET). Shows '
+        'decisions), connected apps (Composio, Vapi phone calls), your cloud and development (Cloudflare, R2, E2B, '
+        'Vercel, Resend, MongoDB), web data (Exa search, YouTube, Reddit, NASA, CoinGecko, papers, metal prices, '
+        'translation, sports, package tracking, the Bible) and money (Verify.ET). Shows '
         'what each is used for, the last four characters of a key that is set and where to get one. Never shows a '
         'whole key. Give check true to also test the keys that can be tested.',
     parameters: _obj({
@@ -190,6 +195,153 @@ final _systemTools = <TelegramTool>[
       'auto_download_music': {'type': 'boolean', 'description': 'Download music as soon as it arrives.'},
     }),
   ),
+  TelegramTool(
+    name: 'test_api_key',
+    label: 'Testing an API key',
+    category: ToolCategory.system,
+    cost: ToolCost.web,
+    description:
+        'Checks whether an API key works, without saving it, and says what it can see (account, plan, model count, '
+        'balance). service is a saved service from list_api_keys (tests the saved key when no key is given) or one of: '
+        'openai, anthropic, groq, mistral, deepseek, xai, together, fireworks, cerebras, cohere, perplexity, huggingface, '
+        'github, stripe, telegram_bot, replicate, resend, sendgrid, notion. For any other API give url (an https endpoint '
+        'that needs the key), auth and key. Only test a key the user gave in their own message. Never shows a whole key.',
+    parameters: _obj({
+      'service': {'type': 'string', 'description': 'A saved service id or a known provider id.'},
+      'key': {'type': 'string', 'description': 'The key to test, exactly as the user gave it. Omit to test the saved key.'},
+      'url': {'type': 'string', 'description': 'For other APIs: an https GET endpoint that needs the key.'},
+      'auth': {
+        'type': 'string',
+        'description': 'How url takes the key: bearer (default), x-api-key, header:<Name>, or url (put {key} in url).',
+      },
+    }),
+  ),
+  TelegramTool(
+    name: 'api_request',
+    label: 'Calling an API',
+    category: ToolCategory.web,
+    cost: ToolCost.web,
+    description:
+        'Makes a GET, HEAD or OPTIONS request to any http(s) API and returns status, timing, key headers and the body '
+        '(parsed JSON when it is JSON). The app shows the response as a card, so summarise what matters rather than '
+        'repeating it. Add headers or query as needed. use_key sends a saved key (by service id, e.g. openrouter, '
+        'github) but only to that service\'s own host. For POST, PUT, PATCH or DELETE use api_send. Prefer fetch_url '
+        'for reading web pages.',
+    parameters: _obj({
+      'url': {'type': 'string', 'description': 'Full http(s) address.'},
+      'method': {'type': 'string', 'enum': ['GET', 'HEAD', 'OPTIONS'], 'description': 'Default GET.'},
+      'headers': {'type': 'object', 'description': 'Extra request headers, name to value.'},
+      'query': {'type': 'object', 'description': 'Query parameters to add, name to value.'},
+      'use_key': {'type': 'string', 'description': 'A saved or known service id whose saved key to send (its own host only).'},
+      'timeout_seconds': {'type': 'integer', 'description': '1-120, default 30.'},
+    }, ['url']),
+  ),
+  TelegramTool(
+    name: 'api_send',
+    label: 'Sending an API request',
+    category: ToolCategory.web,
+    cost: ToolCost.web,
+    requiresApproval: true,
+    description:
+        'Sends a POST, PUT, PATCH or DELETE request to an http(s) API (it may change data there, so it waits for the '
+        'user\'s approval) and returns status, timing, headers and the body, shown as a card. json sends a JSON body; '
+        'body sends raw text (set Content-Type in headers). use_key as in api_request.',
+    parameters: _obj({
+      'url': {'type': 'string', 'description': 'Full http(s) address.'},
+      'method': {'type': 'string', 'enum': ['POST', 'PUT', 'PATCH', 'DELETE'], 'description': 'Default POST.'},
+      'headers': {'type': 'object', 'description': 'Extra request headers, name to value.'},
+      'query': {'type': 'object', 'description': 'Query parameters to add, name to value.'},
+      'json': {'description': 'A JSON body (object or array).'},
+      'body': {'type': 'string', 'description': 'A raw body, instead of json.'},
+      'use_key': {'type': 'string', 'description': 'A saved or known service id whose saved key to send (its own host only).'},
+      'timeout_seconds': {'type': 'integer', 'description': '1-120, default 30.'},
+    }, ['url']),
+  ),
+  TelegramTool(
+    name: 'ai_balances',
+    label: 'Checking AI balances',
+    category: ToolCategory.system,
+    cost: ToolCost.web,
+    description:
+        'The remaining credit or quota on each AI provider with a saved key: OpenRouter and Vercel AI Gateway credit in '
+        'USD, ElevenLabs characters left this period, and a note for providers that don\'t publish a balance. Shown as a '
+        'card.',
+    parameters: _obj({}),
+  ),
+  TelegramTool(
+    name: 'http_diagnose',
+    label: 'Diagnosing an address',
+    category: ToolCategory.web,
+    cost: ToolCost.web,
+    description:
+        'Why is a site or API slow or failing? Times each step of a request: DNS, TCP connect, TLS handshake (with the '
+        'certificate), every redirect, first byte and download, plus the server, caching and security headers.',
+    parameters: _obj({
+      'url': {'type': 'string', 'description': 'The address, e.g. https://example.com/api.'},
+      'method': {'type': 'string', 'enum': ['GET', 'HEAD'], 'description': 'Default GET.'},
+    }, ['url']),
+  ),
+  TelegramTool(
+    name: 'dns_lookup',
+    label: 'Looking up DNS',
+    category: ToolCategory.web,
+    cost: ToolCost.web,
+    description: 'A domain\'s DNS records (A, AAAA, CNAME, MX, TXT, NS, CAA, SOA…) over DNS-over-HTTPS.',
+    parameters: _obj({
+      'name': {'type': 'string', 'description': 'Domain or host, e.g. example.com.'},
+      'types': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Record types; default A, AAAA, CNAME, MX, TXT, NS.'},
+    }, ['name']),
+  ),
+  TelegramTool(
+    name: 'ssl_certificate',
+    label: 'Checking a certificate',
+    category: ToolCategory.web,
+    cost: ToolCost.web,
+    description: 'The TLS certificate a host presents: whether it is trusted, who issued it, and when it expires.',
+    parameters: _obj({
+      'host': {'type': 'string', 'description': 'Host or address, e.g. example.com.'},
+      'port': {'type': 'integer', 'description': 'Default 443.'},
+    }, ['host']),
+  ),
+  TelegramTool(
+    name: 'port_check',
+    label: 'Checking ports',
+    category: ToolCategory.web,
+    cost: ToolCost.web,
+    description: 'Whether TCP ports on a host accept connections (up to 20), with connect time. For the user\'s own servers.',
+    parameters: _obj({
+      'host': {'type': 'string', 'description': 'Host name or IP.'},
+      'ports': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'Ports, e.g. [22, 80, 443]; default 80 and 443.'},
+    }, ['host']),
+  ),
+  TelegramTool(
+    name: 'my_ip',
+    label: 'Finding this phone\'s IP',
+    category: ToolCategory.web,
+    cost: ToolCost.web,
+    description: 'The phone\'s public IP address, its network provider and rough location.',
+    parameters: _obj({}),
+  ),
+  TelegramTool(
+    name: 'whois_lookup',
+    label: 'Looking up a domain',
+    category: ToolCategory.web,
+    cost: ToolCost.web,
+    description: 'Who registered a domain and when (RDAP, the modern WHOIS): registrar, created, expiry, status, name servers, or that it is unregistered.',
+    parameters: _obj({
+      'domain': {'type': 'string', 'description': 'e.g. example.com.'},
+    }, ['domain']),
+  ),
+  TelegramTool(
+    name: 'url_check',
+    label: 'Checking addresses',
+    category: ToolCategory.web,
+    cost: ToolCost.web,
+    description: 'Whether up to 15 addresses are up, each with status and response time, checked at once.',
+    parameters: _obj({
+      'urls': {'type': 'array', 'items': {'type': 'string'}, 'description': 'The addresses to check.'},
+    }, ['urls']),
+  ),
 ];
 
 final systemToolNames = {for (final t in _systemTools) t.name};
@@ -199,6 +351,17 @@ const _systemToolPolicies = <String, ToolPolicy>{
   'set_api_key': ToolPolicy(ToolAccess.modify),
   'delete_api_key': ToolPolicy(ToolAccess.destructive),
   'load_tools': ToolPolicy(ToolAccess.read),
+  'test_api_key': ToolPolicy(ToolAccess.read),
+  'api_request': ToolPolicy(ToolAccess.read),
+  'api_send': ToolPolicy(ToolAccess.modify),
+  'ai_balances': ToolPolicy(ToolAccess.read),
+  'http_diagnose': ToolPolicy(ToolAccess.read),
+  'dns_lookup': ToolPolicy(ToolAccess.read),
+  'ssl_certificate': ToolPolicy(ToolAccess.read),
+  'port_check': ToolPolicy(ToolAccess.read),
+  'my_ip': ToolPolicy(ToolAccess.read),
+  'whois_lookup': ToolPolicy(ToolAccess.read),
+  'url_check': ToolPolicy(ToolAccess.read),
   'get_app_settings': ToolPolicy(ToolAccess.read),
   'set_appearance': ToolPolicy(ToolAccess.modify),
   'set_preferences': ToolPolicy(ToolAccess.modify),
@@ -211,6 +374,18 @@ const _appSettingsFields = [
 ];
 
 const _systemToolReferences = <String, ToolReference>{
+  'http_diagnose': ToolReference(['url, ok, status, final_url, steps: step, ms, ok, detail', 'redirects, certificate, server, headers, total_ms, problem']),
+  'dns_lookup': ToolReference(['name', 'records: type to values', 'note']),
+  'ssl_certificate': ToolReference(['host, valid, protocol, subject, issuer, valid_from, valid_until, days_left, expired, problem']),
+  'port_check': ToolReference(['host', 'ports: port, open, ms', 'open']),
+  'my_ip': ToolReference(['ip, version, city, region, country, network, asn, timezone']),
+  'whois_lookup': ToolReference(['domain, registered, registrar, created, updated, expires, days_left, status, nameservers, note']),
+  'url_check': ToolReference(['checked, up', 'results: url, status, up, ms, bytes, problem'], limits: ['15 addresses per call.']),
+  'test_api_key': ToolReference(['service, name, works, status, latency_ms, detail, problem, ends_with, saved_key']),
+  'api_request': ToolReference(['method, url, status, ok, latency_ms, size_bytes, content_type, headers, json or body'],
+      limits: ['Bodies over 12,000 characters are cut for you; the card keeps more.']),
+  'api_send': ToolReference(['method, url, status, ok, latency_ms, size_bytes, content_type, headers, json or body']),
+  'ai_balances': ToolReference(['balances: service, name, currency or unit, balance, total, used, plan, resets, note, problem', 'without_key']),
   'list_api_keys': ToolReference(['keys: $_apiKeyFields, works (true, false or not testable here), problem', 'set_count']),
   'set_api_key': ToolReference(
     ['service', 'name', 'action: added, replaced or unchanged', 'ends_with', 'checked', 'note', 'uses'],

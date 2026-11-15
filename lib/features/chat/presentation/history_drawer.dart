@@ -21,14 +21,28 @@ import 'generated_files_screen.dart';
 import 'chat_search_sheet.dart';
 import 'widgets/chat_sheets.dart';
 import '../../brief/brief_screen.dart';
-import '../../brief/brief_store.dart';
-import '../../canvas/canvas_store.dart';
 import '../../telegram/presentation/content_canvas_screen.dart';
 import '../../web/browser_screen.dart';
 import '../../pc/pc_screen.dart';
 import '../../auth/data/auth_controller.dart';
 import '../../search/everywhere_search_screen.dart';
-import '../../settings/presentation/tools_screen.dart' show AppsWebScreen;
+import '../../settings/presentation/tools_screen.dart' show AppsWebScreen, AppsWebTab;
+import '../../custom_folders/custom_folders.dart';
+import '../../custom_folders/custom_folders_ui.dart';
+import '../../settings/presentation/theme_toggle.dart';
+import '../../playlists/playlists.dart';
+import '../../playlists/playlists_screen.dart';
+import '../../playlists/playlist_widgets.dart';
+import '../../media/audio_center.dart';
+import '../../marketplace/market.dart';
+import '../../marketplace/market_screen.dart';
+import '../../movies/movies.dart';
+import '../../movies/movies_screen.dart';
+import '../../books/books.dart';
+import '../../books/books_screen.dart';
+import '../../gallery/gallery.dart';
+import '../../gallery/gallery_screen.dart';
+import '../../sections/section_kit.dart' show sectionsDrawerOpenProvider, exploreEnabledProvider;
 
 /// Past conversations, grouped by when they were last used.
 class HistoryDrawer extends ConsumerStatefulWidget {
@@ -163,7 +177,7 @@ class _HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                       icon: Icons.send_rounded,
                       title: 'Connect Telegram',
                       subtitle: 'Your chats, channels, briefs and watches',
-                      onTap: () => go((_) => const AppsWebScreen()),
+                      onTap: () => go((_) => const AppsWebScreen(tab: AppsWebTab.telegram)),
                     ),
                   if (telegram && settings.drawerChats)
                     _DrawerSection(
@@ -231,6 +245,81 @@ class _HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                           ),
                       ],
                     ),
+                  // The person's own folders, beside Telegram's.
+                  if (telegram && ref.watch(customFoldersProvider).inDrawer)
+                    _DrawerSection(
+                      title: 'My folders',
+                      open: ref.watch(customFoldersProvider).drawerOpen,
+                      onOpen: ref.read(customFoldersProvider.notifier).setDrawerOpen,
+                      children: [
+                        for (final f in ref.watch(customFoldersProvider).folders)
+                          _CustomFolderTile(
+                            mark: folderMark(f, size: 18),
+                            title: f.name,
+                            count: f.chatIdsIn(ref.watch(activeAccountIdProvider), store).length,
+                            onTap: () => go((_) => CustomFolderScreen(folderId: f.id)),
+                          ),
+                        _CustomFolderTile(
+                          mark: Icon(Icons.add_rounded, size: 18, color: AppColors.text2),
+                          title: 'New folder',
+                          count: null,
+                          onTap: () async {
+                            final f = await showCustomFolderEditor(context, ref);
+                            if (f != null && context.mounted) await showFolderChatPicker(context, f);
+                          },
+                        ),
+                      ],
+                    ),
+                  // Marketplace, Movies, Books and Gallery: channels and
+                  // groups read as a shop, a streaming service, a library
+                  // and a photo gallery.
+                  if (ref.watch(exploreEnabledProvider) &&
+                      ((telegram && (ref.watch(marketProvider).inDrawer || ref.watch(moviesProvider).inDrawer || ref.watch(galleryProvider).inDrawer)) ||
+                          ref.watch(booksProvider).inDrawer ||
+                          ref.watch(playlistsProvider).inDrawer))
+                    _DrawerSection(
+                      title: 'Explore',
+                      open: ref.watch(sectionsDrawerOpenProvider),
+                      onOpen: ref.read(sectionsDrawerOpenProvider.notifier).set,
+                      children: [
+                        if (ref.watch(playlistsProvider).inDrawer)
+                          _CustomFolderTile(
+                            mark: Icon(Icons.queue_music_rounded, size: 19, color: AppColors.text2),
+                            title: 'Music',
+                            count: ref.watch(playlistsProvider).playlists.isEmpty ? null : ref.watch(playlistsProvider).playlists.length,
+                            playing: ref.watch(audioCenterProvider.select((a) => a.playing && a.queueTag != null)),
+                            onTap: () => go((_) => const PlaylistsScreen()),
+                          ),
+                        if (telegram && ref.watch(moviesProvider).inDrawer)
+                          _CustomFolderTile(
+                            mark: Icon(Icons.movie_filter_outlined, size: 19, color: AppColors.text2),
+                            title: 'Video',
+                            count: ref.watch(moviesProvider).continueWatching.isEmpty ? null : ref.watch(moviesProvider).continueWatching.length,
+                            onTap: () => go((_) => const MoviesScreen()),
+                          ),
+                        if (ref.watch(booksProvider).inDrawer)
+                          _CustomFolderTile(
+                            mark: Icon(Icons.auto_stories_outlined, size: 19, color: AppColors.text2),
+                            title: 'Books',
+                            count: ref.watch(booksProvider).books.isEmpty ? null : ref.watch(booksProvider).books.length,
+                            onTap: () => go((_) => const BooksScreen()),
+                          ),
+                        if (telegram && ref.watch(galleryProvider).inDrawer)
+                          _CustomFolderTile(
+                            mark: Icon(Icons.photo_library_outlined, size: 19, color: AppColors.text2),
+                            title: 'Gallery',
+                            count: null,
+                            onTap: () => go((_) => const GalleryScreen()),
+                          ),
+                        if (telegram && ref.watch(marketProvider).inDrawer)
+                          _CustomFolderTile(
+                            mark: Icon(Icons.storefront_outlined, size: 19, color: AppColors.text2),
+                            title: 'Marketplace',
+                            count: ref.watch(marketProvider).cartCount == 0 ? null : ref.watch(marketProvider).cartCount,
+                            onTap: () => go((_) => const MarketplaceScreen()),
+                          ),
+                      ],
+                    ),
                   if (settings.drawerTools)
                     _DrawerSection(
                       title: 'Tools',
@@ -238,56 +327,49 @@ class _HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                       onOpen: prefs.setDrawerToolsOpen,
                       children: [
                         if (settings.drawerShows('tools.files'))
-                        _DrawerActionTile(
-                          icon: Icons.folder_copy_outlined,
+                        _CustomFolderTile(
+                          mark: Icon(Icons.folder_copy_outlined, size: 19, color: AppColors.text2),
                           title: 'Files',
-                          subtitle: telegram
-                              ? 'Generated, downloaded, sandbox and Telegram files'
-                              : 'Generated, downloaded and sandbox files',
+                          count: null,
                           onTap: () => go((_) => const GeneratedFilesScreen()),
                         ),
                         if (settings.drawerShows('tools.brief'))
-                        _DrawerActionTile(
-                          icon: Icons.wb_twilight_rounded,
+                        _CustomFolderTile(
+                          mark: Icon(Icons.wb_twilight_rounded, size: 19, color: AppColors.text2),
                           title: 'Brief',
-                          subtitle: briefSubtitle(
-                            ref.watch(briefStoreProvider).briefs,
-                          ),
+                          count: null,
                           onTap: () => go((_) => const BriefScreen()),
                         ),
                         if (settings.drawerShows('tools.canvas'))
-                        _DrawerActionTile(
-                          icon: Icons.dashboard_customize_outlined,
+                        _CustomFolderTile(
+                          mark: Icon(Icons.dashboard_customize_outlined, size: 19, color: AppColors.text2),
                           title: 'Content Canvas',
-                          subtitle:
-                              '${ref.watch(canvasProvider).folders.length} folders · ${ref.watch(canvasProvider).items.length} saved',
+                          count: null,
                           onTap: () => go((_) => const ContentCanvasScreen()),
                         ),
                         if (settings.drawerShows('tools.search'))
-                        _DrawerActionTile(
-                          icon: Icons.manage_search_rounded,
+                        _CustomFolderTile(
+                          mark: Icon(Icons.manage_search_rounded, size: 19, color: AppColors.text2),
                           title: 'Search',
-                          subtitle: telegram
-                              ? 'Conversations, canvas, files, email and every Telegram chat'
-                              : 'Conversations, canvas, files, email and the web',
+                          count: null,
                           onTap: () =>
                               go((_) => const EverywhereSearchScreen()),
                         ),
                         if (settings.drawerShows('tools.browser'))
-                        _DrawerActionTile(
-                          icon: Icons.public_rounded,
+                        _CustomFolderTile(
+                          mark: Icon(Icons.public_rounded, size: 19, color: AppColors.text2),
                           title: 'Browser',
-                          subtitle: 'What the assistant has open on the web',
+                          count: null,
                           onTap: () {
                             Navigator.pop(context);
                             BrowserScreen.open(context);
                           },
                         ),
                         if (settings.drawerShows('tools.pc'))
-                        _DrawerActionTile(
-                          icon: Icons.desktop_windows_outlined,
+                        _CustomFolderTile(
+                          mark: Icon(Icons.desktop_windows_outlined, size: 19, color: AppColors.text2),
                           title: 'PC screen',
-                          subtitle: 'See and use your PC live, through Triangle Companion',
+                          count: null,
                           onTap: () {
                             Navigator.pop(context);
                             PcScreen.open(context);
@@ -421,24 +503,30 @@ class _HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                     : 'Loading chats…',
                 style: context.text.bodySmall,
               ),
-              trailing: IconButton(
-                tooltip: 'Settings',
-                icon: Icon(
-                  Icons.settings_outlined,
-                  size: 20,
-                  color: AppColors.text2,
-                ),
-                onPressed: () {
-                  Navigator.pop(context);
-                  widget.onOpenSettings();
-                },
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ThemeToggleButton(size: 20, color: AppColors.text2),
+                  IconButton(
+                    tooltip: 'Settings',
+                    icon: Icon(
+                      Icons.settings_outlined,
+                      size: 20,
+                      color: AppColors.text2,
+                    ),
+                    onPressed: () {
+                      Navigator.pop(context);
+                      widget.onOpenSettings();
+                    },
+                  ),
+                ],
               ),
               // Long press: switch to another account or add one.
               onLongPress: telegram || ref.read(accountsProvider).hasSeveral
                   ? () => showAccountsSheet(context, ref)
                   : null,
               onTap: me == null
-                  ? (telegram ? null : () => go((_) => const AppsWebScreen()))
+                  ? (telegram ? null : () => go((_) => const AppsWebScreen(tab: AppsWebTab.telegram)))
                   : () async {
                       final nav = Navigator.of(context);
                       nav.pop();
@@ -749,4 +837,37 @@ class _FolderTile extends StatelessWidget {
       ),
     );
   }
+}
+
+
+class _CustomFolderTile extends StatelessWidget {
+  const _CustomFolderTile({required this.mark, required this.title, required this.count, required this.onTap, this.playing = false});
+
+  /// A playlist that's playing: bars instead of its count.
+  final bool playing;
+
+  /// The folder's emoji or icon; null for none (the row keeps its place).
+  final Widget? mark;
+  final String title;
+  final int? count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    borderRadius: BorderRadius.circular(Radii.s),
+    onTap: onTap,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: Space.m, vertical: 11),
+      child: Row(
+        children: [
+          ...leadRow(SizedBox(width: 20, child: Center(child: mark)), Space.m + 2),
+          Expanded(child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: context.text.bodyMedium)),
+          if (playing)
+            EqualizerBars(playing: true, size: 12)
+          else if (count != null)
+            Text('$count', style: TextStyle(fontSize: 12.5, color: AppColors.text3)),
+        ],
+      ),
+    ),
+  );
 }

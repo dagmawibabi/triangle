@@ -31,6 +31,9 @@ List<String> toolPrerequisiteProblems(
   bool decisionsReady = true,
 }) {
   final problems = <String>[];
+  if (vapiToolNames.contains(tool.name) && !VapiStore.ready) {
+    problems.add('Add a Vapi key in Settings → Phone calls.');
+  }
   if (tool.category == ToolCategory.decisions && !decisionsReady) {
     problems.add(
       'Add a TypeSafe Jev key and turn Decisions on in AI & models.',
@@ -48,6 +51,7 @@ List<String> toolPrerequisiteProblems(
   if (creativeToolNeeds(tool, settings) case final reason?)
     problems.add(reason);
   if (cloudToolNeeds(tool, settings) case final reason?) problems.add(reason);
+  if (devToolNeeds(tool, settings) case final reason?) problems.add(reason);
   if (papersToolNeeds(tool, settings) case final reason?) problems.add(reason);
   if (!deviceToolReady(tool) || !utilityToolReady(tool) || (screenToolNames.contains(tool.name) && !Device.supported)) problems.add('Requires the Android app.');
   if (deviceToolReady(tool) && utilityToolReady(tool) && !infoToolReady(tool)) problems.add('Requires the Android app.');
@@ -128,8 +132,11 @@ List<String> toolPrerequisiteProblems(
 }
 
 String toolApprovalDescription(TelegramTool tool, AppSettings settings) {
-  if (tool.destructive || tool.alwaysAsk)
-    return 'Always asks for approval, including when other approvals are skipped.';
+  if (tool.destructive || tool.alwaysAsk) {
+    return settings.approvalMode == ApprovalMode.never
+        ? 'Runs without asking: approvals are set to Never ask.'
+        : 'Always asks for approval, unless approvals are set to Never ask.';
+  }
   if (!tool.requiresApproval)
     return 'Runs without an approval prompt when enabled. Read-only mode still blocks changes.';
   final policy = switch (settings.approvalMode) {
@@ -172,12 +179,18 @@ const toolPolicies = <String, ToolPolicy>{
   ..._financePolicies,
   ..._callHistoryPolicies,
   ..._libraryPolicies,
+  ..._sectionPolicies,
   ..._pokemonPolicies,
   ..._papersPolicies,
   ..._infoPolicies,
   ..._safetyPolicies,
   ..._systemToolPolicies,
+  ..._premiumToolPolicies,
   ..._screenPolicies,
+  ..._vercelPolicies,
+  ..._resendPolicies,
+  ..._mongoPolicies,
+  ..._parcelPolicies,
   'get_account_overview': ToolPolicy(ToolAccess.read, needsTelegram: true),
   'list_chats': ToolPolicy(ToolAccess.read, needsTelegram: true),
   'get_chat_info': ToolPolicy(ToolAccess.read, needsTelegram: true),
@@ -315,6 +328,13 @@ const toolPolicies = <String, ToolPolicy>{
   'list_briefs': ToolPolicy(ToolAccess.read),
   // Decisions, MCP servers and skills (omni_ai).
   'jev_decide': ToolPolicy(ToolAccess.read),
+  'place_phone_call': ToolPolicy(ToolAccess.modify),
+  'place_phone_calls': ToolPolicy(ToolAccess.modify),
+  'get_phone_call': ToolPolicy(ToolAccess.read),
+  'list_phone_calls': ToolPolicy(ToolAccess.read),
+  'control_phone_call': ToolPolicy(ToolAccess.modify),
+  'phone_call_recording': ToolPolicy(ToolAccess.read),
+  'list_phone_numbers': ToolPolicy(ToolAccess.read),
   'jev_batch': ToolPolicy(ToolAccess.read),
   'jev_noul': ToolPolicy(ToolAccess.read),
   'jev_choice': ToolPolicy(ToolAccess.read),
@@ -336,6 +356,26 @@ const toolPolicies = <String, ToolPolicy>{
   'mcp_install_catalog': ToolPolicy(ToolAccess.modify),
   'mcp_install': ToolPolicy(ToolAccess.modify),
   'mcp_call_tool': ToolPolicy(ToolAccess.modify),
+  'show_component': ToolPolicy(ToolAccess.read),
+  'list_custom_folders': ToolPolicy(ToolAccess.read, needsTelegram: true),
+  'custom_folder_chats': ToolPolicy(ToolAccess.read, needsTelegram: true),
+  'create_custom_folder': ToolPolicy(ToolAccess.modify, needsTelegram: true),
+  'update_custom_folder': ToolPolicy(ToolAccess.modify, needsTelegram: true),
+  'delete_custom_folder': ToolPolicy(ToolAccess.destructive, needsTelegram: true),
+  'list_playlists': ToolPolicy(ToolAccess.read),
+  'playlist_tracks': ToolPolicy(ToolAccess.read),
+  'find_audio': ToolPolicy(ToolAccess.read),
+  'create_playlist': ToolPolicy(ToolAccess.modify),
+  'update_playlist': ToolPolicy(ToolAccess.modify),
+  'play_playlist': ToolPolicy(ToolAccess.modify),
+  'delete_playlist': ToolPolicy(ToolAccess.destructive),
+  'like_tracks': ToolPolicy(ToolAccess.modify),
+  'music_stats': ToolPolicy(ToolAccess.read),
+  'player_control': ToolPolicy(ToolAccess.modify),
+  'arrange_playlists': ToolPolicy(ToolAccess.modify),
+  'duplicate_playlist': ToolPolicy(ToolAccess.modify),
+  'share_playlist': ToolPolicy(ToolAccess.modify, needsTelegram: true),
+  'import_playlist': ToolPolicy(ToolAccess.modify),
   'install_skill': ToolPolicy(ToolAccess.modify),
   'mcp_uninstall': ToolPolicy(ToolAccess.destructive),
   'uninstall_skill': ToolPolicy(ToolAccess.destructive),

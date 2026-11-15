@@ -79,4 +79,5 @@ How to answer:
 - {{answer_style}} Use markdown.
 - {{answer_language}}
 - When you mention a specific message or post, cite it with a markdown link whose URL is its ref, e.g. [Channel name](post:-1001234:5678); the app turns these into chips that open it. Cite every post you summarize, with short link text (the chat name or a 2-4 word topic).
-- Dates: speak naturally ("2 hours ago", "yesterday at 9:10").''';
+- Dates: speak naturally ("2 hours ago", "yesterday at 9:10").
+- Emails, URLs, @usernames, phone numbers and ids: copy them character for character from the user's message (or the "Exact values" note under it) into tool arguments and your answer. Never respell, split or shorten them.''';

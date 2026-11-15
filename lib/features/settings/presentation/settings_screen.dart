@@ -1,9 +1,5 @@
 
 import '../../../app/start_page.dart';
-import '../../telegram/presentation/chat_actions.dart' show confirmAction;
-import '../../brief/brief_store.dart';
-import '../../canvas/canvas_store.dart';
-import '../../chat/data/chat_controller.dart';
 import 'system_prompt_screen.dart';
 import '../../telegram/presentation/translate_sheet.dart'
     show translateLanguages;
@@ -18,6 +14,13 @@ import '../../../infrastructure/telegram/telegram_client.dart';
 import '../../ai/data/ai.dart';
 import 'package:omni_ai/omni_ai.dart' show ElevenLabsProvider, showVoicePicker;
 import '../../auth/data/auth_controller.dart';
+import '../../custom_folders/custom_folders.dart';
+import '../../playlists/playlists.dart' show playlistsProvider;
+import '../../marketplace/market.dart' show marketProvider;
+import '../../movies/movies.dart' show moviesProvider;
+import '../../books/books.dart' show booksProvider;
+import '../../gallery/gallery.dart' show galleryProvider;
+import '../../sections/section_kit.dart' show exploreEnabledProvider;
 import '../../telegram/data/telegram_store.dart';
 import '../../telegram/presentation/tg_avatar.dart';
 import '../../voice/player_sheet.dart';
@@ -35,18 +38,18 @@ import '../../assistant/presentation/memory_screen.dart';
 enum SettingsSection {
   ai(
     'AI & models',
-    'Chat, images and video, voice, decisions',
+    'Chat, images and video, decisions',
     Icons.auto_awesome_outlined,
   ),
   assistant(
-    'Assistant',
-    'Instructions, memory and tools',
+    'Instructions & memory',
+    'System prompt, memory and what it may do',
     Icons.psychology_outlined,
   ),
   proactivity(
-    'Proactivity & watches',
-    'Notifications, background, watches',
-    Icons.bolt_rounded,
+    'Notifications & background',
+    'Proactive assistant, quiet hours, running in the background',
+    Icons.notifications_active_outlined,
   ),
   voice('Voice', 'Read aloud and dictation', Icons.graphic_eq_rounded),
   media(
@@ -60,9 +63,9 @@ enum SettingsSection {
     Icons.palette_outlined,
   ),
   account(
-    'Account & privacy',
-    'Your Telegram session and safety',
-    Icons.shield_outlined,
+    'Telegram session',
+    'Online status, read receipts, sign out',
+    Icons.badge_outlined,
   );
 
   const SettingsSection(this.title, this.subtitle, this.icon);
@@ -179,22 +182,28 @@ class SettingsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final section = this.section;
     if (section == null) return const SettingsHub();
-    // Voice lives in AI & models now, as its third tab.
-    if (section == SettingsSection.ai || section == SettingsSection.voice) {
+    // Voice has a page of its own; AI & models keeps the other tabs.
+    if (section == SettingsSection.voice) {
+      return Scaffold(
+        appBar: AppBar(title: Text(SettingsSection.voice.title)),
+        body: _page(context, ref, SettingsSection.voice, tab: AiTab.voice),
+      );
+    }
+    if (section == SettingsSection.ai) {
+      const tabs = [AiTab.chat, AiTab.media, AiTab.decisions];
       return DefaultTabController(
-        length: AiTab.values.length,
-        initialIndex: section == SettingsSection.voice ? AiTab.voice.index : 0,
+        length: tabs.length,
         child: Scaffold(
           appBar: AppBar(
             title: Text(SettingsSection.ai.title),
             bottom: TabBar(
               isScrollable: true,
               tabAlignment: TabAlignment.start,
-              tabs: [for (final t in AiTab.values) Tab(text: t.label)],
+              tabs: [for (final t in tabs) Tab(text: t.label)],
             ),
           ),
           body: TabBarView(
-            children: [for (final t in AiTab.values) _page(context, ref, SettingsSection.ai, tab: t)],
+            children: [for (final t in tabs) _page(context, ref, SettingsSection.ai, tab: t)],
           ),
         ),
       );
@@ -235,8 +244,17 @@ class SettingsScreen extends ConsumerWidget {
                   value: s.aiChatEnabled,
                   onChanged: ctl.setAiChatEnabled,
                 ),
-                const _Header('Keys', note: 'Any one is enough'),
-                _Card(
+                const _Header('Providers', note: 'Any one is enough'),
+                _Fold(
+                  summary: [
+                    if (s.vercelKey.isNotEmpty) 'Vercel',
+                    if (s.openRouterKey.isNotEmpty) 'OpenRouter',
+                    if (s.openCodeKey.isNotEmpty) 'OpenCode',
+                    if (s.geminiKey.isNotEmpty) 'Gemini',
+                    if (s.lmStudioUrl.isNotEmpty) 'LM Studio',
+                  ],
+                  total: 5,
+                  child: _Card(
                   children: [
                     _KeyTile(
                       title: 'Vercel AI Gateway',
@@ -287,6 +305,7 @@ class SettingsScreen extends ConsumerWidget {
                       helpLabel: 'How to',
                     ),
                   ],
+                ),
                 ),
               ],
               if (tab == AiTab.chat) ...[
@@ -465,7 +484,7 @@ class SettingsScreen extends ConsumerWidget {
                     ),
                     const Divider(indent: 56),
                     ListTile(
-                      leading: lead(const Icon(Icons.visibility_outlined)),
+                      leading: lead(const Icon(Icons.manage_search_rounded)),
                       title: const Text('See the exact prompt'),
                       subtitle: Text('Everything a new chat is sent, filled in', style: context.text.bodySmall),
                       trailing: Icon(Icons.chevron_right_rounded, color: AppColors.text3),
@@ -879,6 +898,36 @@ class SettingsScreen extends ConsumerWidget {
                   value: s.voiceEnabled,
                   onChanged: ctl.setVoiceEnabled,
                 ),
+                const _Header('Voice mode'),
+                _Card(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(Space.l),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Voice mode shape', style: context.text.titleSmall),
+                          const SizedBox(height: Space.m),
+                          SizedBox(
+                            width: double.infinity,
+                            child: SegmentedButton<OrbShape>(
+                              showSelectedIcon: false,
+                              segments: [
+                                for (final (o, icon) in const [
+                                  (OrbShape.triangle, Icons.change_history_rounded),
+                                  (OrbShape.sphere, Icons.circle_outlined),
+                                ])
+                                  ButtonSegment(value: o, icon: Icon(icon, size: 18), label: Text(o.label)),
+                              ],
+                              selected: {s.orbShape},
+                              onSelectionChanged: (v) => ctl.setOrbShape(v.first),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
                 const _Header('Voice keys'),
                 _Card(
                   children: [
@@ -936,7 +985,7 @@ class SettingsScreen extends ConsumerWidget {
                     if (s.voiceEngine != VoiceEngine.ai) ...[
                       const Divider(indent: 56),
                       _ModelTile(
-                        icon: Icons.graphic_eq_rounded,
+                        icon: Icons.multitrack_audio_rounded,
                         title: 'AI audio model',
                         model: cat.byId(s.speechModel),
                         id: s.speechModel,
@@ -964,7 +1013,7 @@ class SettingsScreen extends ConsumerWidget {
                     ...switch (s.voiceEngine) {
                       VoiceEngine.device => [
                         ListTile(
-                          leading: lead(const Icon(Icons.record_voice_over_outlined)),
+                          leading: lead(const Icon(Icons.phone_android_rounded)),
                           title: const Text('Device voice'),
                           subtitle: Text(
                             s.deviceVoice.isEmpty
@@ -981,7 +1030,7 @@ class SettingsScreen extends ConsumerWidget {
                       ],
                       VoiceEngine.ai => [
                         _ModelTile(
-                          icon: Icons.graphic_eq_rounded,
+                          icon: Icons.multitrack_audio_rounded,
                           title: 'AI audio model',
                           model: cat.byId(s.speechModel),
                           id: s.speechModel,
@@ -1041,7 +1090,7 @@ class SettingsScreen extends ConsumerWidget {
                             ),
                           ),
                         ListTile(
-                          leading: lead(const Icon(Icons.record_voice_over_outlined)),
+                          leading: lead(const Icon(Icons.translate_rounded)),
                           title: const Text('Addis AI voice'),
                           subtitle: Text(
                             s.aiVoice.isEmpty
@@ -1077,7 +1126,7 @@ class SettingsScreen extends ConsumerWidget {
                             ),
                           ),
                         ListTile(
-                          leading: lead(const Icon(Icons.record_voice_over_outlined)),
+                          leading: lead(const Icon(Icons.surround_sound_outlined)),
                           title: const Text('ElevenLabs voice'),
                           subtitle: Text(
                             s.elevenVoiceName.isEmpty
@@ -1240,41 +1289,6 @@ class SettingsScreen extends ConsumerWidget {
                 ),
               ],
               if (section == SettingsSection.appearance) ...[
-                const _Header('Side drawer'),
-                _Card(
-                  children: [
-                    _DrawerSectionTile(
-                      icon: Icons.forum_outlined,
-                      title: 'Chats',
-                      subtitle: 'DMs, groups, channels, bots, contacts and calls',
-                      value: s.drawerChats,
-                      onChanged: ctl.setDrawerChats,
-                      items: DrawerItems.chats,
-                      settings: s,
-                      onItem: ctl.setDrawerItem,
-                    ),
-                    SwitchListTile(
-                      secondary: lead(const Icon(Icons.folder_outlined)),
-                      title: const Text('Folders'),
-                      subtitle: Text(
-                        'Your Telegram chat folders',
-                        style: context.text.bodySmall,
-                      ),
-                      value: s.drawerFolders,
-                      onChanged: ctl.setDrawerFolders,
-                    ),
-                    _DrawerSectionTile(
-                      icon: Icons.widgets_outlined,
-                      title: 'Tools',
-                      subtitle: 'Files, Brief, Content Canvas, Search, Browser and PC screen',
-                      value: s.drawerTools,
-                      onChanged: ctl.setDrawerTools,
-                      items: DrawerItems.tools,
-                      settings: s,
-                      onItem: ctl.setDrawerItem,
-                    ),
-                  ],
-                ),
                 const _Header('Appearance'),
                 _Card(
                   children: [
@@ -1299,32 +1313,6 @@ class SettingsScreen extends ConsumerWidget {
                               ],
                               selected: {s.themeMode},
                               onSelectionChanged: (v) => ctl.setThemeMode(v.first),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const Divider(indent: Space.l, endIndent: Space.l),
-                    Padding(
-                      padding: const EdgeInsets.all(Space.l),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Voice mode shape', style: context.text.titleSmall),
-                          const SizedBox(height: Space.m),
-                          SizedBox(
-                            width: double.infinity,
-                            child: SegmentedButton<OrbShape>(
-                              showSelectedIcon: false,
-                              segments: [
-                                for (final (o, icon) in const [
-                                  (OrbShape.triangle, Icons.change_history_rounded),
-                                  (OrbShape.sphere, Icons.circle_outlined),
-                                ])
-                                  ButtonSegment(value: o, icon: Icon(icon, size: 18), label: Text(o.label)),
-                              ],
-                              selected: {s.orbShape},
-                              onSelectionChanged: (v) => ctl.setOrbShape(v.first),
                             ),
                           ),
                         ],
@@ -1457,6 +1445,69 @@ class SettingsScreen extends ConsumerWidget {
                     ),
                   ],
                 ),
+                const _Header('Side drawer'),
+                _Card(
+                  children: [
+                    ..._dividedSwitches(context, [
+                      (
+                        Icons.create_new_folder_outlined,
+                        'My folders',
+                        'Your own folders of any chats, under their own heading',
+                        ref.watch(customFoldersProvider).inDrawer,
+                        ref.read(customFoldersProvider.notifier).setInDrawer,
+                      ),
+                      (
+                        Icons.explore_outlined,
+                        'Explore',
+                        'The heading with Music, Marketplace, Video, Books and Gallery. Each can also be turned off below.',
+                        ref.watch(exploreEnabledProvider),
+                        ref.read(exploreEnabledProvider.notifier).set,
+                      ),
+                      (
+                        Icons.queue_music_rounded,
+                        'Music',
+                        'Your playlists, player and listening stats',
+                        ref.watch(playlistsProvider).inDrawer,
+                        ref.read(playlistsProvider.notifier).setInDrawer,
+                      ),
+                      (
+                        Icons.storefront_outlined,
+                        'Marketplace',
+                        'Channels that sell things, as one shop with a cart and wishlist',
+                        ref.watch(marketProvider).inDrawer,
+                        ref.read(marketProvider.notifier).setInDrawer,
+                      ),
+                      (
+                        Icons.movie_filter_outlined,
+                        'Video',
+                        'Video channels as a streaming service',
+                        ref.watch(moviesProvider).inDrawer,
+                        ref.read(moviesProvider.notifier).setInDrawer,
+                      ),
+                      (
+                        Icons.auto_stories_outlined,
+                        'Books',
+                        'Your library and reader',
+                        ref.watch(booksProvider).inDrawer,
+                        ref.read(booksProvider.notifier).setInDrawer,
+                      ),
+                      (
+                        Icons.photo_library_outlined,
+                        'Gallery',
+                        'Photos and videos from your chats, with albums',
+                        ref.watch(galleryProvider).inDrawer,
+                        ref.read(galleryProvider.notifier).setInDrawer,
+                      ),
+                      (
+                        Icons.folder_shared_outlined,
+                        'Telegram folders',
+                        'The chat folders you made in Telegram',
+                        s.drawerFolders,
+                        ctl.setDrawerFolders,
+                      ),
+                    ]),
+                  ],
+                ),
                 const _Header('Lists'),
                 _Card(
                   children: [
@@ -1525,9 +1576,11 @@ class SettingsScreen extends ConsumerWidget {
                       (Icons.copy_outlined, 'Copy button', 'Under each answer', s.showChatCopyButton, ctl.setShowChatCopyButton),
                       (Icons.volume_up_outlined, 'Speak button', 'Read an answer aloud from under it', s.showChatSpeakButton, ctl.setShowChatSpeakButton),
                       (Icons.label_outline_rounded, 'Model name', 'Which model wrote each answer', s.showModelName, ctl.setShowModelName),
-                      (Icons.psychology_outlined, 'Show thinking', 'The model\'s reasoning above its answer', s.showThinking, ctl.setShowThinking),
+                      (Icons.lightbulb_outline_rounded, 'Show thinking', 'The model\'s reasoning above its answer', s.showThinking, ctl.setShowThinking),
                       (Icons.build_circle_outlined, 'Show tool calls', 'A card for each tool the assistant uses. Approvals always show.', s.showToolCalls, ctl.setShowToolCalls),
                       (Icons.density_small_rounded, 'Compact chat', 'Less space between messages', s.compactChat, ctl.setCompactChat),
+                      (Icons.vertical_align_bottom_rounded, 'Scroll-to-bottom button', 'The arrow that jumps to the newest message', s.showScrollToBottom, ctl.setShowScrollToBottom),
+                      (Icons.swap_horiz_rounded, 'Model chip', 'Shows and switches the chat model, above where you type', s.showModelChip, ctl.setShowModelChip),
                     ]),
                     const Divider(indent: Space.l, endIndent: Space.l),
                     SwitchListTile(
@@ -1726,101 +1779,6 @@ class SettingsScreen extends ConsumerWidget {
                       ),
                       value: s.aiReadOnView,
                       onChanged: ctl.setAiReadOnView,
-                    ),
-                  ],
-                ),
-                const _Header('Data on this phone'),
-                _Card(
-                  children: [
-                    ListTile(
-                      leading: lead(Icon(
-                        Icons.delete_sweep_outlined,
-                        color: AppColors.danger,
-                      )),
-                      title: const Text('Delete all AI conversations'),
-                      subtitle: Text(
-                        'Your Telegram is not touched',
-                        style: context.text.bodySmall,
-                      ),
-                      onTap: () async {
-                        if (!await confirmAction(
-                          context,
-                          title: 'Delete every AI conversation?',
-                          message: 'All chats with the assistant on this phone go. Watches keep running.',
-                          action: 'Delete all',
-                        )) {
-                          return;
-                        }
-                        await ref
-                            .read(chatControllerProvider.notifier)
-                            .deleteAll();
-                        if (context.mounted)
-                          showSnack(context, 'Conversations deleted');
-                      },
-                    ),
-                    const Divider(indent: 56),
-                    ListTile(
-                      leading: lead(Icon(
-                        Icons.wb_twilight_rounded,
-                        color: AppColors.danger,
-                      )),
-                      title: const Text('Delete all briefs'),
-                      onTap: () async {
-                        if (!await confirmAction(
-                          context,
-                          title: 'Delete every brief?',
-                          message: 'Saved briefs go.',
-                          action: 'Delete',
-                        )) {
-                          return;
-                        }
-                        await ref.read(briefStoreProvider.notifier).deleteAll();
-                        if (context.mounted)
-                          showSnack(context, 'Briefs deleted');
-                      },
-                    ),
-                    const Divider(indent: 56),
-                    ListTile(
-                      leading: lead(Icon(
-                        Icons.dashboard_customize_outlined,
-                        color: AppColors.danger,
-                      )),
-                      title: const Text('Empty the Content Canvas'),
-                      onTap: () async {
-                        if (!await confirmAction(
-                          context,
-                          title: 'Empty the canvas?',
-                          message: 'Every folder and saved item goes. Telegram is not touched.',
-                          action: 'Empty',
-                        )) {
-                          return;
-                        }
-                        await ref.read(canvasProvider.notifier).clear();
-                        if (context.mounted)
-                          showSnack(context, 'Canvas emptied');
-                      },
-                    ),
-                    const Divider(indent: 56),
-                    ListTile(
-                      leading: lead(const Icon(Icons.restart_alt_rounded)),
-                      title: const Text('Reset preferences'),
-                      subtitle: Text(
-                        'Every setting back to its default. Keys, models and instructions stay.',
-                        style: context.text.bodySmall,
-                      ),
-                      onTap: () async {
-                        if (!await confirmAction(
-                          context,
-                          title: 'Reset all preferences?',
-                          message: 'Tools, appearance, voice and automation settings go back to their defaults.',
-                          action: 'Reset',
-                        )) {
-                          return;
-                        }
-                        await ctl.resetPreferences();
-                        if (context.mounted)
-                          showSnack(context, 'Preferences reset');
-                      },
                     ),
                   ],
                 ),
@@ -2600,10 +2558,11 @@ class _DrawerItemChips extends StatelessWidget {
   );
 }
 
-/// A drawer section in Appearance: its switch, and its items folded away
+/// A side-drawer section (shown in Folders): its switch, and its items folded away
 /// until the row is tapped.
-class _DrawerSectionTile extends StatefulWidget {
-  const _DrawerSectionTile({
+class DrawerSectionTile extends StatefulWidget {
+  const DrawerSectionTile({
+    super.key,
     required this.icon,
     required this.title,
     required this.subtitle,
@@ -2623,10 +2582,10 @@ class _DrawerSectionTile extends StatefulWidget {
   final void Function(String key, bool shown) onItem;
 
   @override
-  State<_DrawerSectionTile> createState() => _DrawerSectionTileState();
+  State<DrawerSectionTile> createState() => _DrawerSectionTileState();
 }
 
-class _DrawerSectionTileState extends State<_DrawerSectionTile> {
+class _DrawerSectionTileState extends State<DrawerSectionTile> {
   bool _open = false;
 
   @override
@@ -2674,4 +2633,71 @@ class _DrawerSectionTileState extends State<_DrawerSectionTile> {
       ],
     );
   }
+}
+
+
+/// The AI provider keys folded into one row that names the ones set, so the
+/// model choices below stay in view. Open until a key is set.
+class _Fold extends StatefulWidget {
+  const _Fold({required this.summary, required this.total, required this.child});
+  final List<String> summary;
+  final int total;
+  final Widget child;
+
+  @override
+  State<_Fold> createState() => _FoldState();
+}
+
+class _FoldState extends State<_Fold> {
+  late bool _open = widget.summary.isEmpty;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Material(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(Radii.l),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(Radii.l),
+          onTap: () => setState(() => _open = !_open),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: Space.l, vertical: Space.m),
+            decoration: BoxDecoration(borderRadius: BorderRadius.circular(Radii.l), border: Border.all(color: AppColors.line)),
+            child: Row(
+              children: [
+                Icon(Icons.key_rounded, size: 20, color: AppColors.text2),
+                const SizedBox(width: Space.m),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('${widget.summary.length} of ${widget.total} providers set up', style: context.text.titleSmall),
+                      Text(
+                        widget.summary.isEmpty ? 'Add a key to start chatting' : widget.summary.join(' · '),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: context.text.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                AnimatedRotation(
+                  turns: _open ? 0.5 : 0,
+                  duration: const Duration(milliseconds: 180),
+                  child: Icon(Icons.expand_more_rounded, color: AppColors.text2),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      AnimatedSize(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+        alignment: Alignment.topCenter,
+        child: _open ? Padding(padding: const EdgeInsets.only(top: Space.s), child: widget.child) : const SizedBox(width: double.infinity),
+      ),
+    ],
+  );
 }

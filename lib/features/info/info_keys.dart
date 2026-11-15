@@ -14,6 +14,7 @@ class InfoKeys {
     this.useLibre = false,
     this.footballDataKey = '',
     this.sportsDbKey = '',
+    this.trackKey = '',
   });
   final String metalsKey;
   final String libreUrl;
@@ -28,17 +29,23 @@ class InfoKeys {
   /// TheSportsDB; empty uses the shared free key.
   final String sportsDbKey;
 
+  /// 17TRACK, for live package tracking (free monthly quota).
+  final String trackKey;
+
+  bool get hasTrackKey => trackKey.trim().isNotEmpty;
+
   bool get hasMetalsKey => metalsKey.trim().isNotEmpty;
   bool get libreReady => useLibre && libreUrl.trim().isNotEmpty;
   bool get hasFootballDataKey => footballDataKey.trim().isNotEmpty;
 
-  InfoKeys copyWith({String? metalsKey, String? libreUrl, String? libreKey, bool? useLibre, String? footballDataKey, String? sportsDbKey}) => InfoKeys(
+  InfoKeys copyWith({String? metalsKey, String? libreUrl, String? libreKey, bool? useLibre, String? footballDataKey, String? sportsDbKey, String? trackKey}) => InfoKeys(
     metalsKey: metalsKey ?? this.metalsKey,
     libreUrl: libreUrl ?? this.libreUrl,
     libreKey: libreKey ?? this.libreKey,
     useLibre: useLibre ?? this.useLibre,
     footballDataKey: footballDataKey ?? this.footballDataKey,
     sportsDbKey: sportsDbKey ?? this.sportsDbKey,
+    trackKey: trackKey ?? this.trackKey,
   );
 }
 
@@ -49,7 +56,8 @@ class InfoKeysNotifier extends Notifier<InfoKeys> {
       _libreKey = 'info_libre_key',
       _useLibre = 'info_use_libre',
       _footballData = 'sports_football_data_key',
-      _sportsDb = 'sports_thesportsdb_key';
+      _sportsDb = 'sports_thesportsdb_key',
+      _track = 'parcels_17track_key';
 
   /// Loaded once; until then the tools see empty keys.
   static InfoKeys current = const InfoKeys();
@@ -64,10 +72,18 @@ class InfoKeysNotifier extends Notifier<InfoKeys> {
         useLibre: await _storage.read(key: _useLibre) == 'true',
         footballDataKey: await _storage.read(key: _footballData) ?? '',
         sportsDbKey: await _storage.read(key: _sportsDb) ?? '',
+        trackKey: await _storage.read(key: _track) ?? '',
       );
     } catch (_) {}
     return current;
   }();
+
+  /// Drops what was loaded, so the next [load] reads storage again (after
+  /// a profile is restored or the data is cleared).
+  static void forget() {
+    _loading = null;
+    current = const InfoKeys();
+  }
 
   @override
   InfoKeys build() {
@@ -86,6 +102,7 @@ class InfoKeysNotifier extends Notifier<InfoKeys> {
   Future<void> setUseLibre(bool v) => _save(state.copyWith(useLibre: v), _useLibre, '$v');
   Future<void> setFootballDataKey(String v) => _save(state.copyWith(footballDataKey: v.trim()), _footballData, v.trim());
   Future<void> setSportsDbKey(String v) => _save(state.copyWith(sportsDbKey: v.trim()), _sportsDb, v.trim());
+  Future<void> setTrackKey(String v) => _save(state.copyWith(trackKey: v.trim()), _track, v.trim());
 }
 
 final infoKeysProvider = NotifierProvider<InfoKeysNotifier, InfoKeys>(InfoKeysNotifier.new);

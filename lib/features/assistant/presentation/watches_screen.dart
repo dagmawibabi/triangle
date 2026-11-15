@@ -9,6 +9,7 @@ import '../../../app/theme.dart';
 import '../../../core/widgets/app_sheet.dart';
 import '../../chat/data/chat_controller.dart';
 import '../../settings/data/settings.dart';
+import '../../settings/presentation/watch_timing_screen.dart';
 import '../../telegram/data/telegram_store.dart';
 import '../../telegram/presentation/tg_avatar.dart';
 import '../online_alerts.dart';
@@ -302,7 +303,16 @@ class _WatchesScreenState extends ConsumerState<WatchesScreen> {
     final templates = _templates.where((t) => telegram || !t.needsTelegram).toList();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Watches')),
+      appBar: AppBar(
+        title: const Text('Watches'),
+        actions: [
+          IconButton(
+            tooltip: 'Response timing',
+            icon: const Icon(Icons.timer_outlined),
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const WatchTimingScreen())),
+          ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: AppColors.text,
         foregroundColor: AppColors.bg,
@@ -1018,6 +1028,18 @@ class _WatchEditorState extends ConsumerState<WatchEditor> {
   late DeviceCondition _device = _init?.device ?? const DeviceCondition(kind: DeviceTriggerKind.batteryLow);
   late ToolAllowlist? _tools = _init?.tools;
   late String _model = _init?.model ?? WatchModel.free;
+  late List<String> _keywords = [...?_init?.keywords];
+  late KeywordFrom _keywordFrom = _init?.keywordFrom ?? KeywordFrom.anyone;
+
+  /// Wakes on every matching message, or only on one saying a keyword.
+  late bool _keywordMode = _init?.keywordGated ?? false;
+
+  List<String> get _allKeywords => [
+    ..._keywords,
+    for (final k in _keywordInput.text.split(',').map((k) => k.trim()))
+      if (k.isNotEmpty && !_keywords.any((x) => x.toLowerCase() == k.toLowerCase())) k,
+  ];
+  final _keywordInput = TextEditingController();
   bool _advanced = false;
   bool _saving = false;
 
@@ -1034,6 +1056,7 @@ class _WatchEditorState extends ConsumerState<WatchEditor> {
     super.initState();
     _name.addListener(_refresh);
     _query.addListener(_refresh);
+    _keywordInput.addListener(_refresh);
     _instructions.addListener(_refresh);
   }
 
@@ -1044,7 +1067,119 @@ class _WatchEditorState extends ConsumerState<WatchEditor> {
     _name.dispose();
     _instructions.dispose();
     _query.dispose();
+    _keywordInput.dispose();
     super.dispose();
+  }
+
+  void _addKeyword([String? raw]) {
+    final words = (raw ?? _keywordInput.text).split(',').map((k) => k.trim()).where((k) => k.isNotEmpty);
+    setState(() {
+      for (final k in words) {
+        if (!_keywords.any((x) => x.toLowerCase() == k.toLowerCase())) _keywords.add(k);
+      }
+      _keywordInput.clear();
+    });
+  }
+
+  /// Wake only on a keyword: the watch listens all day for free and runs
+  /// the AI only when someone says the word.
+  Widget _keywordCard(BuildContext context) {
+    final on = _keywords.isNotEmpty;
+    return Padding(
+      padding: const EdgeInsets.only(top: Space.m),
+      child: automationCard(context, [
+        ListTile(
+          leading: lead(Icon(_keywordMode ? Icons.key_rounded : Icons.forum_outlined)),
+          title: const Text('Wake on'),
+          subtitle: Text(
+            !_keywordMode
+                ? 'Every new message in what it watches.'
+                : on
+                ? 'Only messages that say ${_keywords.map((k) => '\u201c$k\u201d').join(' or ')}. Everything else is ignored, so it costs nothing until then.'
+                : 'Only messages that say a keyword. Add one below.',
+            style: context.text.bodySmall,
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(Space.l, 0, Space.l, Space.m),
+          child: SegmentedButton<bool>(
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(value: false, icon: Icon(Icons.all_inclusive_rounded, size: 16), label: Text('Every message')),
+              ButtonSegment(value: true, icon: Icon(Icons.key_rounded, size: 16), label: Text('A keyword')),
+            ],
+            selected: {_keywordMode},
+            onSelectionChanged: (v) => setState(() => _keywordMode = v.first),
+          ),
+        ),
+        if (_keywordMode) Padding(
+          padding: const EdgeInsets.fromLTRB(Space.l, 0, Space.l, Space.m),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (on)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: Space.s),
+                  child: Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final k in _keywords)
+                        InputChip(
+                          label: Text(k),
+                          visualDensity: VisualDensity.compact,
+                          onDeleted: () => setState(() => _keywords.remove(k)),
+                        ),
+                    ],
+                  ),
+                ),
+              TextField(
+                controller: _keywordInput,
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => _addKeyword(),
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: on ? 'Add another' : 'Triangle, /agent',
+                  suffixIcon: IconButton(icon: const Icon(Icons.add_rounded), tooltip: 'Add keyword', onPressed: _addKeyword),
+                ),
+              ),
+              if (!on) ...[
+                const SizedBox(height: Space.s),
+                Wrap(
+                  spacing: 6,
+                  children: [
+                    for (final k in const ['Triangle', '/agent', '@ai'])
+                      ActionChip(
+                        visualDensity: const VisualDensity(horizontal: -1, vertical: -3),
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        avatar: Icon(Icons.add_rounded, size: 14, color: AppColors.text2),
+                        label: Text(k),
+                        onPressed: () => _addKeyword(k),
+                      ),
+                  ],
+                ),
+              ],
+              if (on) ...[
+                const SizedBox(height: Space.m),
+                Text('Who can say it', style: context.text.labelMedium),
+                const SizedBox(height: Space.xs),
+                SegmentedButton<KeywordFrom>(
+                  showSelectedIcon: false,
+                  segments: [for (final f in KeywordFrom.values) ButtonSegment(value: f, label: Text(f.label))],
+                  selected: {_keywordFrom},
+                  onSelectionChanged: (v) => setState(() => _keywordFrom = v.first),
+                ),
+                const SizedBox(height: Space.xs),
+                Text(
+                  '${_keywordFrom.explanation}. Matches the whole word, any case.',
+                  style: context.text.bodySmall,
+                ),
+              ],
+            ],
+          ),
+        ),
+      ]),
+    );
   }
 
   /// Plain notifications only make sense for messages and phone events;
@@ -1103,12 +1238,15 @@ class _WatchEditorState extends ConsumerState<WatchEditor> {
       device: _scope == WatchScope.device ? _device : null,
       tools: _tools,
       model: _model,
+      keywords: _scope.needsTelegram && _keywordMode ? _allKeywords : const [],
+      keywordFrom: _keywordFrom,
     );
   }
 
   /// What still has to be filled in before it can be saved.
   String? _missing() {
     if (_scope == WatchScope.chats && _chatIds.isEmpty) return 'Pick at least one chat';
+    if (_scope.needsTelegram && _keywordMode && _allKeywords.isEmpty) return 'Add a trigger keyword';
     if (_scope == WatchScope.folder && _folderId == null) return 'Pick a folder';
     if (_scope == WatchScope.device && _device.kind.needsPlace && !_device.hasPlace) {
       return 'Set the place: tap "Use where I am" while you are there';
@@ -1268,6 +1406,7 @@ class _WatchEditorState extends ConsumerState<WatchEditor> {
             alignment: Alignment.topCenter,
             child: _triggerOptions(context, store, accounts, folderStore, connected),
           ),
+          if (_scope.needsTelegram && ref.watch(telegramConnectedProvider)) _keywordCard(context),
 
           // ---- 2. then ----
           const _Step(number: 2, title: 'Then', subtitle: 'What it does'),
@@ -1893,7 +2032,7 @@ class _DashedButton extends StatelessWidget {
         decoration: BoxDecoration(
           color: AppColors.surface,
           borderRadius: BorderRadius.circular(Radii.l),
-          border: Border.all(color: AppColors.accent.withValues(alpha: 0.5)),
+          border: Border.all(color: AppColors.tint.withValues(alpha: 0.5)),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -2158,7 +2297,7 @@ class _CheckInCard extends ConsumerWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(Radii.l),
             color: AppColors.surface,
-            border: Border.all(color: w.enabled ? AppColors.accent.withValues(alpha: 0.3) : AppColors.line),
+            border: Border.all(color: w.enabled ? AppColors.tint.withValues(alpha: 0.3) : AppColors.line),
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,

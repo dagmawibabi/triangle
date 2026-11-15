@@ -11,6 +11,8 @@ import '../../integrations/integrations_store.dart';
 import '../../telegram/presentation/chat_actions.dart' show confirmAction;
 import '../data/settings.dart';
 import 'cloud_settings.dart' show KeyField;
+import '../../development/manage/app_managers.dart' show appManagerFor;
+import '../../../core/widgets/app_logo.dart';
 
 /// The Apps & web screen's first tab: the apps the assistant can use
 /// through Composio, each connected or not. Connecting opens Composio's
@@ -100,6 +102,21 @@ class _AppsTabState extends ConsumerState<AppsTab> with WidgetsBindingObserver {
       for (final a in st.accounts)
         if (!known.contains(a.toolkit)) a.toolkit,
     }.toList()..sort();
+    final descriptions = {for (final t in appToolkits) t.slug: t.description};
+    // Connected accounts first, from the built-in list and any other app,
+    // then sign-ins still waiting, then everything not connected yet.
+    final all = [for (final t in appToolkits) t.slug, ...others];
+    final connected = [for (final slug in all) if (st.accountFor(slug)?.active ?? false) slug];
+    final pending = [for (final slug in all) if (st.accountFor(slug) != null && !(st.accountFor(slug)?.active ?? false)) slug];
+    final available = [for (final t in appToolkits) if (st.accountFor(t.slug) == null) t.slug];
+    Widget row(String slug) => _AppRow(
+      slug: slug,
+      description: descriptions[slug] ?? 'Used through find_app_tools and run_app_tool.',
+      account: st.accountFor(slug),
+      busy: _busy == slug,
+      onConnect: () => _connect(slug),
+      onDisconnect: () => _disconnect(slug),
+    );
     return RefreshIndicator(
       onRefresh: ref.read(integrationsProvider.notifier).refresh,
       child: Center(
@@ -108,8 +125,6 @@ class _AppsTabState extends ConsumerState<AppsTab> with WidgetsBindingObserver {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(Space.l, Space.m, Space.l, Space.x4),
             children: [
-              keyCard,
-              const SizedBox(height: Space.m),
               Text(
                 'Connect your own accounts and the assistant can read, search and, after you approve, act in them. '
                 'Composio keeps the sign-ins; this phone keeps only your Composio key.',
@@ -125,62 +140,31 @@ class _AppsTabState extends ConsumerState<AppsTab> with WidgetsBindingObserver {
                   ),
                   child: Text(st.error!, style: context.text.bodySmall?.copyWith(color: AppColors.danger)),
                 ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(Space.xs, Space.xl, Space.xs, Space.s),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'APPS · ${st.connected.length} CONNECTED',
-                        style: context.text.labelSmall,
-                      ),
-                    ),
-                    if (st.loading)
-                      const SizedBox.square(dimension: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                    else
-                      InkWell(
+              _Label(
+                'CONNECTED · ${connected.length}',
+                trailing: st.loading
+                    ? const SizedBox.square(dimension: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                    : InkWell(
                         onTap: ref.read(integrationsProvider.notifier).refresh,
                         child: Icon(Icons.refresh_rounded, size: 18, color: AppColors.text3),
                       ),
-                  ],
-                ),
               ),
-              _Group(
-                children: [
-                  for (final t in appToolkits)
-                    _AppRow(
-                      slug: t.slug,
-                      description: t.description,
-                      account: st.accountFor(t.slug),
-                      busy: _busy == t.slug,
-                      onConnect: () => _connect(t.slug),
-                      onDisconnect: () => _disconnect(t.slug),
-                    ),
-                ],
-              ),
-              if (others.isNotEmpty) ...[
+              if (connected.isEmpty)
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(Space.xs, Space.xl, Space.xs, Space.s),
-                  child: Text('OTHER APPS', style: context.text.labelSmall),
-                ),
-                _Group(
-                  children: [
-                    for (final slug in others)
-                      _AppRow(
-                        slug: slug,
-                        description: 'Used through find_app_tools and run_app_tool.',
-                        account: st.accountFor(slug),
-                        busy: _busy == slug,
-                        onConnect: () => _connect(slug),
-                        onDisconnect: () => _disconnect(slug),
-                      ),
-                  ],
-                ),
+                  padding: const EdgeInsets.symmetric(horizontal: Space.xs),
+                  child: Text('Nothing connected yet. Pick an app below.', style: context.text.bodySmall),
+                )
+              else
+                _Group(children: [for (final slug in connected) row(slug)]),
+              if (pending.isNotEmpty) ...[
+                const _Label('WAITING FOR SIGN-IN'),
+                _Group(children: [for (final slug in pending) row(slug)]),
               ],
-              Padding(
-                padding: const EdgeInsets.fromLTRB(Space.xs, Space.xl, Space.xs, Space.s),
-                child: Text('ANY OTHER APP', style: context.text.labelSmall),
-              ),
+              if (available.isNotEmpty) ...[
+                const _Label('AVAILABLE'),
+                _Group(children: [for (final slug in available) row(slug)]),
+              ],
+              const _Label('ANY OTHER APP'),
               Text(
                 'Composio has 500+ more: HubSpot, Jira, Asana, Airtable, Dropbox, Zoom, Discord… Type its toolkit slug '
                 '(from composio.dev/toolkits) to connect it. The assistant reaches them through run_app_tool, which '
@@ -208,7 +192,9 @@ class _AppsTabState extends ConsumerState<AppsTab> with WidgetsBindingObserver {
                   ),
                 ],
               ),
-              const SizedBox(height: Space.xl),
+              const _Label('COMPOSIO KEY'),
+              keyCard,
+              const SizedBox(height: Space.m),
               Text(
                 'Your Composio user: ${s.composioUserId.isEmpty ? 'made when you first connect' : s.composioUserId}',
                 style: context.text.labelSmall?.copyWith(color: AppColors.text3),
@@ -219,6 +205,23 @@ class _AppsTabState extends ConsumerState<AppsTab> with WidgetsBindingObserver {
       ),
     );
   }
+}
+
+class _Label extends StatelessWidget {
+  const _Label(this.text, {this.trailing});
+  final String text;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(Space.xs, Space.xl, Space.xs, Space.s),
+    child: Row(
+      children: [
+        Expanded(child: Text(text, style: context.text.labelSmall)),
+        ?trailing,
+      ],
+    ),
+  );
 }
 
 class _Group extends StatelessWidget {
@@ -276,11 +279,7 @@ class _AppRow extends StatelessWidget {
             height: 36,
             padding: const EdgeInsets.all(6),
             decoration: BoxDecoration(color: AppColors.surface3, borderRadius: BorderRadius.circular(Radii.s)),
-            child: Image.network(
-              'https://logos.composio.dev/api/$slug',
-              errorBuilder: (_, _, _) => fallback,
-              loadingBuilder: (_, child, p) => p == null ? child : fallback,
-            ),
+            child: AppLogo(slug, size: 24, fallback: fallback),
           ),
           const SizedBox(width: Space.m),
           Expanded(
@@ -308,7 +307,12 @@ class _AppRow extends StatelessWidget {
           const SizedBox(width: Space.s),
           if (busy)
             const SizedBox.square(dimension: 20, child: CircularProgressIndicator(strokeWidth: 2))
-          else if (active)
+          else if (active) ...[
+            if (appManagerFor(slug) != null)
+              FilledButton.tonal(
+                onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => appManagerFor(slug)!)),
+                child: const Text('Manage'),
+              ),
             PopupMenuButton<String>(
               icon: Icon(Icons.more_vert_rounded, color: AppColors.text3),
               onSelected: (v) => v == 'open' ? launchUrl(Uri.parse(t!.openUrl!), mode: LaunchMode.externalApplication) : onDisconnect(),
@@ -316,8 +320,8 @@ class _AppRow extends StatelessWidget {
                 if (t?.openUrl != null) PopupMenuItem(value: 'open', child: Text('Open ${t!.label}')),
                 PopupMenuItem(value: 'disconnect', child: Text('Disconnect', style: TextStyle(color: AppColors.danger))),
               ],
-            )
-          else
+            ),
+          ] else
             FilledButton.tonal(onPressed: onConnect, child: const Text('Connect')),
         ],
       ),

@@ -431,6 +431,127 @@ final _capabilityTools = <TelegramTool>[
       'name': {'type': 'string', 'description': 'Installed skill name.'},
     }, ['name']),
   ),
+  // ---- Phone calls (Vapi) ----
+  TelegramTool(
+    name: 'place_phone_call',
+    label: 'Placing a phone call',
+    category: ToolCategory.calls,
+    cost: ToolCost.web,
+    requiresApproval: true,
+    alwaysAsk: true,
+    description:
+        'Phones a number for the user through Vapi. An AI voice agent carries out the goal and reports back with a '
+        'summary, the collected answers and the transcript. Returns the call id at once (the user sees the call live); '
+        'check it with get_phone_call. Costs money and reaches a real person: only when the user asked.',
+    parameters: _obj({
+      'to': {'type': 'string', 'description': 'The number with country code, e.g. +14155550100.'},
+      'to_name': {'type': 'string', 'description': 'Who is being called, if known.'},
+        'goal': {'type': 'string', 'description': 'What the call must achieve, in plain words, e.g. "Book a table for 4 at 7pm Friday".'},
+        'context': {'type': 'string', 'description': 'Facts the agent may use: names, dates, order numbers, limits.'},
+        'collect': {'type': 'object', 'additionalProperties': {'type': 'string'}, 'description': 'Answers to bring back, name to meaning, e.g. {"booked": "true if booked"}.'},
+        'first_message': {'type': 'string', 'description': 'What to say when they answer. Leave out to let the agent open.'},
+        'language': {'type': 'string', 'description': 'Language code to speak, e.g. "es". Leave out to match theirs.'},
+        'voice': {'type': 'string', 'description': 'Vapi voice: Elliot, Clara, Emma, Godfrey, Kai, Layla, Naina, Neil, Nico, Sagar, Savannah, Sid.'},
+        'max_minutes': {'type': 'integer', 'description': '1-30; capped by the user\'s setting.'},
+        'voicemail_message': {'type': 'string', 'description': 'A short message to leave on voicemail. Leave out to hang up.'},
+        'schedule_at': {'type': 'string', 'description': 'ISO date-time to call later instead of now, with the time zone.'},
+    }, ['to', 'goal']),
+  ),
+  TelegramTool(
+    name: 'place_phone_calls',
+    label: 'Placing phone calls',
+    category: ToolCategory.calls,
+    cost: ToolCost.web,
+    requiresApproval: true,
+    alwaysAsk: true,
+    description:
+        'Phones several numbers at once with the same goal (asking shops for a price, restaurants for a table). '
+        'Returns each call id; compare results with get_phone_call. Only when the user asked.',
+    parameters: _obj({
+      'to': {
+        'type': 'array',
+        'items': {
+          'type': 'object',
+          'properties': {
+            'number': {'type': 'string', 'description': 'With country code.'},
+            'name': {'type': 'string', 'description': 'Who it is.'},
+          },
+          'required': ['number'],
+        },
+        'description': 'Numbers with country code, and who each is (up to 20).',
+      },
+        'goal': {'type': 'string', 'description': 'What the call must achieve, in plain words, e.g. "Book a table for 4 at 7pm Friday".'},
+        'context': {'type': 'string', 'description': 'Facts the agent may use: names, dates, order numbers, limits.'},
+        'collect': {'type': 'object', 'additionalProperties': {'type': 'string'}, 'description': 'Answers to bring back, name to meaning, e.g. {"booked": "true if booked"}.'},
+        'first_message': {'type': 'string', 'description': 'What to say when they answer. Leave out to let the agent open.'},
+        'language': {'type': 'string', 'description': 'Language code to speak, e.g. "es". Leave out to match theirs.'},
+        'voice': {'type': 'string', 'description': 'Vapi voice: Elliot, Clara, Emma, Godfrey, Kai, Layla, Naina, Neil, Nico, Sagar, Savannah, Sid.'},
+        'max_minutes': {'type': 'integer', 'description': '1-30; capped by the user\'s setting.'},
+        'voicemail_message': {'type': 'string', 'description': 'A short message to leave on voicemail. Leave out to hang up.'},
+        'schedule_at': {'type': 'string', 'description': 'ISO date-time to call later instead of now, with the time zone.'},
+    }, ['to', 'goal']),
+  ),
+  TelegramTool(
+    name: 'get_phone_call',
+    label: 'Checking a phone call',
+    category: ToolCategory.calls,
+    cost: ToolCost.web,
+    description:
+        'A call\'s status, outcome, summary, collected answers, cost and transcript. With wait true, waits (up to '
+        'max_wait_seconds) for the call to end and its summary to arrive.',
+    parameters: _obj({
+      'id': {'type': 'string', 'description': 'The call id from place_phone_call.'},
+      'wait': {'type': 'boolean', 'description': 'Wait for the call to end.'},
+      'max_wait_seconds': {'type': 'integer', 'description': '5-900, default 300.'},
+      'include_transcript': {'type': 'boolean', 'description': 'Default true.'},
+    }, ['id']),
+  ),
+  TelegramTool(
+    name: 'list_phone_calls',
+    label: 'Listing phone calls',
+    category: ToolCategory.calls,
+    cost: ToolCost.web,
+    description: 'Recent calls made or received through Vapi, newest first, with outcome and summary.',
+    parameters: _obj({
+      'limit': {'type': 'integer', 'description': '1-50, default 10.'},
+      'since': {'type': 'string', 'description': 'ISO date; only calls after it.'},
+    }),
+  ),
+  TelegramTool(
+    name: 'control_phone_call',
+    label: 'Steering a phone call',
+    category: ToolCategory.calls,
+    cost: ToolCost.web,
+    requiresApproval: true,
+    description:
+        'Steers a call in progress: say makes the agent say text now, note gives the agent a new instruction or fact, '
+        'transfer hands the call to a number, end hangs up.',
+    parameters: _obj({
+      'id': {'type': 'string', 'description': 'The call id.'},
+      'action': {'type': 'string', 'enum': ['say', 'note', 'transfer', 'end'], 'description': 'What to do.'},
+      'text': {'type': 'string', 'description': 'What to say (say), the instruction (note), or a line before transferring.'},
+      'number': {'type': 'string', 'description': 'For transfer: the number to hand the call to.'},
+    }, ['id', 'action']),
+  ),
+  TelegramTool(
+    name: 'phone_call_recording',
+    label: 'Getting a call recording',
+    category: ToolCategory.calls,
+    cost: ToolCost.web,
+    description: 'A fresh link to a finished call\'s recording (it expires after a while).',
+    parameters: _obj({
+      'id': {'type': 'string', 'description': 'The call id.'},
+      'channel': {'type': 'string', 'enum': ['mono', 'stereo', 'customer', 'assistant'], 'description': 'Default mono.'},
+    }, ['id']),
+  ),
+  TelegramTool(
+    name: 'list_phone_numbers',
+    label: 'Listing phone numbers',
+    category: ToolCategory.calls,
+    cost: ToolCost.web,
+    description: 'The numbers in the Vapi account that calls can be made from.',
+    parameters: _obj({}),
+  ),
 ];
 
 /// The tools above, which omni_ai runs.

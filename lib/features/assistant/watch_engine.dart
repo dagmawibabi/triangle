@@ -119,6 +119,27 @@ class WatchEngine {
   final Map<String, DateTime> _firstPending = {};
   final Map<String, List<DateTime>> _aiRuns = {};
   final Set<String> _running = {};
+
+  /// When each watch's last run ended. The user's own messages a little
+  /// after a run are probably the assistant's replies (it sends as the
+  /// user), so they never re-trigger a keyword watch.
+  final Map<String, DateTime> _ranUntil = {};
+  static const _ownEcho = Duration(seconds: 20);
+
+  /// Whether [m] fires keyword watch [w]: it says a keyword, from the
+  /// right sender, and isn't the assistant's own reply.
+  bool _keywordHit(Watch w, td.Message m) {
+    if (m.isOutgoing) {
+      if (w.keywordFrom == KeywordFrom.others) return false;
+      if (_running.contains(w.id)) return false;
+      final until = _ranUntil[w.id];
+      if (until != null && DateTime.now().difference(until) < _ownEcho) return false;
+    } else if (w.keywordFrom == KeywordFrom.me) {
+      return false;
+    }
+    final g = gistOf(m.content);
+    return saysKeyword('${g.text} ${g.detail ?? ''}', w.keywords);
+  }
   final LinkedHashSet<String> _seen = LinkedHashSet();
 
   /// Messages each watch has taken, so a group two accounts share fires a
@@ -557,9 +578,10 @@ class WatchEngine {
 
   void _consider(String account, td.Message m) {
     // Only what others write, and only new: the account's own messages,
-    // the assistant's replies included, never trigger a watch.
-    if (m.isOutgoing || m.sendingState != null || m.schedulingState != null)
-      return;
+    // the assistant's replies included, never trigger a watch, except a
+    // keyword watch, where the user says the keyword themself.
+    if (m.sendingState != null || m.schedulingState != null) return;
+    if (m.isOutgoing && !_active.any((w) => w.keywordGated && w.keywordFrom != KeywordFrom.others)) return;
     if (m.date < _since) return;
     if (gistOf(m.content).kind == 'service') return;
     final key = '$account:${m.chatId}:${m.id}';
@@ -570,6 +592,9 @@ class WatchEngine {
     final store = _store(account);
     for (final w in _active) {
       if (!w.covers(account) || !_matches(w, m, store)) continue;
+      // A keyword watch hears everything but wakes only on its keyword: the
+      // rest is dropped here, before any AI runs.
+      if (w.keywordGated ? !_keywordHit(w, m) : m.isOutgoing) continue;
       // A supergroup or channel both accounts are in delivers the same
       // message to each (their message ids are shared); it fires once.
       // Elsewhere message ids are each account's own, so nothing is merged.
@@ -727,12 +752,15 @@ class WatchEngine {
       final store = _store(account);
       for (final c in store.chats.values) {
         final m = c.lastMessage;
-        if (m == null || m.isOutgoing || !_matches(w, m, store)) continue;
+        if (m == null || !_matches(w, m, store)) continue;
+        if (w.keywordGated ? !saysKeyword(gistOf(m.content).text, w.keywords) : m.isOutgoing) continue;
         if (newest == null || m.date > newest.$1.date) newest = (m, account);
       }
     }
     if (newest == null)
-      return 'No message from someone else matches this watch yet.';
+      return w.keywordGated
+          ? 'No recent message says ${w.keywords.map((k) => '"$k"').join(' or ')} yet. Send one in a watched chat to try it.'
+          : 'No message from someone else matches this watch yet.';
     await _fire(w, [newest.$1], test: true, account: newest.$2);
     return null;
   }
@@ -890,9 +918,11 @@ class WatchEngine {
                 'If there is nothing worth telling the user, answer with exactly $nothingNew and nothing else.'
           : scheduled
           ? '${test ? 'Test run · ' : ''}Scheduled run (${w.dailyAt != null ? 'daily at ${w.dailyAt}' : 'every ${w.everyMinutes} minutes'}).'
-          : '${test ? 'Test run with the latest matching message · ' : ''}New messages arrived in $where:\n${[for (final m in messages) '- ${store.chat(m.chatId)?.title ?? 'Chat'} (chat_id ${m.chatId}, message_id ${m.id}, ref post:${m.chatId}:${m.id}'
+          : '${test ? 'Test run with the latest matching message · ' : ''}'
+                '${w.keywordGated ? 'Summoned by keyword (${w.keywords.join(', ')}): the message below says it. If it was sent by the user, treat what follows the keyword as their request and answer it in that chat. ' : ''}'
+                'New messages arrived in $where:\n${[for (final m in messages) '- ${store.chat(m.chatId)?.title ?? 'Chat'} (chat_id ${m.chatId}, message_id ${m.id}, ref post:${m.chatId}:${m.id}'
                   '${m.isTopicMessage ? ', topic_id ${m.messageThreadId}' : ''}'
-                  '${switch (m.senderId) {
+                  '${m.isOutgoing ? ', sent by the user themself' : switch (m.senderId) {
                     td.MessageSenderUser(:final userId) => ', from user_id $userId',
                     _ => '',
                   }}): ${fence(_line(m, store), 'telegram message')}'].join('\n')}';
@@ -945,6 +975,7 @@ class WatchEngine {
       if (_ref.mounted) await _ref.read(homeWidgetsProvider.notifier).recordRun(w.id, started: started, result: '$e', failed: true);
     } finally {
       _running.remove(w.id);
+      _ranUntil[w.id] = DateTime.now();
     }
   }
 

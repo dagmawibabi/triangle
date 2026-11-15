@@ -7,6 +7,7 @@ import '../../../../core/widgets/net_image.dart';
 import '../../../info/info_api.dart';
 import '../../domain/chat_models.dart';
 import 'info_card_kit.dart';
+import '../../../../core/widgets/fullscreen_image.dart';
 
 /// Cards for packages, domains, xkcd, the dictionary, translation and
 /// Wikipedia. Null for other tools.
@@ -654,14 +655,7 @@ class _WikiMark extends StatelessWidget {
   }
 }
 
-void _showWikiImage(BuildContext context, String url) => showDialog<void>(
-  context: context,
-  barrierColor: Colors.black.withValues(alpha: 0.92),
-  builder: (context) => GestureDetector(
-    onTap: () => Navigator.pop(context),
-    child: InteractiveViewer(maxScale: 5, child: Center(child: NetImage(url, fit: BoxFit.contain, errorWidget: const SizedBox.shrink()))),
-  ),
-);
+void _showWikiImage(BuildContext context, String url) => openFullscreenUrl(context, url);
 
 List<Widget> _wikiBody(BuildContext context, Map<String, dynamic> a) {
   final image = textOf(a['image']) ?? textOf(a['thumbnail']);

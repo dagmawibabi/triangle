@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart' hide NotificationVisibility;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
@@ -25,6 +25,12 @@ class AppNotifier {
   /// Conversation ids from tapped notifications, for the chat screen.
   final taps = StreamController<String>.broadcast();
 
+  /// Buttons pressed on the player's notification: prev, toggle, next, stop.
+  final mediaActions = StreamController<String>.broadcast();
+
+  /// A tap on the player's notification itself (to open the player).
+  final mediaTaps = StreamController<void>.broadcast();
+
   static const _channel = 'teleai_watches';
   static const _icon = 'ic_stat_triangle';
 
@@ -37,7 +43,16 @@ class AppNotifier {
         iOS: DarwinInitializationSettings(),
       ),
       onDidReceiveNotificationResponse: (r) {
+        final action = r.actionId;
+        if (action != null && action.startsWith('media.')) {
+          mediaActions.add(action.substring(6));
+          return;
+        }
         final id = r.payload;
+        if (id == _mediaPayload) {
+          mediaTaps.add(null);
+          return;
+        }
         if (id != null && id.isNotEmpty) taps.add(id);
       },
     );
@@ -99,6 +114,68 @@ class AppNotifier {
     } catch (e) {
       debugPrint('[Notify] $e');
     }
+  }
+
+  // ---- the player -----------------------------------------------------------
+
+  static const _mediaChannel = 'teleai_player';
+  static const _mediaId = 7070;
+  static const _mediaPayload = '__player__';
+
+  /// The player's notification: cover, title and buttons. Silent, and kept
+  /// while something is playing.
+  Future<void> media({required String title, required String subtitle, required bool playing, String? art, bool hasNext = false, bool hasPrevious = true}) async {
+    await init();
+    if (!_ready || !Platform.isAndroid) return;
+    AndroidNotificationAction button(String id, String icon, String label) => AndroidNotificationAction(
+      'media.$id',
+      label,
+      icon: DrawableResourceAndroidBitmap(icon),
+      cancelNotification: id == 'stop',
+      showsUserInterface: false,
+    );
+    try {
+      await _plugin.show(
+        id: _mediaId,
+        title: title,
+        body: subtitle,
+        payload: _mediaPayload,
+        notificationDetails: NotificationDetails(
+          android: AndroidNotificationDetails(
+            _mediaChannel,
+            'Player',
+            channelDescription: 'What\'s playing, with buttons to control it',
+            importance: Importance.low,
+            priority: Priority.low,
+            playSound: false,
+            enableVibration: false,
+            onlyAlertOnce: true,
+            showWhen: false,
+            ongoing: playing,
+            autoCancel: false,
+            category: AndroidNotificationCategory.transport,
+            visibility: NotificationVisibility.public,
+            largeIcon: art == null ? null : FilePathAndroidBitmap(art),
+            styleInformation: const MediaStyleInformation(),
+            actions: [
+              if (hasPrevious) button('previous', 'ic_media_prev_tri', 'Previous'),
+              button('toggle', playing ? 'ic_media_pause_tri' : 'ic_media_play_tri', playing ? 'Pause' : 'Play'),
+              if (hasNext) button('next', 'ic_media_next_tri', 'Next'),
+              button('stop', 'ic_media_close_tri', 'Close'),
+            ],
+          ),
+        ),
+      );
+    } catch (e) {
+      debugPrint('[Notify] player: $e');
+    }
+  }
+
+  Future<void> clearMedia() async {
+    if (!_ready) return;
+    try {
+      await _plugin.cancel(id: _mediaId);
+    } catch (_) {}
   }
 
   // ---- scheduled ------------------------------------------------------------

@@ -95,6 +95,13 @@ const plan = [
 		]
 	},
 	{
+		id: 'sections',
+		title: 'Channels as apps',
+		text: 'Channels and groups you pick, read as a shop, a streaming service, a library and a gallery, plus playlists of any audio.',
+		from: 'app',
+		categories: ['marketplace', 'movies', 'books', 'gallery', 'playlists']
+	},
+	{
 		id: 'web',
 		title: 'Web and discovery',
 		text: 'A real browser, YouTube, Reddit and Hacker News, research papers, books, podcasts, radio and more.',
@@ -104,16 +111,16 @@ const plan = [
 	{
 		id: 'everyday',
 		title: 'Everyday',
-		text: 'Words and translation, recipes, sports, the Bible, the Ethiopian calendar, QR codes, retro games and the wider world.',
+		text: 'Words and translation, recipes, sports, the Bible, the Ethiopian calendar, QR codes, package tracking, retro games and the wider world.',
 		from: 'app',
-		categories: ['reference', 'food', 'sports', 'bible', 'utilities', 'explore', 'games']
+		categories: ['reference', 'food', 'sports', 'bible', 'utilities', 'parcels', 'explore', 'games']
 	},
 	{
 		id: 'cloud',
 		title: 'Cloud and code',
-		text: 'Run code, manage your cloud, and add more tools yourself.',
+		text: 'Run code, deploy to Vercel, send email with Resend, query MongoDB, manage your cloud, and add more tools yourself.',
 		from: 'app',
-		categories: ['code', 'e2b', 'cloudflare', 'r2', 'mcp', 'skills']
+		categories: ['code', 'e2b', 'vercel', 'resend', 'mongodb', 'cloudflare', 'r2', 'mcp', 'skills']
 	}
 ];
 

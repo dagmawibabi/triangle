@@ -76,5 +76,31 @@ void main() {
       expect([for (final r in out) r['id']], ['r1', 'r3']);
       expect(out[0]['account'], 'new1');
     });
+
+    test('maps the account of each chat in My folders', () {
+      final out = jsonDecode(AppData.remapAccounts(
+        'custom_folders.v1',
+        jsonEncode({
+          'folders': [
+            {
+              'id': 'f1',
+              'chats': [
+                {'a': 'old1', 'c': 1},
+                {'a': 'gone', 'c': 2},
+              ],
+            },
+          ],
+        }),
+        ids,
+      )) as Map;
+      final chats = out['folders'][0]['chats'] as List;
+      expect(chats[0]['a'], 'new1');
+      expect(chats[1]['a'], 'gone');
+    });
+
+    test('leaves an "a" field alone in other settings', () {
+      final out = jsonDecode(AppData.remapAccounts('watches.v1', jsonEncode([{'a': 'old1'}]), ids)) as List;
+      expect(out[0]['a'], 'old1');
+    });
   });
 }

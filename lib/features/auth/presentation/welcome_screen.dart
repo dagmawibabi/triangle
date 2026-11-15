@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app/theme.dart';
 import '../../../core/widgets/brand_mark.dart';
 import '../../settings/data/settings.dart';
+import '../../settings/presentation/theme_toggle.dart';
 import '../data/auth_controller.dart';
 
 class _Page {
@@ -32,7 +33,8 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
   static final _pages = [
     const _Page(
       title: 'Ask your Telegram anything.',
-      body: 'How many channels you\'re in, what\'s new today, who\'s waiting on a reply. It reads your chats and shows its sources as chips you can open.',
+      body: 'How many channels you\'re in, what\'s new today, who\'s waiting on a reply. It reads your chats and shows its sources as chips you can open. '
+          'Sign in with more than one Telegram account and switch between them; your own folders can hold chats from any of them.',
       art: _Bubbles(
         lines: [
           'What did my channels post today?',
@@ -126,54 +128,70 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
       ),
     ),
     const _Page(
-      title: 'Briefed, morning and night.',
-      body: 'A detailed rundown of everything that happened across your DMs, groups and channels, sorted by what needs you first. On a schedule or whenever you ask.',
-      art: _Glyph(icon: Icons.wb_twilight_rounded),
-    ),
-    const _Page(
-      title: 'Watches while you\'re away.',
-      body: 'Tell it to keep an eye on a person, a group or a channel. It notifies you, sums things up, or replies the way you asked.',
-      art: _Glyph(icon: Icons.visibility_outlined),
-    ),
-    const _Page(
-      title: 'Routines that run themselves.',
-      body: '"Every weekday at 9, catch me up on my channels." "Each Friday, sum up my spending." Describe a job and when '
-          'to do it, and the assistant carries it out on schedule. Run one now, change it or pause it anytime.',
-      art: _Glyph(icon: Icons.event_repeat_rounded),
-    ),
-    const _Page(
-      title: 'Runs code, privately.',
-      body: 'A private sandbox on your phone runs Python and JavaScript to crunch numbers, make charts and files.',
+      title: 'Works while you\'re away.',
+      body: 'A brief each morning and night of what happened across your chats, sorted by what needs you first. Watches keep '
+          'an eye on a person, group or channel and notify you, sum things up or reply the way you asked. Routines run jobs '
+          'on a schedule: "Every weekday at 9, catch me up on my channels."',
       art: _FeatureGrid(
         items: [
-          (Icons.terminal_rounded, 'Python'),
-          (Icons.javascript_rounded, 'JavaScript'),
-          (Icons.bar_chart_rounded, 'Charts'),
-          (Icons.functions_rounded, 'Scripts'),
-          (Icons.folder_zip_outlined, 'Zip files'),
-          (Icons.download_rounded, 'Downloads'),
+          (Icons.wb_twilight_rounded, 'Briefs'),
+          (Icons.radar_rounded, 'Watches'),
+          (Icons.event_repeat_rounded, 'Routines'),
+          (Icons.notifications_active_outlined, 'Alerts'),
+          (Icons.summarize_outlined, 'Summaries'),
+          (Icons.reply_rounded, 'Replies'),
         ],
       ),
     ),
     const _Page(
-      title: 'Your cloud, by asking.',
-      body: 'Manage Cloudflare: sites, DNS, cache, Workers, Pages and R2 storage you can browse, download and share. Run real '
-          'Python, Node, R or bash in an E2B cloud sandbox, or write and run code yourself in the built-in editor.',
+      title: 'Code and cloud.',
+      body: 'Run Python and JavaScript privately on your phone, or Python, Node, R and bash in an E2B cloud sandbox, and write '
+          'code yourself in the built-in editor. Deploy and roll back Vercel projects, send email with Resend, query MongoDB, '
+          'and manage Cloudflare DNS, Workers and R2 storage. Your own keys; anything that changes something asks first.',
       art: _FeatureGrid(
         items: [
+          (Icons.terminal_rounded, 'Python'),
+          (Icons.cloud_outlined, 'E2B'),
+          (Icons.code_rounded, 'Editor'),
+          (Icons.rocket_launch_outlined, 'Deploys'),
+          (Icons.receipt_long_outlined, 'Build logs'),
+          (Icons.forward_to_inbox_outlined, 'Email'),
+          (Icons.storage_outlined, 'Databases'),
           (Icons.language_rounded, 'DNS'),
           (Icons.inventory_2_outlined, 'R2 files'),
-          (Icons.bolt_rounded, 'Workers'),
-          (Icons.terminal_rounded, 'E2B'),
-          (Icons.code_rounded, 'Editor'),
-          (Icons.bar_chart_rounded, 'Charts'),
+        ],
+      ),
+    ),
+    const _Page(
+      title: 'Extend it.',
+      body: 'Add MCP servers to give the assistant new tools, from the directory or your own address, with sign-in handled '
+          'for you. Install Skills that teach it to do a job your way. You choose which tools it may use and which ask first.',
+      art: _FeatureGrid(
+        items: [
+          (Icons.hub_outlined, 'MCP servers'),
+          (Icons.school_outlined, 'Skills'),
+          (Icons.travel_explore_rounded, 'Directory'),
+          (Icons.key_rounded, 'Sign-in'),
+          (Icons.tune_rounded, 'Permissions'),
+          (Icons.build_outlined, 'New tools'),
         ],
       ),
     ),
     const _Page(
       title: 'Careful by design.',
-      body: 'Reading never marks messages as read. Sending, replying and reacting wait for your OK. Deleting and leaving are off until you turn them on, and read-only mode locks everything else.',
-      art: _Glyph(icon: Icons.verified_user_outlined),
+      body: 'Reading never marks messages as read. Sending, replying and reacting wait for your OK, and deleting is off until '
+          'you turn it on. Everything it does lands in an activity log, with Undo. Set spending limits, lock the app with your '
+          'fingerprint, or switch on read-only mode to lock everything else.',
+      art: _FeatureGrid(
+        items: [
+          (Icons.front_hand_outlined, 'Approvals'),
+          (Icons.history_rounded, 'Activity log'),
+          (Icons.undo_rounded, 'Undo'),
+          (Icons.edit_off_outlined, 'Read-only'),
+          (Icons.savings_outlined, 'Limits'),
+          (Icons.lock_outline_rounded, 'App lock'),
+        ],
+      ),
     ),
   ];
 
@@ -200,8 +218,10 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Colours come from the theme, so the pages repaint when it changes.
+    ref.watch(settingsProvider.select((s) => s.themeMode));
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: AppColors.bg,
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
@@ -219,6 +239,7 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
                     children: [
                       const BrandLockup(markSize: 28),
                       const Spacer(),
+                      ThemeToggleButton(color: AppColors.text2),
                       AnimatedOpacity(
                         opacity: _last ? 0 : 1,
                         duration: const Duration(milliseconds: 200),
@@ -349,39 +370,6 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
   }
 }
 
-/// A large outlined glyph in a soft ring.
-class _Glyph extends StatelessWidget {
-  const _Glyph({required this.icon});
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 180,
-      height: 180,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-        gradient: RadialGradient(
-          colors: [Colors.white.withValues(alpha: 0.06), Colors.transparent],
-        ),
-      ),
-      child: Center(
-        child: Container(
-          width: 104,
-          height: 104,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: AppColors.surface2,
-            border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
-          ),
-          child: Icon(icon, size: 46, color: AppColors.text),
-        ),
-      ),
-    );
-  }
-}
-
 /// A PC screen with the pointer gliding across it to a button and clicking.
 class _PcControl extends StatefulWidget {
   const _PcControl();
@@ -427,7 +415,7 @@ class _PcControlState extends State<_PcControl>
             decoration: BoxDecoration(
               color: AppColors.surface2,
               borderRadius: BorderRadius.circular(Radii.m),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
+              border: Border.all(color: AppColors.line),
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(Radii.m),
@@ -585,7 +573,7 @@ class _Bubbles extends StatelessWidget {
               decoration: BoxDecoration(
                 color: i.isOdd ? AppColors.surface2 : AppColors.surface3,
                 borderRadius: BorderRadius.circular(Radii.xl),
-                border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+                border: Border.all(color: AppColors.line),
               ),
               child: Text(
                 line,
@@ -621,7 +609,7 @@ class _FeatureGrid extends StatelessWidget {
               decoration: BoxDecoration(
                 color: AppColors.surface2,
                 borderRadius: BorderRadius.circular(Radii.l),
-                border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+                border: Border.all(color: AppColors.line),
               ),
               child: Column(
                 children: [

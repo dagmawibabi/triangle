@@ -31,8 +31,35 @@ import '../../../../infrastructure/telegram/accounts.dart';
 import '../../../account/account_switcher.dart';
 import '../../../telegram/data/account_tools.dart';
 import 'utility_result_cards.dart' show SpeedTestPanel;
+import '../../../../core/widgets/fullscreen_image.dart';
+import '../../../integrations/mcp_permissions.dart';
+import 'tool_runner.dart';
 
 IconData toolIcon(String name) => switch (name) {
+  'track_package' || 'tracked_packages' => Icons.local_shipping_outlined,
+  'untrack_package' => Icons.remove_shopping_cart_outlined,
+  'vercel_deploy' => Icons.rocket_launch_outlined,
+  'vercel_redeploy' => Icons.replay_rounded,
+  'vercel_promote' => Icons.upgrade_rounded,
+  'vercel_rollback' => Icons.history_rounded,
+  'vercel_build_logs' || 'vercel_runtime_logs' => Icons.receipt_long_rounded,
+  'vercel_env' || 'vercel_env_set' || 'vercel_env_delete' => Icons.key_rounded,
+  'vercel_usage' => Icons.query_stats_rounded,
+  final n when n.startsWith('vercel_') && (n.contains('dns') || n.contains('domain')) => Icons.language_rounded,
+  final n when n.startsWith('vercel_') => Icons.change_history_rounded,
+  'resend_send_email' || 'resend_send_batch' => Icons.send_rounded,
+  'resend_send_broadcast' || 'resend_create_broadcast' || 'resend_update_broadcast' || 'resend_broadcasts' => Icons.campaign_outlined,
+  final n when n.startsWith('resend_') && n.contains('domain') => Icons.dns_outlined,
+  final n when n.startsWith('resend_') && n.contains('contact') => Icons.contacts_outlined,
+  final n when n.startsWith('resend_') => Icons.alternate_email_rounded,
+  'mongodb_find' || 'mongodb_aggregate' => Icons.manage_search_rounded,
+  'mongodb_schema' => Icons.schema_outlined,
+  'mongodb_explain' => Icons.speed_rounded,
+  'mongodb_indexes' || 'mongodb_create_index' || 'mongodb_drop_index' => Icons.bolt_rounded,
+  'mongodb_export' => Icons.download_rounded,
+  'mongodb_import' => Icons.upload_file_rounded,
+  final n when n.startsWith('mongodb_') && (n.contains('delete') || n.contains('drop')) => Icons.delete_outline_rounded,
+  final n when n.startsWith('mongodb_') => Icons.storage_rounded,
   'jev_box' => Icons.crop_free_rounded,
   'jev_batch' => Icons.checklist_rounded,
   'create_widget' ||
@@ -170,7 +197,58 @@ IconData toolIcon(String name) => switch (name) {
   'paper_venue' => Icons.account_balance_outlined,
   'screen_time' || 'app_usage' => Icons.hourglass_bottom_rounded,
   'system_check' => Icons.health_and_safety_outlined,
-  'list_api_keys' || 'set_api_key' || 'delete_api_key' => Icons.key_outlined,
+  'list_api_keys' || 'set_api_key' || 'delete_api_key' || 'test_api_key' => Icons.key_outlined,
+  'api_request' || 'api_send' => Icons.api_rounded,
+  'ai_balances' => Icons.account_balance_wallet_outlined,
+  'list_custom_folders' || 'custom_folder_chats' => Icons.folder_special_outlined,
+  'create_custom_folder' => Icons.create_new_folder_outlined,
+  'update_custom_folder' => Icons.drive_file_rename_outline_rounded,
+  'delete_custom_folder' => Icons.folder_delete_outlined,
+  'list_playlists' || 'playlist_tracks' => Icons.queue_music_rounded,
+  'find_audio' => Icons.manage_search_rounded,
+  'create_playlist' || 'update_playlist' => Icons.playlist_add_rounded,
+  'play_playlist' => Icons.play_circle_outline_rounded,
+  'delete_playlist' => Icons.playlist_remove_rounded,
+  'arrange_playlists' => Icons.low_priority_rounded,
+  'duplicate_playlist' => Icons.copy_all_rounded,
+  'share_playlist' => Icons.ios_share_rounded,
+  'import_playlist' => Icons.file_download_outlined,
+  'like_tracks' => Icons.favorite_border_rounded,
+  'market_stores' || 'market_search' || 'market_item' || 'market_tidy' || 'market_ai_settings' => Icons.storefront_rounded,
+  'market_cart' => Icons.shopping_cart_outlined,
+  'market_wishlist' => Icons.favorite_border_rounded,
+  'movie_channels' || 'find_videos' || 'movie_library' => Icons.movie_filter_outlined,
+  'book_sources' || 'find_books' || 'list_books' || 'add_book' || 'update_book' || 'book_shelves' || 'book_notes' || 'read_book_text' || 'reading_stats' || 'remove_book' => Icons.auto_stories_outlined,
+  'gallery_sources' || 'gallery_items' || 'gallery_albums' || 'gallery_mark' => Icons.photo_library_outlined,
+  'app_sections' => Icons.dashboard_customize_outlined,
+  'music_stats' => Icons.insights_rounded,
+  'player_control' => Icons.play_circle_outline_rounded,
+  'show_component' => Icons.widgets_outlined,
+  'report_chat' || 'report_spam' => Icons.report_gmailerrorred_rounded,
+  'set_group_protection' => Icons.shield_outlined,
+  'list_emoji_statuses' || 'set_emoji_status' => Icons.emoji_emotions_outlined,
+  'saved_message_tags' => Icons.sell_outlined,
+  'telegram_transcribe' => Icons.subtitles_outlined,
+  'story_stealth_mode' => Icons.visibility_off_outlined,
+  'list_boost_slots' || 'boost_chat' => Icons.rocket_launch_outlined,
+  'giveaway_info' => Icons.redeem_outlined,
+  'list_quick_replies' => Icons.bolt_outlined,
+  'set_away_message' => Icons.schedule_send_outlined,
+  'set_greeting_message' => Icons.waving_hand_outlined,
+  'set_opening_hours' => Icons.storefront_outlined,
+  'set_business_location' => Icons.place_outlined,
+  'set_business_bot' => Icons.smart_toy_outlined,
+  'place_phone_call' || 'place_phone_calls' => Icons.phone_forwarded_rounded,
+  'get_phone_call' || 'list_phone_calls' || 'control_phone_call' => Icons.phone_in_talk_outlined,
+  'phone_call_recording' => Icons.voicemail_rounded,
+  'list_phone_numbers' => Icons.dialpad_rounded,
+  'http_diagnose' => Icons.monitor_heart_outlined,
+  'dns_lookup' => Icons.dns_outlined,
+  'ssl_certificate' => Icons.verified_user_outlined,
+  'port_check' => Icons.lan_outlined,
+  'my_ip' => Icons.public_rounded,
+  'whois_lookup' => Icons.badge_outlined,
+  'url_check' => Icons.fact_check_outlined,
   'get_app_settings' => Icons.settings_outlined,
   'set_appearance' => Icons.palette_outlined,
   'set_preferences' => Icons.tune_rounded,
@@ -730,6 +808,52 @@ class _ApprovalCardState extends ConsumerState<ApprovalCard> {
     }
   }
 
+  /// For an MCP call: allow this tool, or every tool of its server, from
+  /// now on (Settings → MCP & Skills shows and changes it).
+  Future<void> _alwaysAllowMcp(Map<String, dynamic> args, VoidCallback approve) async {
+    final server = '${args['server'] ?? ''}';
+    final name = '${args['name'] ?? ''}';
+    final all = await showFormSheet<bool>(
+      context,
+      builder: (context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Always allow on $server?', style: context.text.titleMedium),
+          const SizedBox(height: Space.xs),
+          Text(
+            'Allowed tools run without a card. Change it any time in Settings → MCP & Skills → $server.',
+            style: context.text.bodySmall,
+          ),
+          const SizedBox(height: Space.l),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.build_circle_outlined),
+            title: Text('Only $name'),
+            subtitle: const Text('Other tools on this server still ask'),
+            onTap: () => Navigator.of(context).pop(false),
+          ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.hub_outlined),
+            title: Text('Every tool on $server'),
+            subtitle: const Text('Tools you set to Ask or Off keep their setting'),
+            onTap: () => Navigator.of(context).pop(true),
+          ),
+        ],
+      ),
+    );
+    if (all == null || !mounted) return;
+    final perms = ref.read(mcpPermissionsProvider.notifier);
+    if (all) {
+      await perms.setDefault(server, McpToolMode.allow);
+    } else {
+      await perms.setTool(server, name, McpToolMode.allow);
+    }
+    if (!mounted) return;
+    approve();
+    showSnack(context, all ? 'Every $server tool is allowed' : '$name on $server is allowed', icon: Icons.rule_rounded);
+  }
+
   /// Asks where the rule applies, saves it, then approves this call.
   Future<void> _alwaysAllow({
     required TelegramTool tool,
@@ -1116,6 +1240,8 @@ class _ApprovalCardState extends ConsumerState<ApprovalCard> {
                 label: const Text('Always allow…'),
                 onPressed: !canSend || _adding
                     ? null
+                    : tool.name == 'mcp_call_tool'
+                    ? () => _alwaysAllowMcp(args, approveNow)
                     : () => _alwaysAllow(
                         tool: tool,
                         chatId: chats.length == 1 ? chats.first : null,
@@ -1299,20 +1425,7 @@ class _ImageStrip extends StatelessWidget {
       );
     }
     Widget tile(String p, {double? height}) => GestureDetector(
-      onTap: () => Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => Scaffold(
-            backgroundColor: Colors.black,
-            appBar: AppBar(
-              backgroundColor: Colors.black,
-              title: Text(p.split(RegExp(r'[\\/]')).last),
-            ),
-            body: Center(
-              child: InteractiveViewer(maxScale: 6, child: Image.file(File(p))),
-            ),
-          ),
-        ),
-      ),
+      onTap: () => openFullscreenFile(context, p),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(Radii.m),
         child: Image.file(
@@ -1372,7 +1485,8 @@ class _ToolDetails extends ConsumerStatefulWidget {
 }
 
 class _ToolDetailsState extends ConsumerState<_ToolDetails> {
-  bool _raw = false;
+  /// details, raw or try.
+  String _view = 'details';
   final _argsTree = JsonTreeController();
   final _resultTree = JsonTreeController();
   final _fullTree = JsonTreeController();
@@ -1493,24 +1607,37 @@ class _ToolDetailsState extends ConsumerState<_ToolDetails> {
         ],
         if (hasToolControls(part)) ToolControls(part: part, result: result),
         const SizedBox(height: Space.l),
-        SegmentedButton<bool>(
+        SegmentedButton<String>(
           showSelectedIcon: false,
-          segments: const [
-            ButtonSegment(
-              value: false,
+          segments: [
+            const ButtonSegment(
+              value: 'details',
               label: Text('Details'),
               icon: Icon(Icons.view_agenda_outlined, size: 16),
             ),
-            ButtonSegment(
-              value: true,
-              label: Text('Raw JSON'),
+            const ButtonSegment(
+              value: 'raw',
+              label: Text('Raw'),
               icon: Icon(Icons.data_object_rounded, size: 16),
             ),
+            if (tool != null)
+              const ButtonSegment(
+                value: 'try',
+                label: Text('Try it'),
+                icon: Icon(Icons.play_circle_outline_rounded, size: 16),
+              ),
           ],
-          selected: {_raw},
-          onSelectionChanged: (v) => setState(() => _raw = v.first),
+          selected: {_view},
+          onSelectionChanged: (v) => setState(() => _view = v.first),
         ),
-        if (!_raw) ...[
+        if (_view == 'try' && tool != null) ...[
+          const SizedBox(height: Space.l),
+          Text(
+            'Run ${tool.name} yourself. The inputs start as this call\'s; change any of them.',
+            style: context.text.bodySmall,
+          ),
+          ToolTryPanel(tool: tool, initial: args),
+        ] else if (_view == 'details') ...[
           // Pictures the tool looked at (view_image, profile photos…).
           if (result case {'_images': final List images}
               when images.isNotEmpty) ...[

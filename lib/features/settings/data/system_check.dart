@@ -52,6 +52,16 @@ import '../presentation/capability_settings.dart';
 import '../presentation/data_screen.dart';
 import '../presentation/settings_screen.dart';
 import '../presentation/tools_screen.dart';
+import '../presentation/folders_hub_screen.dart';
+import '../presentation/more_apps_screen.dart';
+import '../../calls/vapi.dart';
+import '../../calls/vapi_ui.dart';
+import '../../custom_folders/custom_folders.dart';
+import '../../development/development_screen.dart';
+import '../../development/manage/app_managers.dart' show VapiManagerScreen;
+import '../../info/info_keys.dart';
+import '../../parcels/parcel_api.dart' show ParcelStore;
+import '../../telegram/data/system_tools.dart' show testMongoUri, testResendKey, testVercelToken;
 
 /// How a check came out.
 enum CheckStatus {
@@ -134,6 +144,7 @@ final systemCheckAreas = <String, (String, IconData)>{
   'mcp': ('MCP servers', Icons.hub_outlined),
   'skills': ('Skills', Icons.auto_stories_outlined),
   'apps': ('Connected apps & services', Icons.apps_rounded),
+  'development': ('Development & phone calls', Icons.terminal_rounded),
   'connection': ('Phone & connection', Icons.network_check_rounded),
   'watches': ('Watches & check-in', Icons.visibility_outlined),
   'routines': ('Routines', Icons.event_repeat_rounded),
@@ -175,6 +186,7 @@ class SystemChecker {
     'mcp' => _mcp,
     'skills' => _skills,
     'apps' => _connectors,
+    'development' => _development,
     'connection' => _connection,
     'watches' => _automation,
     'routines' => _routines,
@@ -316,7 +328,7 @@ class SystemChecker {
         s.telegramSkipped ? CheckStatus.info : CheckStatus.warn,
         s.telegramSkipped ? 'Telegram isn\'t connected' : 'Telegram isn\'t signed in',
         'Chats, channels, mention alerts and Telegram watches need it.',
-        () => const AppsWebScreen(),
+        () => const AppsWebScreen(tab: AppsWebTab.telegram),
       ));
       return;
     }
@@ -716,6 +728,69 @@ class SystemChecker {
     if (s.r2AccessKeyId.trim().isNotEmpty && (s.r2SecretKey.trim().isEmpty || s.r2Bucket.trim().isEmpty)) {
       g.results.add(CheckResult(CheckStatus.warn, 'R2 storage is half set up', 'It needs the secret and a bucket.', apps));
     }
+    // Packages being followed: live updates need a 17TRACK key.
+    final packages = await _try(ParcelStore.all()) ?? const [];
+    if (packages.isNotEmpty) {
+      final keys = await _try(InfoKeysNotifier.load());
+      final n = packages.length;
+      g.results.add(keys?.hasTrackKey ?? false
+          ? CheckResult(CheckStatus.ok, 'Following $n package${n == 1 ? '' : 's'}')
+          : CheckResult(CheckStatus.improve, '$n package${n == 1 ? '' : 's'} without live tracking', 'A free 17TRACK key gets updates from the carrier.', () => const MoreAppsScreen()));
+    }
+  }
+
+  /// Vercel, Resend and MongoDB with the user's own keys, and Vapi phone
+  /// calls: each key that is set is tested, the way saving it would.
+  Future<void> _development(CheckGroup g) async {
+    final s = read(settingsProvider);
+    Widget dev() => const DevelopmentScreen();
+    await _try(VapiStore.load());
+    if (!(s.hasVercelToken || s.hasResendKey || s.hasMongoUri)) {
+      g.results.add(CheckResult(CheckStatus.info, 'Development isn\'t set up', 'Add a Vercel token, a Resend key or a MongoDB connection string to manage them by asking.', dev));
+    }
+    final checks = <Future<void>>[];
+    void test(String name, Future<String?> Function() run, {String ok = ''}) {
+      checks.add(() async {
+        String? problem;
+        try {
+          problem = await run().timeout(const Duration(seconds: 30));
+        } catch (e) {
+          problem = _error(e);
+        }
+        g.results.add(problem == null
+            ? CheckResult(CheckStatus.ok, '$name works', ok, dev)
+            : CheckResult(CheckStatus.fail, '$name didn\'t work', problem, dev));
+      }());
+    }
+
+    if (s.hasVercelToken) {
+      test('Vercel token', () => testVercelToken(s.vercelToken), ok: s.vercelTeamId.isEmpty ? 'Acting on your personal account.' : 'Team ${s.vercelTeamId}.');
+    }
+    if (s.hasResendKey) {
+      test('Resend key', () => testResendKey(s.resendKey));
+      if (s.resendFrom.trim().isEmpty) {
+        g.results.add(CheckResult(CheckStatus.improve, 'No Resend sender address', 'Emails need a From address on a domain you verified; set a default so you aren\'t asked each time.', dev));
+      }
+    }
+    if (s.hasMongoUri) {
+      test('MongoDB', () => testMongoUri(s.mongoUri), ok: s.mongoDatabase.isEmpty ? '' : 'Default database ${s.mongoDatabase}.');
+    }
+    if (!VapiStore.ready) {
+      g.results.add(CheckResult(CheckStatus.info, 'Phone calls aren\'t set up', 'A Vapi key lets the assistant phone people with a voice agent.', () => const VapiSettingsScreen()));
+    } else {
+      checks.add(() async {
+        String? problem;
+        try {
+          problem = await read(aiProvider).verifyKey('vapi', key: VapiStore.key).timeout(const Duration(seconds: 30));
+        } catch (e) {
+          problem = _error(e);
+        }
+        g.results.add(problem == null
+            ? CheckResult(CheckStatus.ok, 'Vapi key works', VapiStore.countryCode.isEmpty ? 'No default country code: numbers need one.' : '', () => const VapiManagerScreen())
+            : CheckResult(CheckStatus.fail, 'Vapi key didn\'t work', problem, () => const VapiSettingsScreen()));
+      }());
+    }
+    await Future.wait(checks);
   }
 
   Future<void> _automation(CheckGroup g) async {
@@ -913,6 +988,16 @@ class SystemChecker {
       ));
     }
     if (s.quietHours) g.results.add(CheckResult(CheckStatus.info, 'Quiet hours ${s.quietStart}–${s.quietEnd}', 'Notifications wait until they end.'));
+    // My folders: chats from an account no longer here can't open.
+    await _try(read(customFoldersProvider.notifier).ready);
+    final folders = read(customFoldersProvider).folders;
+    if (folders.isNotEmpty) {
+      final here = {for (final a in read(accountsProvider).accounts) a.id};
+      final stray = [for (final f in folders) ...f.chats.where((c) => !here.contains(c.account))].length;
+      g.results.add(stray == 0
+          ? CheckResult(CheckStatus.info, '${folders.length} folder${folders.length == 1 ? '' : 's'} of your own', '', () => const FoldersHubScreen())
+          : CheckResult(CheckStatus.warn, '$stray chat${stray == 1 ? '' : 's'} in your folders belong to an account that isn\'t here', 'Sign that account in again, or remove the chats from the folder.', () => const FoldersHubScreen()));
+    }
   }
 
   static Future<int> _folderSize() async {

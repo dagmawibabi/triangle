@@ -12,6 +12,7 @@ const _systemCheckAreaIds = [
   'mcp',
   'skills',
   'apps',
+  'development',
   'connection',
   'watches',
   'routines',
@@ -41,10 +42,10 @@ final _safetyTools = <TelegramTool>[
     description:
         'Checks everything the app depends on and reports what works, what is broken and what could be better, with '
         'a health score out of 100: AI keys and models, Telegram accounts (TDLib, two-step verification, unknown '
-        'sessions), decisions, MCP servers, skills, connected apps, the phone and its connection (storage, memory, '
+        'sessions), decisions, MCP servers, skills, connected apps (and tracked packages), development and phone calls (tests the Vercel, Resend, MongoDB and Vapi keys), the phone and its connection (storage, memory, '
         'battery saver, network, DNS), watches and the check-in, routines (failed or stalled runs), privacy (app lock, '
         'approvals, what Block & mute hides), home-screen widgets, voice, tools and usage, money and call data, and '
-        'upkeep (memories, briefs, backups, storage). It only reads. Use it when something isn\'t working, or the user '
+        'upkeep (memories, briefs, backups, storage, your own folders). It only reads. Use it when something isn\'t working, or the user '
         'asks how the app or phone is doing. The user sees a card with the score and a sheet with every finding, so '
         'answer with what matters most and how to fix it, not the whole list. A full check can take half a minute; '
         'give areas to check only some.',

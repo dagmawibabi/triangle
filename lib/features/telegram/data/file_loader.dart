@@ -84,9 +84,31 @@ class FileLoader {
     return c.future;
   }
 
-  Future<void> cancel(td.File file) async {
+  /// Downloads paused by the person (the part already fetched is kept).
+  final paused = ValueNotifier<Set<int>>(const {});
+  bool isPaused(td.File file) => paused.value.contains(file.id);
+
+  /// Stops [file]'s download but keeps what's fetched; [resume] carries on.
+  Future<void> pause(td.File file) async {
+    paused.value = {...paused.value, file.id};
     try {
       await _client.send<td.Ok>(td.CancelDownloadFile(fileId: file.id, onlyIfPending: false));
+    } catch (_) {}
+    _waiters.remove(file.id)?.complete(null);
+  }
+
+  /// Carries on a paused (or stopped) download from where it was.
+  Future<String?> resume(td.File file, {int priority = 32}) {
+    paused.value = {...paused.value}..remove(file.id);
+    return download(file, priority: priority);
+  }
+
+  /// Stops [file]'s download; with [delete], the part fetched goes too.
+  Future<void> cancel(td.File file, {bool delete = false}) async {
+    paused.value = {...paused.value}..remove(file.id);
+    try {
+      await _client.send<td.Ok>(td.CancelDownloadFile(fileId: file.id, onlyIfPending: false));
+      if (delete) await _client.send<td.Ok>(td.DeleteFile(fileId: file.id));
     } catch (_) {}
     _waiters.remove(file.id)?.complete(null);
     _progress[file.id]?.value = 0;

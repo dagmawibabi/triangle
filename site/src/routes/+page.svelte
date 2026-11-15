@@ -108,7 +108,7 @@
 		{
 			name: 'Run code',
 			title: 'Python, charts and your cloud.',
-			text: 'Run code in a sandbox, make charts, manage Cloudflare, and add more tools with MCP servers and skills.',
+			text: 'Run code in a sandbox, make charts, deploy to Vercel, query MongoDB, manage Cloudflare, and add more tools with MCP servers and skills.',
 			prompt: 'Turn this CSV into a chart and save the result.',
 			tools: ['Opening an E2B sandbox', 'Running Python'],
 			answer: 'Your chart is ready.',
@@ -635,7 +635,8 @@
 				<div class="copy">
 					<h3>Make things</h3>
 					<p>
-						Images, speech, music and video from a description. Resize, crop or cut out a picture.
+						Images, speech, music and video from a description, and charts, tables and gauges right
+						in the chat.
 					</p>
 				</div>
 			</article>
@@ -680,8 +681,8 @@
 				<div class="copy">
 					<h3>A whole Telegram client</h3>
 					<p>
-						Chats, channels, folders, files, stickers and voice notes, with several accounts at once
-						and search that remembers what you looked for.
+						Chats, channels, files, stickers and voice notes, with several accounts at once, your
+						own folders of any chats, and Premium and Business settings.
 					</p>
 				</div>
 			</article>
@@ -758,7 +759,10 @@
 				</div>
 				<div class="copy">
 					<h3>Cloud and code</h3>
-					<p>Cloudflare, E2B sandboxes, MCP servers and skills.</p>
+					<p>
+						Cloudflare, E2B sandboxes, skills, and MCP servers with sign-in and per-tool
+						permissions.
+					</p>
 				</div>
 			</article>
 			<article class="cell span-3 cell-discover wipe" data-reveal>
@@ -831,6 +835,88 @@
 				<div class="copy">
 					<h3>Everyday answers</h3>
 					<p>Words and translation, sports, recipes, the Bible, holidays, flights and QR codes.</p>
+				</div>
+			</article>
+			<article class="cell span-3 cell-sections wipe" data-reveal>
+				<div class="art" aria-hidden="true">
+					<ul class="section-tiles">
+						<li><b>Marketplace</b><span>Cart · 3</span></li>
+						<li><b>Movies</b><span>Continue · 42%</span></li>
+						<li><b>Books</b><span>Chapter 7</span></li>
+						<li><b>Gallery</b><span>4 albums</span></li>
+					</ul>
+				</div>
+				<div class="copy">
+					<h3>Channels as apps</h3>
+					<p>
+						Pick the channels and groups you follow, and read them as a shop with a cart, a place to
+						watch films, a library with a real reader, and a photo gallery.
+					</p>
+				</div>
+			</article>
+			<article class="cell span-3 cell-playlists wipe" data-reveal>
+				<div class="art" aria-hidden="true">
+					<ul class="ledger">
+						<li><span>Focus mix</span><b>24 tracks</b></li>
+						<li><span>Voice notes from Sara</span><b>9</b></li>
+						<li><span>Listened this week</span><b>6 h 12 m</b></li>
+						<li class="ledger-budget"><span>Now playing</span><i style="--w: 62%"></i></li>
+					</ul>
+				</div>
+				<div class="copy">
+					<h3>Playlists</h3>
+					<p>
+						Songs, voice messages and podcasts from any chat in one player, with covers, lyrics and
+						stats on what you listen to most.
+					</p>
+				</div>
+			</article>
+			<article class="cell span-2 cell-calls wipe" data-reveal>
+				<div class="art" aria-hidden="true">
+					<code class="term">
+						<span>Calling the clinic…</span>
+						<span>Asking for Tuesday</span>
+						<span class="term-done">Booked, 15:00</span>
+					</code>
+				</div>
+				<div class="copy">
+					<h3>Calls for you</h3>
+					<p>
+						With a Vapi key it places phone calls, talks for you, and brings back a transcript and
+						the recording.
+					</p>
+				</div>
+			</article>
+			<article class="cell span-2 cell-dev wipe" data-reveal>
+				<div class="art" aria-hidden="true">
+					<ul class="topics">
+						<li>Vercel</li>
+						<li>Resend</li>
+						<li>MongoDB</li>
+						<li>Deploys</li>
+						<li>Logs</li>
+						<li>DNS</li>
+					</ul>
+				</div>
+				<div class="copy">
+					<h3>Developer platforms</h3>
+					<p>
+						Deploy and roll back on Vercel, send email with Resend, query MongoDB, and check any API
+						or address step by step.
+					</p>
+				</div>
+			</article>
+			<article class="cell span-2 cell-parcels wipe" data-reveal>
+				<div class="art" aria-hidden="true">
+					<ul class="ledger">
+						<li><span>Left the warehouse</span><b>Mon</b></li>
+						<li><span>Arrived in Addis Ababa</span><b>Thu</b></li>
+						<li class="ledger-budget"><span>Out for delivery</span><i style="--w: 84%"></i></li>
+					</ul>
+				</div>
+				<div class="copy">
+					<h3>Package tracking</h3>
+					<p>Any carrier’s tracking number, with every scan, kept on a list to check again.</p>
 				</div>
 			</article>
 		</div>

@@ -12,6 +12,7 @@ import '../../../../app/theme.dart';
 import '../../../../core/widgets/net_image.dart';
 import '../../../../core/widgets/code_highlight.dart';
 import '../../../integrations/code_editor_screen.dart';
+import '../../../development/manage/app_managers.dart' show showE2bFile;
 import '../../../settings/data/settings.dart';
 import '../../../telegram/data/telegram_tools.dart';
 import '../../domain/chat_models.dart';
@@ -354,6 +355,11 @@ class _SandboxFiles extends StatelessWidget {
           leading: lead(Icon(_fileIcon('${f['name']}', dir: f['dir'] == true), color: f['dir'] == true ? const Color(0xFF8E9BAE) : AppColors.text2)),
           title: Text('${f['name']}', maxLines: 1, overflow: TextOverflow.ellipsis),
           subtitle: Text([if (f['dir'] != true) _size(f['size']), _day(f['modified'])].where((x) => x.isNotEmpty).join(' · ')),
+          trailing: f['dir'] == true ? null : Icon(Icons.visibility_outlined, size: 18, color: AppColors.text3),
+          // A file opens in the viewer: highlighted text, images, Download.
+          onTap: f['dir'] == true
+              ? null
+              : () => showE2bFile(context, f['path'] is String ? f['path'] as String : '${path == '/' ? '' : path}/${f['name']}', f),
         ),
       if (files.length > 40) Padding(padding: const EdgeInsets.all(Space.s), child: Text('${files.length - 40} more', style: context.text.labelSmall)),
     ],

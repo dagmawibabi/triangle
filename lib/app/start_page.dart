@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../features/books/books_screen.dart';
 import '../features/brief/brief_screen.dart';
+import '../features/gallery/gallery_screen.dart';
+import '../features/marketplace/market_screen.dart';
+import '../features/movies/movies_screen.dart';
+import '../features/playlists/playlists_screen.dart';
 import '../features/chat/presentation/generated_files_screen.dart';
 import '../features/search/everywhere_search_screen.dart';
 import '../features/telegram/presentation/calls_screen.dart';
@@ -21,7 +26,12 @@ enum StartPage {
   brief('Brief', Icons.wb_twilight_rounded),
   canvas('Content Canvas', Icons.dashboard_customize_outlined),
   files('Files', Icons.folder_copy_outlined),
-  search('Search', Icons.manage_search_rounded);
+  search('Search', Icons.manage_search_rounded),
+  playlists('Music & playlists', Icons.queue_music_rounded),
+  marketplace('Marketplace', Icons.storefront_rounded, telegram: true),
+  movies('Video', Icons.movie_filter_rounded, telegram: true),
+  books('Books', Icons.auto_stories_rounded),
+  gallery('Gallery', Icons.photo_library_rounded, telegram: true);
 
   const StartPage(this.label, this.icon, {this.section, bool telegram = false}) : _telegram = telegram;
   final String label;
@@ -42,6 +52,11 @@ enum StartPage {
     canvas => const ContentCanvasScreen(),
     files => const GeneratedFilesScreen(),
     search => const EverywhereSearchScreen(),
+    playlists => const PlaylistsScreen(),
+    marketplace => const MarketplaceScreen(),
+    movies => const MoviesScreen(),
+    books => const BooksScreen(),
+    gallery => const GalleryScreen(),
     _ => ChatListScreen(section: section!),
   };
 }

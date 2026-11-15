@@ -6,7 +6,12 @@ import '../../bible/bible.dart' show bibleSettingsProvider;
 import '../../info/info_keys.dart';
 import '../../settings/data/settings.dart';
 import '../../settings/data/system_check.dart' show ProviderReader;
+import 'network_tools.dart';
 import 'telegram_tools.dart' show ToolOutput, apiKeyServiceIds;
+import 'net_diagnostics.dart';
+import '../../calls/vapi.dart';
+import '../../development/dev_apis.dart' show ResendApi, VercelApi;
+import '../../development/mongo_session.dart';
 
 // Runs the tools in telegram_system_tools.dart: the API keys of every
 // service that takes one (AI, apps, cloud, web data), the app's look and
@@ -24,6 +29,7 @@ class ApiKeyService {
     required this.get,
     required this.set,
     this.checkId,
+    this.test,
     this.address = false,
     this.ready,
   });
@@ -51,6 +57,13 @@ class ApiKeyService {
   /// can't be tested here.
   final String? checkId;
 
+  /// Tests a key directly, for services omni_ai doesn't know: null when it
+  /// works, else what the service said.
+  final Future<String?> Function(String key)? test;
+
+  /// Whether a key can be tested here at all.
+  bool get testable => checkId != null || test != null;
+
   /// Holds an address or id, not a secret, so it is shown whole.
   final bool address;
 
@@ -62,6 +75,45 @@ AppSettings _s(ProviderReader read) => read(settingsProvider);
 SettingsController _c(ProviderReader read) => read(settingsProvider.notifier);
 Future<void> _info(ProviderReader read) => InfoKeysNotifier.load();
 InfoKeysNotifier _i(ProviderReader read) => read(infoKeysProvider.notifier);
+
+// The same checks the Development screen runs on a key before saving it
+// (set_api_key, test_api_key and the system check use them).
+Future<String?> testVercelToken(String key) async {
+  final api = VercelApi(token: key);
+  try {
+    await api.call('GET', '/v2/user');
+    return null;
+  } catch (e) {
+    return '$e'.replaceFirst('Exception: ', '');
+  } finally {
+    api.close();
+  }
+}
+
+Future<String?> testResendKey(String key) async {
+  final api = ResendApi(key: key);
+  try {
+    await api.call('GET', '/domains');
+    return null;
+  } catch (e) {
+    return '$e'.replaceFirst('Exception: ', '');
+  } finally {
+    api.close();
+  }
+}
+
+Future<String?> testMongoUri(String uri) async {
+  if (!uri.startsWith('mongodb://') && !uri.startsWith('mongodb+srv://')) return 'It should start with mongodb:// or mongodb+srv://';
+  try {
+    await MongoSession.instance.command(uri, 'admin', {'ping': 1}, timeout: const Duration(seconds: 25));
+    return null;
+  } catch (e) {
+    return '$e'.replaceFirst('Exception: ', '');
+  }
+}
+
+/// How test_api_key names a service tested by [ApiKeyService.test].
+const _localCheck = 'local:';
 
 final apiKeyServices = <ApiKeyService>[
   // ---- AI: chat, images & video, voice, decisions
@@ -88,6 +140,14 @@ final apiKeyServices = <ApiKeyService>[
   ApiKeyService('composio', 'Composio', 'apps', ['Gmail, Calendar, Drive, Slack, Notion, GitHub, Linear, Todoist and other connected apps'],
       'https://dashboard.composio.dev',
       get: (r) => _s(r).composioKey, set: (r, k) => _c(r).setComposioKey(k), checkId: 'composio'),
+  ApiKeyService('vapi', 'Vapi', 'apps', ['phone calls by an AI voice agent'], 'https://dashboard.vapi.ai/org/api-keys',
+      get: (r) => VapiStore.key,
+      set: (r, k) async {
+        await VapiStore.save(key: k);
+        VapiStore.apply(r(aiProvider));
+      },
+      ready: (r) => VapiStore.load(),
+      checkId: 'vapi'),
   // ---- Your cloud
   ApiKeyService('cloudflare', 'Cloudflare API token', 'cloud', ['Cloudflare browser, DNS, Workers, KV'], 'https://dash.cloudflare.com/profile/api-tokens',
       get: (r) => _s(r).cloudflareToken, set: (r, k) => _c(r).setCloudflareToken(k), checkId: 'cloudflare'),
@@ -99,8 +159,34 @@ final apiKeyServices = <ApiKeyService>[
   ApiKeyService('r2_secret_key', 'Cloudflare R2 secret access key', 'cloud', ['R2 storage'],
       'https://dash.cloudflare.com/?to=/:account/r2/api-tokens',
       get: (r) => _s(r).r2SecretKey, set: (r, k) => _c(r).setR2Keys(secret: k)),
+  ApiKeyService('r2_bucket', 'Cloudflare R2 default bucket', 'cloud', ['R2 file tools when no bucket is named'],
+      'https://dash.cloudflare.com/?to=/:account/r2/overview',
+      get: (r) => _s(r).r2Bucket, set: (r, k) => _c(r).setR2Bucket(k), address: true),
   ApiKeyService('e2b', 'E2B', 'cloud', ['cloud code sandbox'], 'https://e2b.dev/dashboard?tab=keys',
       get: (r) => _s(r).e2bKey, set: (r, k) => _c(r).setE2bKey(k), checkId: 'e2b'),
+  ApiKeyService('e2b_template', 'E2B sandbox template', 'cloud', ['which E2B template new sandboxes start from'],
+      'https://e2b.dev/dashboard?tab=templates',
+      // The built-in default counts as none, so removing it restores that.
+      get: (r) => _s(r).e2bTemplate == 'code-interpreter-v1' ? '' : _s(r).e2bTemplate, set: (r, k) => _c(r).setE2bTemplate(k), address: true),
+  // ---- Development
+  ApiKeyService('vercel_token', 'Vercel access token', 'cloud', ['Vercel projects, deployments, domains, env vars'], 'https://vercel.com/account/settings/tokens',
+      get: (r) => _s(r).vercelToken, set: (r, k) => _c(r).setVercelToken(k), test: testVercelToken),
+  ApiKeyService('vercel_team', 'Vercel team ID', 'cloud', ['Vercel tools'], 'https://vercel.com/account',
+      get: (r) => _s(r).vercelTeamId, set: (r, k) => _c(r).setVercelTeamId(k), address: true),
+  ApiKeyService('resend', 'Resend', 'cloud', ['sending email, domains, contacts, broadcasts'], 'https://resend.com/api-keys',
+      get: (r) => _s(r).resendKey, set: (r, k) => _c(r).setResendKey(k), test: testResendKey),
+  ApiKeyService('resend_from', 'Resend From address', 'cloud', ['Resend email'], 'https://resend.com/domains',
+      get: (r) => _s(r).resendFrom, set: (r, k) => _c(r).setResendFrom(k), address: true),
+  ApiKeyService('mongodb', 'MongoDB connection string', 'cloud', ['MongoDB databases'], 'https://cloud.mongodb.com',
+      get: (r) => _s(r).mongoUri,
+      set: (r, k) async {
+        // The open connection belongs to the old string.
+        await MongoSession.instance.close();
+        await _c(r).setMongoUri(k);
+      },
+      test: testMongoUri),
+  ApiKeyService('mongodb_database', 'MongoDB default database', 'cloud', ['MongoDB tools'], 'https://cloud.mongodb.com',
+      get: (r) => _s(r).mongoDatabase, set: (r, k) => _c(r).setMongoDatabase(k), address: true),
   // ---- The web
   ApiKeyService('exa', 'Exa', 'web', ['web search'], 'https://dashboard.exa.ai/api-keys',
       get: (r) => _s(r).exaKey, set: (r, k) => _c(r).setExaKey(k), checkId: 'exa'),
@@ -125,6 +211,8 @@ final apiKeyServices = <ApiKeyService>[
       get: (r) => InfoKeysNotifier.current.footballDataKey, set: (r, k) => _i(r).setFootballDataKey(k), ready: _info),
   ApiKeyService('thesportsdb', 'TheSportsDB', 'web', ['sports scores and teams'], 'https://www.thesportsdb.com/free_sports_api',
       get: (r) => InfoKeysNotifier.current.sportsDbKey, set: (r, k) => _i(r).setSportsDbKey(k), ready: _info),
+  ApiKeyService('seventeentrack', '17TRACK', 'web', ['package tracking'], 'https://api.17track.net/en/admin/settings',
+      get: (r) => InfoKeysNotifier.current.trackKey, set: (r, k) => _i(r).setTrackKey(k), ready: _info),
   ApiKeyService('youversion', 'YouVersion (Bible)', 'web', ['licensed Bible versions'], 'https://platform.youversion.com',
       get: (r) => r(bibleSettingsProvider).token,
       set: (r, k) => r(bibleSettingsProvider.notifier).setToken(k),
@@ -198,15 +286,42 @@ Future<ToolOutput> runSystemTool(ProviderReader read, String name, Map<String, d
   /// can't be tested here count as working.
   Future<String?> check(ApiKeyService s, String key) async {
     final id = s.checkId;
-    if (id == null) return null;
     try {
+      if (s.test != null) return await s.test!(key).timeout(const Duration(seconds: 30));
+      if (id == null) return null;
       return await read(aiProvider).verifyKey(id, key: key).timeout(const Duration(seconds: 30));
     } catch (e) {
       return aiErrorText(e);
     }
   }
 
+  if (networkDiagnosticTools.contains(name)) return runDiagnosticTool(name, a);
   switch (name) {
+    case 'test_api_key' || 'api_request' || 'api_send' || 'ai_balances':
+      return runNetworkTool(
+        name,
+        a,
+        savedKey: (id) async {
+          final s = apiKeyService(id);
+          return s == null ? '' : _keyOf(read, s);
+        },
+        verify: (checkId, key) async {
+          final local = checkId.startsWith(_localCheck) ? apiKeyService(checkId.substring(_localCheck.length)) : null;
+          if (local != null) return check(local, key);
+          try {
+            return await read(aiProvider).verifyKey(checkId, key: key).timeout(const Duration(seconds: 30));
+          } catch (e) {
+            return aiErrorText(e);
+          }
+        },
+        checkIdOf: (id) {
+          final s = apiKeyService(id);
+          return s?.test != null ? '$_localCheck${s!.id}' : s?.checkId;
+        },
+        savedServiceIds: apiKeyServiceIds,
+        credits: (id) => read(aiProvider).credits(id),
+      );
+
     case 'list_api_keys':
       final test = a['check'] == true;
       final group = '${a['group'] ?? ''}'.trim();
@@ -225,7 +340,7 @@ Future<ToolOutput> runSystemTool(ProviderReader read, String name, Map<String, d
           'get_key_at': s.url,
         };
         if (test && key.isNotEmpty) {
-          if (s.checkId == null) {
+          if (!s.testable) {
             row['works'] = 'not testable here';
           } else {
             checks.add(check(s, key).then((problem) {
@@ -248,7 +363,7 @@ Future<ToolOutput> runSystemTool(ProviderReader read, String name, Map<String, d
       if (before == key) {
         return ToolOutput({'service': s.id, 'name': s.name, 'action': 'unchanged', 'ends_with': keyEnding(key, address: s.address), 'uses': s.uses});
       }
-      final test = a['check'] != false && s.checkId != null;
+      final test = a['check'] != false && s.testable;
       if (test) {
         final problem = await check(s, key);
         if (problem != null) {
@@ -262,7 +377,7 @@ Future<ToolOutput> runSystemTool(ProviderReader read, String name, Map<String, d
         'action': before.isEmpty ? 'added' : 'replaced',
         'ends_with': keyEnding(key, address: s.address),
         'checked': test,
-        if (s.checkId == null) 'note': '${s.name} keys can\'t be tested here; it is checked the first time a tool uses it.',
+        if (!s.testable) 'note': '${s.name} keys can\'t be tested here; it is checked the first time a tool uses it.',
         'uses': s.uses,
       });
 

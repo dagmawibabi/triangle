@@ -1,18 +1,18 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:omni_ai/omni_ai.dart'
-    show ApprovalPolicy, McpCatalogHit, McpInput, McpRegistry, McpServer, McpToolInfo, McpTransportKind, Skill, SkillHit, SkillRegistry;
+    show ApprovalPolicy, McpCatalogHit, McpInput, McpRegistry, McpServer, McpTransportKind, Skill, SkillHit, SkillRegistry;
 
 import '../../../app/theme.dart';
 import '../../../core/widgets/app_sheet.dart';
 import '../../ai/data/ai.dart';
-import '../../pc/pc_screen.dart';
+import '../../integrations/mcp_oauth.dart';
 import '../../telegram/data/telegram_tools.dart' show ToolCategory;
+import 'mcp_server_screen.dart';
 import 'settings_screen.dart';
 import 'tools_screen.dart' show FeatureTools;
 
@@ -300,179 +300,8 @@ class _McpTabState extends ConsumerState<McpTab> with AutomaticKeepAliveClientMi
   }
 }
 
-/// An installed server: what it is, its tools, edit and remove.
-Future<void> showMcpServerSheet(BuildContext context, McpServer server) =>
-    showAppSheet<void>(context, initialSize: 0.7, builder: (context, scroll) => _McpServerSheet(server: server, scroll: scroll));
-
-class _McpServerSheet extends ConsumerStatefulWidget {
-  const _McpServerSheet({required this.server, required this.scroll});
-  final McpServer server;
-  final ScrollController scroll;
-
-  @override
-  ConsumerState<_McpServerSheet> createState() => _McpServerSheetState();
-}
-
-class _McpServerSheetState extends ConsumerState<_McpServerSheet> {
-  List<McpToolInfo>? _tools;
-  String? _serverName;
-  String? _error;
-  bool _loading = false;
-
-  /// Set when this server is a Triangle Companion that answers, for its live screen.
-  PcLink? _pc;
-
-  @override
-  void initState() {
-    super.initState();
-    final link = PcLink.fromServer(widget.server);
-    if (link != null) {
-      link.probe().then((info) {
-        if (info != null && mounted) setState(() => _pc = link);
-      });
-    }
-  }
-
-  Future<void> _connect() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final client = await ref.read(aiProvider).mcp.connect(widget.server.id);
-      final tools = await client.listTools();
-      if (mounted) {
-        setState(() {
-          _tools = tools;
-          _serverName = client.serverName;
-        });
-      }
-    } catch (e) {
-      if (mounted) setState(() => _error = _errorText(e));
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-
-  Future<void> _remove() async {
-    final ok = await confirmDelete(
-      context,
-      title: 'Remove ${widget.server.id}?',
-      message: 'The assistant loses its tools. Saved headers are deleted from this phone.',
-      action: 'Remove',
-    );
-    if (!ok || !mounted) return;
-    await ref.read(aiProvider).mcp.uninstall(widget.server.id);
-    if (mounted) {
-      Navigator.pop(context);
-      showSnack(context, 'Removed ${widget.server.id}');
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final s = widget.server;
-    return ListView(
-      controller: widget.scroll,
-      padding: const EdgeInsets.fromLTRB(Space.xl, 0, Space.xl, Space.xl),
-      children: [
-        _SheetTitle(icon: Icons.hub_rounded, title: s.id, subtitle: _serverName),
-        const SizedBox(height: Space.l),
-        _Fact('Transport', s.transport.name.toUpperCase()),
-        if (s.url != null) _Fact('Address', s.url!, mono: true),
-        if (s.command != null) _Fact('Command', [s.command!, ...s.args].join(' '), mono: true),
-        _Fact('Headers', s.headers.isEmpty ? 'None' : s.headers.keys.join(', ')),
-        _Fact('Tool calls', s.approval.kind == 'always' ? 'Ask before each call' : 'Follow the tool\'s own setting'),
-        if (_pc != null) ...[
-          const SizedBox(height: Space.l),
-          FilledButton.icon(
-            onPressed: () {
-              Navigator.pop(context);
-              PcScreen.open(context, link: _pc);
-            },
-            icon: const Icon(Icons.desktop_windows_outlined, size: 18),
-            label: const Text('Open PC screen'),
-          ),
-        ],
-        const SizedBox(height: Space.l),
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: () async {
-                  Navigator.pop(context);
-                  await showMcpEditSheet(context, server: s);
-                },
-                icon: const Icon(Icons.edit_outlined, size: 18),
-                label: const Text('Edit'),
-              ),
-            ),
-            const SizedBox(width: Space.s),
-            Expanded(
-              child: OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(foregroundColor: AppColors.danger),
-                onPressed: _remove,
-                icon: const Icon(Icons.delete_outline_rounded, size: 18),
-                label: const Text('Remove'),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: Space.xl),
-        Row(
-          children: [
-            Expanded(child: _sectionLabel(context, _tools == null ? 'Tools' : 'Tools · ${_tools!.length}')),
-            TextButton.icon(
-              onPressed: _loading ? null : _connect,
-              icon: _loading
-                  ? const SizedBox.square(dimension: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.power_rounded, size: 18),
-              label: Text(_tools == null ? 'Connect' : 'Refresh'),
-            ),
-          ],
-        ),
-        if (_error != null)
-          Text(_error!, style: context.text.bodySmall?.copyWith(color: AppColors.danger))
-        else if (_tools == null)
-          Text('Connect to check the server and see the tools it offers.', style: context.text.bodySmall)
-        else if (_tools!.isEmpty)
-          Text('This server offers no tools.', style: context.text.bodySmall)
-        else
-          SettingsCard(
-            children: [
-              for (final (i, t) in _tools!.indexed) ...[
-                if (i > 0) const Divider(height: 1),
-                Theme(
-                  data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-                  child: ExpansionTile(
-                    title: Text(t.name, style: context.text.titleSmall?.copyWith(fontFamily: 'monospace')),
-                    subtitle: t.description.isEmpty
-                        ? null
-                        : Text(t.description, maxLines: 2, overflow: TextOverflow.ellipsis, style: context.text.bodySmall),
-                    childrenPadding: const EdgeInsets.fromLTRB(Space.l, 0, Space.l, Space.l),
-                    expandedCrossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (t.description.isNotEmpty) ...[
-                        SelectableText(t.description, style: context.text.bodySmall),
-                        const SizedBox(height: Space.s),
-                      ],
-                      _Panel(
-                        child: SelectableText(
-                          const JsonEncoder.withIndent('  ').convert(t.inputSchema),
-                          style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ],
-          ),
-      ],
-    );
-  }
-}
+/// An installed server's page: status, sign-in, permissions and tools.
+Future<void> showMcpServerSheet(BuildContext context, McpServer server) => openMcpServer(context, server);
 
 /// Adds or edits a server by its address.
 Future<void> showMcpEditSheet(BuildContext context, {McpServer? server, McpServer? draft}) =>
@@ -554,9 +383,26 @@ class _McpEditSheetState extends ConsumerState<_McpEditSheet> {
     try {
       if (_editing && widget.server!.id != id) await mcp.uninstall(widget.server!.id);
       await mcp.install(server);
+      // Servers behind OAuth answer 401 and point at their sign-in: run it
+      // now, in the app, instead of failing on the first tool call.
+      final plan = await McpOAuth.probe(raw, headers: headers);
+      var signedIn = false;
+      if (plan != null && mounted) {
+        try {
+          signedIn = await McpOAuth.signInAndInstall(context, mcp, server, plan);
+        } catch (e) {
+          if (mounted) setState(() => _error = 'Saved, but sign-in failed: ${_errorText(e)}');
+          return;
+        }
+      }
       if (mounted) {
         Navigator.pop(context);
-        showSnack(context, _editing ? 'Saved $id' : 'Added $id');
+        showSnack(
+          context,
+          plan != null && !signedIn
+              ? 'Saved $id. Open it and tap Connect to sign in.'
+              : '${_editing ? 'Saved' : 'Added'} $id${signedIn ? ' and signed in' : ''}',
+        );
       }
     } catch (e) {
       if (mounted) setState(() => _error = _errorText(e));
@@ -575,7 +421,15 @@ class _McpEditSheetState extends ConsumerState<_McpEditSheet> {
         title: _editing ? 'Edit ${widget.server!.id}' : 'Add an MCP server',
         subtitle: 'Remote servers only: this phone can\'t run local commands.',
       ),
+      const SizedBox(height: Space.m),
+      const _McpExplainer(),
       const SizedBox(height: Space.l),
+      _FormStep(
+        number: 1,
+        title: 'How it talks',
+        body: _transport == McpTransportKind.http ? 'Most servers. Addresses usually end in /mcp.' : 'Older servers whose address ends in /sse.',
+      ),
+      const SizedBox(height: Space.s),
       SegmentedButton<McpTransportKind>(
         showSelectedIcon: false,
         segments: const [
@@ -585,11 +439,21 @@ class _McpEditSheetState extends ConsumerState<_McpEditSheet> {
         selected: {_transport},
         onSelectionChanged: (v) => setState(() => _transport = v.first),
       ),
-      const SizedBox(height: Space.m),
+      const SizedBox(height: Space.l),
+      const _FormStep(
+        number: 2,
+        title: 'Where it is',
+        body: 'A short name, and the https address from its docs.',
+      ),
+      const SizedBox(height: Space.s),
       TextField(
         controller: _id,
         autocorrect: false,
-        decoration: InputDecoration(labelText: 'Name', hintText: 'github', errorText: _idError),
+        decoration: InputDecoration(
+          labelText: 'Name',
+          hintText: 'github',
+          errorText: _idError,
+        ),
       ),
       const SizedBox(height: Space.s),
       TextField(
@@ -600,6 +464,12 @@ class _McpEditSheetState extends ConsumerState<_McpEditSheet> {
         decoration: InputDecoration(labelText: 'Address', hintText: 'https://example.com/mcp', errorText: _urlError),
       ),
       const SizedBox(height: Space.l),
+      const _FormStep(
+        number: 3,
+        title: 'How it signs in',
+        body: 'Leave empty for public or sign-in servers (you sign in after adding). Add a header only for an API key.',
+      ),
+      const SizedBox(height: Space.xs),
       Row(
         children: [
           Expanded(child: _sectionLabel(context, 'Headers')),
@@ -611,7 +481,7 @@ class _McpEditSheetState extends ConsumerState<_McpEditSheet> {
         ],
       ),
       if (_headers.isEmpty)
-        Text('API keys usually go in an Authorization header. Kept in secure storage.', style: context.text.bodySmall),
+        const SizedBox.shrink(),
       for (final h in _headers)
         Padding(
           padding: const EdgeInsets.only(top: Space.s),
@@ -646,7 +516,12 @@ class _McpEditSheetState extends ConsumerState<_McpEditSheet> {
             ],
           ),
         ),
-      const SizedBox(height: Space.m),
+      const SizedBox(height: Space.l),
+      const _FormStep(
+        number: 4,
+        title: 'What the assistant may do',
+        body: 'Fine-tune each tool later on the server\'s page.',
+      ),
       SwitchListTile(
         contentPadding: EdgeInsets.zero,
         title: const Text('Ask before each tool call'),
@@ -1258,5 +1133,90 @@ class _SkillSourceSheetState extends State<_SkillSourceSheet> {
       const SizedBox(height: Space.l),
       FilledButton(onPressed: _next, child: const Text('Preview')),
     ],
+  );
+}
+
+
+/// A numbered step of the add-a-server form, with what it is for.
+class _FormStep extends StatelessWidget {
+  const _FormStep({required this.number, required this.title, required this.body});
+  final int number;
+  final String title;
+  final String body;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Container(
+        width: 22,
+        height: 22,
+        margin: const EdgeInsets.only(top: 1),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(color: AppColors.tint.withValues(alpha: 0.15), shape: BoxShape.circle),
+        child: Text('$number', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: AppColors.accent)),
+      ),
+      const SizedBox(width: Space.s),
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: context.text.titleSmall),
+            const SizedBox(height: 2),
+            Text(body, style: context.text.bodySmall?.copyWith(height: 1.4)),
+          ],
+        ),
+      ),
+    ],
+  );
+}
+
+/// What an MCP server is, folded until asked.
+class _McpExplainer extends StatefulWidget {
+  const _McpExplainer();
+
+  @override
+  State<_McpExplainer> createState() => _McpExplainerState();
+}
+
+class _McpExplainerState extends State<_McpExplainer> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: AppColors.surface2,
+    borderRadius: BorderRadius.circular(Radii.m),
+    child: InkWell(
+      borderRadius: BorderRadius.circular(Radii.m),
+      onTap: () => setState(() => _open = !_open),
+      child: Padding(
+        padding: const EdgeInsets.all(Space.m),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.lightbulb_outline_rounded, size: 18, color: AppColors.accent),
+                const SizedBox(width: Space.s),
+                Expanded(child: Text('What is an MCP server?', style: context.text.titleSmall)),
+                Icon(_open ? Icons.expand_less_rounded : Icons.expand_more_rounded, color: AppColors.text2),
+              ],
+            ),
+            if (_open) ...[
+              const SizedBox(height: Space.s),
+              Text(
+                'MCP (Model Context Protocol) is a standard way for apps and services to offer tools to an AI. A '
+                'server might let the assistant search your GitHub issues, read a Notion page, check a wallet or '
+                'trade. Once added, the assistant sees its tools and can call them when a request needs one.\n\n'
+                'Only add servers you trust: a tool can do whatever the server lets it, so new servers ask before '
+                'each call unless you allow them. You can find servers under "Find servers" on the MCP page, or '
+                'paste an address from a service\'s docs here.',
+                style: context.text.bodySmall?.copyWith(height: 1.45),
+              ),
+            ],
+          ],
+        ),
+      ),
+    ),
   );
 }

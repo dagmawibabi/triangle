@@ -474,7 +474,7 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
                       if (history.isNotEmpty)
                         RecentTermChips(terms: history, onPick: _pickRecent, onRemove: _history.remove),
                       for (final id in recentIds)
-                        _RecentChatRow(
+                        RecentChatRow(
                           id: id,
                           contact: contacts,
                           onTap: () => _openRecent(id),
@@ -727,8 +727,8 @@ class _TopPeer extends StatelessWidget {
 /// A chat (or contact) opened from a search: face, name and a status line,
 /// like "last seen recently", "bot" or "16 557 subscribers". Long-press
 /// removes it.
-class _RecentChatRow extends ConsumerWidget {
-  const _RecentChatRow({required this.id, required this.contact, required this.onTap, required this.onRemove});
+class RecentChatRow extends ConsumerWidget {
+  const RecentChatRow({required this.id, required this.contact, required this.onTap, required this.onRemove});
 
   /// A chat id, or for [contact] a user id (the same as their chat's).
   final int id;

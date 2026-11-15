@@ -6,6 +6,8 @@ import 'package:omni_ai/omni_ai.dart';
 
 import '../../settings/data/settings.dart';
 import 'decision_settings.dart';
+import '../../integrations/mcp_oauth.dart';
+import '../../calls/vapi.dart';
 
 export 'package:omni_ai/omni_ai.dart' show ModelInfo, ModelType, Voice;
 
@@ -21,8 +23,11 @@ final aiProvider = Provider<OmniAI>((ref) {
   );
   // Installed MCP servers and skills, read now: a new client (after a
   // restore, say) would otherwise list none until something asked.
-  unawaited(ai.mcp.load());
+  // Then OAuth servers whose token is about to run out get a fresh one.
+  unawaited(ai.mcp.load().then((_) => McpOAuth.refreshAll(ai.mcp)));
   unawaited(ai.skills.load());
+  // The Vapi phone-call key and settings, from secure storage.
+  unawaited(VapiStore.load().then((_) => VapiStore.apply(ai)));
   void sync(AppSettings s) {
     // Unchanged keys are ignored, so this is cheap on every settings change.
     ai.setApiKey('gateway', s.vercelKey, persist: false);

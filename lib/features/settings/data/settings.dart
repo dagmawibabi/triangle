@@ -125,7 +125,7 @@ enum ApprovalMode {
   ),
   never(
     'Never ask',
-    'The assistant acts right away everywhere. Use with care.',
+    'The assistant acts right away everywhere, deleting, calling and spending included. Use with care.',
   );
 
   const ApprovalMode(this.label, this.explanation);
@@ -197,6 +197,8 @@ class AppSettings {
     this.briefMorningOn = true,
     this.autoCompact = true,
     this.compactChat = false,
+    this.showScrollToBottom = true,
+    this.showModelChip = true,
     this.showModelName = true,
     this.chatFont = ChatFont.system,
     this.themeMode = AppThemeMode.dark,
@@ -246,6 +248,12 @@ class AppSettings {
     this.r2SecretKey = '',
     this.r2Bucket = '',
     this.e2bKey = '',
+    this.vercelToken = '',
+    this.vercelTeamId = '',
+    this.resendKey = '',
+    this.resendFrom = '',
+    this.mongoUri = '',
+    this.mongoDatabase = '',
     this.e2bTemplate = 'code-interpreter-v1',
     this.e2bTimeoutMinutes = 10,
     this.e2bInternet = true,
@@ -356,6 +364,12 @@ class AppSettings {
   final bool autoCompact;
   /// Less space between messages in the assistant chat.
   final bool compactChat;
+
+  /// The round arrow that jumps to the newest message in the AI chat.
+  final bool showScrollToBottom;
+
+  /// The chip above the composer that shows and switches the chat model.
+  final bool showModelChip;
   /// The model's name under each answer.
   final bool showModelName;
   /// The typeface of chat text.
@@ -482,6 +496,27 @@ class AppSettings {
 
   /// E2B API key: cloud sandboxes that run code.
   final String e2bKey;
+
+  /// Vercel access token (vercel.com → Account Settings → Tokens): projects,
+  /// deployments, domains, env vars. Not the AI Gateway key.
+  final String vercelToken;
+
+  /// The Vercel team the token acts on; empty for the personal account.
+  final String vercelTeamId;
+
+  /// Resend API key: sending email, domains, contacts, broadcasts.
+  final String resendKey;
+
+  /// The From address Resend sends with when none is given, e.g.
+  /// "Me <me@example.com>" on a verified domain.
+  final String resendFrom;
+
+  /// A MongoDB connection string (mongodb:// or mongodb+srv://).
+  final String mongoUri;
+
+  /// The database MongoDB tools use when none is named; empty takes the
+  /// one in the connection string.
+  final String mongoDatabase;
 
   /// The E2B template sandboxes start from.
   final String e2bTemplate;
@@ -614,6 +649,9 @@ class AppSettings {
   bool get hasCloudflare => cloudflareToken.trim().isNotEmpty;
   bool get hasR2Keys => r2AccessKeyId.trim().isNotEmpty && r2SecretKey.trim().isNotEmpty;
   bool get hasE2bKey => e2bKey.trim().isNotEmpty;
+  bool get hasVercelToken => vercelToken.trim().isNotEmpty;
+  bool get hasResendKey => resendKey.trim().isNotEmpty;
+  bool get hasMongoUri => mongoUri.trim().isNotEmpty;
   bool get hasAnyKey => hasVercelKey || hasOpenRouterKey || hasOpenCodeKey || hasGeminiKey || hasLmStudio;
 
   AppSettings copyWith({
@@ -678,6 +716,8 @@ class AppSettings {
     bool? briefMorningOn,
     bool? autoCompact,
     bool? compactChat,
+    bool? showScrollToBottom,
+    bool? showModelChip,
     bool? showModelName,
     ChatFont? chatFont,
     AppThemeMode? themeMode,
@@ -727,6 +767,12 @@ class AppSettings {
     String? r2SecretKey,
     String? r2Bucket,
     String? e2bKey,
+    String? vercelToken,
+    String? vercelTeamId,
+    String? resendKey,
+    String? resendFrom,
+    String? mongoUri,
+    String? mongoDatabase,
     String? e2bTemplate,
     int? e2bTimeoutMinutes,
     bool? e2bInternet,
@@ -796,6 +842,8 @@ class AppSettings {
     briefMorningOn: briefMorningOn ?? this.briefMorningOn,
     autoCompact: autoCompact ?? this.autoCompact,
     compactChat: compactChat ?? this.compactChat,
+    showScrollToBottom: showScrollToBottom ?? this.showScrollToBottom,
+    showModelChip: showModelChip ?? this.showModelChip,
     showModelName: showModelName ?? this.showModelName,
     chatFont: chatFont ?? this.chatFont,
     themeMode: themeMode ?? this.themeMode,
@@ -845,6 +893,12 @@ class AppSettings {
     r2SecretKey: r2SecretKey ?? this.r2SecretKey,
     r2Bucket: r2Bucket ?? this.r2Bucket,
     e2bKey: e2bKey ?? this.e2bKey,
+    vercelToken: vercelToken ?? this.vercelToken,
+    vercelTeamId: vercelTeamId ?? this.vercelTeamId,
+    resendKey: resendKey ?? this.resendKey,
+    resendFrom: resendFrom ?? this.resendFrom,
+    mongoUri: mongoUri ?? this.mongoUri,
+    mongoDatabase: mongoDatabase ?? this.mongoDatabase,
     e2bTemplate: e2bTemplate ?? this.e2bTemplate,
     e2bTimeoutMinutes: e2bTimeoutMinutes ?? this.e2bTimeoutMinutes,
     e2bInternet: e2bInternet ?? this.e2bInternet,
@@ -875,6 +929,9 @@ class SettingsController extends Notifier<AppSettings> {
   static const _r2AccessKeyId = 'r2_access_key_id';
   static const _r2SecretKey = 'r2_secret_key';
   static const _e2bKey = 'e2b_key';
+  static const _vercelToken = 'vercel_token';
+  static const _resendKey = 'resend_key';
+  static const _mongoUri = 'mongodb_uri';
 
   @override
   AppSettings build() {
@@ -941,6 +998,12 @@ class SettingsController extends Notifier<AppSettings> {
       r2SecretKey: await _secret(_r2SecretKey),
       r2Bucket: p.getString('r2_bucket') ?? d.r2Bucket,
       e2bKey: await _secret(_e2bKey),
+      vercelToken: await _secret(_vercelToken),
+      vercelTeamId: p.getString('vercel_team_id') ?? d.vercelTeamId,
+      resendKey: await _secret(_resendKey),
+      resendFrom: p.getString('resend_from') ?? d.resendFrom,
+      mongoUri: await _secret(_mongoUri),
+      mongoDatabase: p.getString('mongodb_database') ?? d.mongoDatabase,
       e2bTemplate: p.getString('e2b_template') ?? d.e2bTemplate,
       e2bTimeoutMinutes: p.getInt('e2b_timeout_minutes') ?? d.e2bTimeoutMinutes,
       e2bInternet: p.getBool('e2b_internet') ?? d.e2bInternet,
@@ -1012,6 +1075,8 @@ class SettingsController extends Notifier<AppSettings> {
       briefMorningOn: p.getBool('brief_morning_on') ?? d.briefMorningOn,
       autoCompact: p.getBool('auto_compact') ?? d.autoCompact,
       compactChat: p.getBool('compact_chat') ?? d.compactChat,
+      showScrollToBottom: p.getBool('show_scroll_to_bottom') ?? d.showScrollToBottom,
+      showModelChip: p.getBool('show_model_chip') ?? d.showModelChip,
       showModelName: p.getBool('show_model_name') ?? d.showModelName,
       chatFont: ChatFont.values.asNameMap()[p.getString('chat_font')] ?? d.chatFont,
       themeMode: AppThemeMode.values.asNameMap()[p.getString('theme_mode')] ?? d.themeMode,
@@ -1167,6 +1232,27 @@ class SettingsController extends Notifier<AppSettings> {
     state = state.copyWith(e2bKey: v.trim());
     await _writeSecret(_e2bKey, v.trim());
   }
+
+  Future<void> setVercelToken(String v) async {
+    state = state.copyWith(vercelToken: v.trim());
+    await _writeSecret(_vercelToken, v.trim());
+  }
+
+  Future<void> setVercelTeamId(String v) => customize(state.copyWith(vercelTeamId: v.trim()), 'vercel_team_id', v.trim());
+
+  Future<void> setResendKey(String v) async {
+    state = state.copyWith(resendKey: v.trim());
+    await _writeSecret(_resendKey, v.trim());
+  }
+
+  Future<void> setResendFrom(String v) => customize(state.copyWith(resendFrom: v.trim()), 'resend_from', v.trim());
+
+  Future<void> setMongoUri(String v) async {
+    state = state.copyWith(mongoUri: v.trim());
+    await _writeSecret(_mongoUri, v.trim());
+  }
+
+  Future<void> setMongoDatabase(String v) => customize(state.copyWith(mongoDatabase: v.trim()), 'mongodb_database', v.trim());
 
   Future<void> setE2bTemplate(String v) => customize(
     state.copyWith(e2bTemplate: v.trim().isEmpty ? 'code-interpreter-v1' : v.trim()),
@@ -1479,6 +1565,9 @@ class SettingsController extends Notifier<AppSettings> {
       r2AccessKeyId: state.r2AccessKeyId,
       r2SecretKey: state.r2SecretKey,
       e2bKey: state.e2bKey,
+      vercelToken: state.vercelToken,
+      resendKey: state.resendKey,
+      mongoUri: state.mongoUri,
       model: state.model,
       imageModel: state.imageModel,
       customInstructions: state.customInstructions,
@@ -1494,6 +1583,8 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setBriefMorningOn(bool v) => customize(state.copyWith(briefMorningOn: v), 'brief_morning_on', v);
   Future<void> setAutoCompact(bool v) => customize(state.copyWith(autoCompact: v), 'auto_compact', v);
   Future<void> setCompactChat(bool v) => customize(state.copyWith(compactChat: v), 'compact_chat', v);
+  Future<void> setShowScrollToBottom(bool v) => customize(state.copyWith(showScrollToBottom: v), 'show_scroll_to_bottom', v);
+  Future<void> setShowModelChip(bool v) => customize(state.copyWith(showModelChip: v), 'show_model_chip', v);
   Future<void> setShowModelName(bool v) => customize(state.copyWith(showModelName: v), 'show_model_name', v);
   Future<void> setChatFont(ChatFont v) => customize(state.copyWith(chatFont: v), 'chat_font', v.name);
   Future<void> setThemeMode(AppThemeMode v) => customize(state.copyWith(themeMode: v), 'theme_mode', v.name);

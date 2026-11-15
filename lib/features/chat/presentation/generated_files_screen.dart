@@ -18,8 +18,11 @@ import '../../../core/widgets/net_image.dart';
 import '../../library/library_favorites.dart';
 import '../../media/audio_center.dart';
 import '../../media/audio_player_ui.dart';
+import '../../playlists/playlists.dart' show PlaylistTrack;
+import '../../playlists/playlist_widgets.dart' show showAddToPlaylist;
 import '../../telegram/presentation/chat_actions.dart' show confirmAction;
 import 'widgets/library_result_cards.dart' show EbookReader, showEpisode, showPodcast;
+import '../../../core/widgets/fullscreen_image.dart';
 
 /// Where a file came from.
 enum FileSource {
@@ -367,6 +370,8 @@ class _GeneratedFilesScreenState extends ConsumerState<GeneratedFilesScreen> wit
         _open(e);
       case 'rename':
         await _rename(e);
+      case 'playlist':
+        await showAddToPlaylist(context, ref, [PlaylistTrack.fromFile(e.file.path, meta: e.meta)]);
       case 'copy':
         await Clipboard.setData(ClipboardData(text: e.file.path));
         if (mounted) showSnack(context, 'Path copied');
@@ -428,6 +433,15 @@ class _GeneratedFilesScreenState extends ConsumerState<GeneratedFilesScreen> wit
                     icon: const Icon(Icons.select_all_rounded),
                     onPressed: () => setState(() => _picked.addAll(_of(kind).map((e) => e.file.path))),
                   ),
+                  if (pickedEntries.any((e) => e.fileKind == _Kind.audio))
+                    IconButton(
+                      tooltip: 'Add audio to a playlist',
+                      icon: const Icon(Icons.playlist_add_rounded),
+                      onPressed: () async {
+                        final audio = [for (final e in pickedEntries) if (e.fileKind == _Kind.audio) PlaylistTrack.fromFile(e.file.path, meta: e.meta)];
+                        if (await showAddToPlaylist(context, ref, audio) != null && mounted) setState(_picked.clear);
+                      },
+                    ),
                   IconButton(
                     tooltip: 'Copy paths',
                     icon: const Icon(Icons.copy_rounded),
@@ -1158,6 +1172,7 @@ class _DetailsSheet extends StatelessWidget {
           child: Row(
             children: [
               action(Icons.open_in_new_rounded, 'Open', 'open'),
+              if (e.fileKind == _Kind.audio) action(Icons.playlist_add_rounded, 'Playlist', 'playlist'),
               action(Icons.drive_file_rename_outline_rounded, 'Rename', 'rename'),
               action(Icons.copy_rounded, 'Copy path', 'copy'),
               action(Icons.delete_outline_rounded, 'Delete', 'delete', color: AppColors.danger),
@@ -1256,7 +1271,7 @@ class _ImageViewerState extends State<_ImageViewer> {
         controller: _pages,
         itemCount: widget.images.length,
         onPageChanged: (i) => setState(() => _at = i),
-        itemBuilder: (_, i) => InteractiveViewer(maxScale: 6, child: Center(child: Image.file(widget.images[i].file))),
+        itemBuilder: (_, i) => FullscreenZoomImage(image: FileImage(widget.images[i].file)),
       ),
     );
   }

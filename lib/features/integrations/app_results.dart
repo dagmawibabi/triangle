@@ -277,6 +277,8 @@ abstract final class AppResults {
       'author':
           _str(m['username']) ?? _str(profile['real_name']) ?? _str(profile['display_name']) ?? _str(m['user_name']) ?? _str(m['user']) ?? _str(m['bot_id']) ?? '',
       'channel': ?(channel is Map ? (_str(channel['name']) ?? _str(channel['id'])) : _str(channel) ?? _str(m['channel_name'])),
+      // The channel's id, when known, so the chat can open the channel.
+      'channel_id': ?_slackId(channel is Map ? _str(channel['id']) : _str(channel) ?? _str(m['channel_id'])),
       'when': ?_when(ts),
       'permalink': ?_str(m['permalink']),
       if ((m['reply_count'] as num? ?? 0) > 0) 'replies': m['reply_count'],
@@ -288,6 +290,9 @@ abstract final class AppResults {
         ],
     };
   }
+
+  /// [s] when it is a Slack conversation id (C…, G… or D…), else null.
+  static String? _slackId(String? s) => s != null && RegExp(r'^[CGD][A-Z0-9]{6,}$').hasMatch(s) ? s : null;
 
   static Map<String, dynamic>? _slackChannel(Map<String, dynamic> m) {
     final id = _str(m['id']);

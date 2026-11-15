@@ -150,7 +150,7 @@ class _AttachSheetState extends ConsumerState<_AttachSheet> {
                           duration: const Duration(milliseconds: 180),
                           padding: const EdgeInsets.symmetric(vertical: 8),
                           decoration: BoxDecoration(
-                            color: _tab == t ? AppColors.accent.withValues(alpha: 0.18) : Colors.transparent,
+                            color: _tab == t ? AppColors.tint.withValues(alpha: 0.18) : Colors.transparent,
                             borderRadius: BorderRadius.circular(Radii.xl),
                           ),
                           child: Column(

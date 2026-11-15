@@ -17,6 +17,9 @@ import '../../../infrastructure/telegram/telegram_client.dart';
 import '../../chat/presentation/widgets/post_viewer.dart';
 import '../../media/audio_center.dart';
 import '../../media/audio_player_ui.dart';
+import '../../../infrastructure/telegram/accounts.dart' show activeAccountIdProvider;
+import '../../playlists/playlists.dart' show PlaylistTrack;
+import '../../playlists/playlist_widgets.dart' show showAddToPlaylist;
 import '../data/file_loader.dart';
 import '../data/message_content.dart';
 import '../data/telegram_store.dart';
@@ -29,6 +32,7 @@ import 'message_tile.dart' show snapshotOf;
 import 'tg_avatar.dart';
 import 'analytics_screen.dart';
 import 'search_screen.dart';
+import '../../../core/widgets/fullscreen_image.dart';
 
 /// A chat's profile, the way Telegram lays it out: who or what it is,
 /// quick actions, details, and everything shared in it by kind.
@@ -671,20 +675,7 @@ class _ChatProfileScreenState extends ConsumerState<ChatProfileScreen> {
     if (big == null) return;
     final path = await ref.read(fileLoaderProvider).download(big, priority: 24);
     if (path == null || !mounted) return;
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => Scaffold(
-          backgroundColor: Colors.black,
-          appBar: AppBar(backgroundColor: Colors.black, title: Text(c.title)),
-          body: Center(
-            child: InteractiveViewer(
-              maxScale: 5,
-              child: Image.file(File(path)),
-            ),
-          ),
-        ),
-      ),
-    );
+    openFullscreenFile(context, path, title: c.title);
   }
 }
 
@@ -1090,6 +1081,18 @@ class _SharedRow extends ConsumerWidget {
           style: context.text.bodySmall,
         ),
         onTap: t == null ? null : () => audio.play(t, playlist: playlist),
+        onLongPress: () {
+          final track = PlaylistTrack.fromMessage(m, store, ref.read(activeAccountIdProvider));
+          if (track != null) showAddToPlaylist(context, ref, [track]);
+        },
+        trailing: IconButton(
+          tooltip: 'Add to playlist',
+          icon: Icon(Icons.playlist_add_rounded, color: AppColors.text3),
+          onPressed: () {
+            final track = PlaylistTrack.fromMessage(m, store, ref.read(activeAccountIdProvider));
+            if (track != null) showAddToPlaylist(context, ref, [track]);
+          },
+        ),
       );
     }
     if (tab == _Tab.links) {

@@ -7,6 +7,7 @@ import '../../../infrastructure/telegram/telegram_client.dart';
 import '../data/telegram_store.dart';
 import '../data/telegram_tools.dart';
 import '../../../infrastructure/telegram/td_compat.dart';
+import '../../settings/data/settings.dart';
 
 /// The account's chat folders: reorder by dragging, rename, choose what
 /// goes in, delete, or create one (also from Telegram's suggestions).
@@ -71,6 +72,14 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
       body: ListView(
         padding: const EdgeInsets.only(bottom: 96),
         children: [
+          SwitchListTile(
+            secondary: lead(const Icon(Icons.view_sidebar_outlined)),
+            title: const Text('Show in the drawer'),
+            subtitle: Text('Your Telegram folders, in the side drawer', style: context.text.bodySmall),
+            value: ref.watch(settingsProvider.select((s) => s.drawerFolders)),
+            onChanged: ref.read(settingsProvider.notifier).setDrawerFolders,
+          ),
+          const Divider(),
           if (folders.isEmpty)
             Padding(
               padding: const EdgeInsets.all(Space.xl),

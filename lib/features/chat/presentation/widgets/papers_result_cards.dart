@@ -394,7 +394,7 @@ class PaperRow extends StatelessWidget {
     final p = paper;
     final source = _str(p['source']);
     final where = _str(p['venue']) ?? _str(p['category']);
-    final blurb = _str(p['tldr']) ?? _str(p['summary']);
+    final blurb = _str(p['tldr']) ?? (_str(p['summary']) == null ? null : _clean(_str(p['summary'])!));
     final pdf = _str(p['pdf']);
     final meta = [if (p['year'] != null) '${p['year']}', ?where];
     return InkWell(
@@ -449,7 +449,7 @@ class _PaperHero extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = paper;
     final tldr = _str(p['tldr']);
-    final blurb = tldr ?? _str(p['summary']);
+    final blurb = tldr ?? (_str(p['summary']) == null ? null : _clean(_str(p['summary'])!));
     final tint = _sourceColor(_str(p['source']) ?? _strings(p['sources']).firstOrNull);
     return Container(
       margin: const EdgeInsets.only(bottom: Space.s),
@@ -529,24 +529,67 @@ class _Callout extends StatelessWidget {
   final String label;
   final Widget child;
 
+  // A rounded box can't take a one-sided Border (Flutter throws), so the
+  // accent rule is its own strip inside a clipped, rounded container.
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(Space.m),
-    decoration: BoxDecoration(
-      color: AppColors.accent.withValues(alpha: 0.06),
-      borderRadius: BorderRadius.circular(Radii.m),
-      border: Border(left: BorderSide(color: AppColors.accent.withValues(alpha: 0.8), width: 3)),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label.toUpperCase(), style: TextStyle(color: AppColors.text2, fontSize: 10.5, fontWeight: FontWeight.w800, letterSpacing: 0.8)),
-        const SizedBox(height: 6),
-        child,
-      ],
+  Widget build(BuildContext context) => ClipRRect(
+    borderRadius: BorderRadius.circular(Radii.m),
+    child: Container(
+      color: AppColors.tint.withValues(alpha: AppColors.isLight ? 0.06 : 0.1),
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(width: 3, color: AppColors.tint.withValues(alpha: 0.8)),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(Space.m, Space.m, Space.m, Space.m),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(label == 'TL;DR' ? Icons.bolt_rounded : Icons.notes_rounded, size: 13, color: AppColors.tint),
+                        const SizedBox(width: 5),
+                        Text(label.toUpperCase(), style: TextStyle(color: AppColors.text2, fontSize: 10.5, fontWeight: FontWeight.w800, letterSpacing: 0.8)),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    child,
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     ),
   );
 }
+
+/// An abstract as readable paragraphs: drops JATS/HTML tags and a leading
+/// "Abstract" label, and joins arXiv's hard-wrapped lines, keeping only
+/// real paragraph breaks.
+List<String> _paragraphs(String raw) {
+  var s = raw
+      .replaceAll(RegExp(r'</?(jats:)?(p|sec)\b[^>]*>', caseSensitive: false), '\n\n')
+      .replaceAll(RegExp(r'<[^>]+>'), '')
+      .replaceAll('&amp;', '&')
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&#39;', "'")
+      .replaceAll('&nbsp;', ' ')
+      .replaceAll('\r', '')
+      .trim();
+  s = s.replaceFirst(RegExp(r'^abstract[\s:.\-–—]*', caseSensitive: false), '');
+  return [
+    for (final p in s.split(RegExp(r'\n\s*\n')))
+      if (p.replaceAll(RegExp(r'\s+'), ' ').trim() case final t when t.isNotEmpty) t,
+  ];
+}
+
+String _clean(String raw) => _paragraphs(raw).join(' ');
 
 /// Badges, title, authors and where it was published.
 class _PaperHead extends StatelessWidget {
@@ -681,7 +724,10 @@ class _PaperDetailsState extends State<_PaperDetails> {
         ],
         if (_str(p['summary']) case final abs?) ...[
           _section(context, 'Abstract'),
-          MathText(abs, selectable: true, style: context.text.bodyMedium?.copyWith(height: 1.65, fontSize: 15, color: AppColors.text)),
+          for (final (i, para) in _paragraphs(abs).indexed) ...[
+            if (i > 0) const SizedBox(height: Space.m),
+            MathText(para, selectable: true, style: context.text.bodyMedium?.copyWith(height: 1.65, fontSize: 15, color: AppColors.text)),
+          ],
         ],
         if (_str(p['comment']) case final c?) ...[
           _section(context, 'Comments'),
@@ -977,7 +1023,7 @@ class _YearBars extends StatelessWidget {
                       child: Container(
                         margin: const EdgeInsets.symmetric(horizontal: 1.5),
                         height: (((y['count'] as num?)?.toDouble() ?? 0) / max * 64).clamp(2, 64),
-                        decoration: BoxDecoration(color: AppColors.accent.withValues(alpha: 0.75), borderRadius: const BorderRadius.vertical(top: Radius.circular(3))),
+                        decoration: BoxDecoration(color: AppColors.tint.withValues(alpha: 0.75), borderRadius: const BorderRadius.vertical(top: Radius.circular(3))),
                       ),
                     ),
                   ),

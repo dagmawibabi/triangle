@@ -578,7 +578,7 @@ class _ItemCard extends ConsumerWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: Space.s),
       child: Material(
-        color: picked ? AppColors.accent.withValues(alpha: 0.14) : AppColors.surface,
+        color: picked ? AppColors.tint.withValues(alpha: 0.14) : AppColors.surface,
         borderRadius: BorderRadius.circular(Radii.l),
         child: InkWell(
           borderRadius: BorderRadius.circular(Radii.l),

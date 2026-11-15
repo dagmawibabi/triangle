@@ -9,6 +9,7 @@ import 'package:video_player/video_player.dart';
 import '../../../app/theme.dart';
 import '../data/file_loader.dart';
 import '../data/message_content.dart';
+import '../../../core/widgets/fullscreen_image.dart';
 
 Future<void> showMediaViewer(
   BuildContext context,
@@ -136,12 +137,7 @@ class _MediaViewerState extends ConsumerState<MediaViewer> {
               ? const Center(child: CircularProgressIndicator())
               : _isVideo
               ? _VideoControls(controller: _video)
-              : Center(
-                  child: InteractiveViewer(
-                    maxScale: 6,
-                    child: Image.file(File(_path!), fit: BoxFit.contain),
-                  ),
-                ),
+              : FullscreenZoomImage(image: FileImage(File(_path!))),
         ),
         Positioned(
           top: MediaQuery.paddingOf(context).top + Space.s,

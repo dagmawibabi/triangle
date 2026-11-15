@@ -407,7 +407,7 @@
 	{
 		"name": "create_watch",
 		"label": "Setting up a watch",
-		"description": "Creates a watch that runs on its own. Triggers: new messages in specific chats (chat_ids), all_dms, all_groups, all_channels, mentions of the user, a folder (these need Telegram), a schedule (daily_at \"HH:MM\" or every_minutes), or app: something new in a connected app (app = a toolkit like gmail, slack, github, notion, todoist, or \"any\"; query = what to look for, e.g. \"emails from my bank\"), checked every_minutes (default 15), or phone: something on the phone (phone_event: battery low, plugged in/unplugged, Wi-Fi joins/leaves, arriving at or leaving a place, a missed call, a new SMS, the user opening the app). tools limits what its runs may use; model picks a cheaper model (free by default). Modes: notify (a phone notification with the new messages), summarize (you write a short note and the user is notified), act (you follow the instructions on every trigger, e.g. reply to each new DM, and may use any tool). Use for \"tell me when X posts\", \"watch my DMs and answer them\", \"every morning summarise my channels\".",
+		"description": "Creates a watch that runs on its own. Message triggers can wake on every message or only on a keyword (wake_on: keyword, keywords: [\"Triangle\", \"/agent\"]). Triggers: new messages in specific chats (chat_ids), all_dms, all_groups, all_channels, mentions of the user, a folder (these need Telegram), a schedule (daily_at \"HH:MM\" or every_minutes), or app: something new in a connected app (app = a toolkit like gmail, slack, github, notion, todoist, or \"any\"; query = what to look for, e.g. \"emails from my bank\"), checked every_minutes (default 15), or phone: something on the phone (phone_event: battery low, plugged in/unplugged, Wi-Fi joins/leaves, arriving at or leaving a place, a missed call, a new SMS, the user opening the app). tools limits what its runs may use; model picks a cheaper model (free by default). Modes: notify (a phone notification with the new messages), summarize (you write a short note and the user is notified), act (you follow the instructions on every trigger, e.g. reply to each new DM, and may use any tool). Use for \"tell me when X posts\", \"watch my DMs and answer them\", \"every morning summarise my channels\".",
 		"category": "automation",
 		"categoryLabel": "Watches, reminders & widgets",
 		"access": "modify",
@@ -425,7 +425,7 @@
 	{
 		"name": "update_watch",
 		"label": "Changing a watch",
-		"description": "Changes a watch: turn it on or off, rename it, change its chats, mode, schedule or instructions.",
+		"description": "Changes a watch: turn it on or off, rename it, change its chats, mode, schedule, instructions or trigger keywords.",
 		"category": "automation",
 		"categoryLabel": "Watches, reminders & widgets",
 		"access": "modify",
@@ -509,6 +509,411 @@
 		"description": "Creates an image from a detailed prompt with the image model chosen in Settings. The image is shown to the user in the chat. Use when asked to draw, design or visualize something.",
 		"category": "creative",
 		"categoryLabel": "Create: images, video & audio",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "show_component",
+		"label": "Drawing a component",
+		"description": "Shows data as a visual card in the chat, drawn by the app (no AI cost). Use it when a picture says it better than text: trends and breakdowns (chart), headline numbers (stats), many rows (table), goals (progress), schedules or histories (timeline), choices (comparison), one reading on a scale (gauge). After it, add only what the card doesn't show. Fields by component:\n- chart: chart_type (line, area, bar, hbar, pie, donut), labels (x values or slice names), series [{name, values}] (pie/donut use the first series), unit.\n- stats: items [{label, value (text, e.g. \"$12.4k\"), delta (% change), up_is_bad, hint}].\n- table: columns, rows (lists of cells; markdown links allowed).\n- progress: items [{label, value, max, unit}].\n- timeline: items [{time, title, detail, status (done, next or empty)}].\n- comparison: options [{name, score (0-10), pros, cons}] (2-4), verdict.\n- gauge: value, min, max, label, unit.\nSome components may be turned off by the user; the error then lists those you can use.",
+		"category": "creative",
+		"categoryLabel": "Create: images, video & audio",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "list_custom_folders",
+		"label": "Listing your folders",
+		"description": "The user's own custom folders (made in the app, separate from Telegram's chat folders): name, emoji or icon, any whole chat types it holds (every DM, bot, group or channel) and chat count. with_chats true also lists each folder's chats in this account.",
+		"category": "folders",
+		"categoryLabel": "Folders",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "custom_folder_chats",
+		"label": "Opening a folder",
+		"description": "The chats in one custom folder (this account), with type, unread count and last activity.",
+		"category": "folders",
+		"categoryLabel": "Folders",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "create_custom_folder",
+		"label": "Making a folder",
+		"description": "Makes a custom folder in the app (not a Telegram folder) and optionally puts chats in it, one by one (chat_ids) or whole types (types: every DM, bot, group or channel, including ones that come later). Any chat can be in several folders. It shows in the drawer.",
+		"category": "folders",
+		"categoryLabel": "Folders",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "update_custom_folder",
+		"label": "Changing a folder",
+		"description": "Renames a custom folder, changes its emoji, or adds and removes chats or whole chat types.",
+		"category": "folders",
+		"categoryLabel": "Folders",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "delete_custom_folder",
+		"label": "Deleting a folder",
+		"description": "Deletes a custom folder. Its chats are untouched. Only when the user asks.",
+		"category": "folders",
+		"categoryLabel": "Folders",
+		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "list_playlists",
+		"label": "Listing your playlists",
+		"description": "The user's playlists in the app: name, description, track count and length. with_tracks true also lists each one's tracks.",
+		"category": "playlists",
+		"categoryLabel": "Playlists",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "playlist_tracks",
+		"label": "Opening a playlist",
+		"description": "The tracks of one playlist in order: track_id, title, artist, type (music, voice, podcast, audiobook, audio), where it's from (Telegram chat and message, or a saved file) and length.",
+		"category": "playlists",
+		"categoryLabel": "Playlists",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "find_audio",
+		"label": "Finding audio",
+		"description": "Finds audio to put in playlists. source telegram (default) searches songs, voice messages or audio files in one chat or channel (chat_id) or across every chat, optionally by words (title, artist, file name); it returns chat_id and message_id for each. source files lists audio the app saved (podcast episodes, audiobook chapters, downloads, Telegram audio saved to Files), with file_path.",
+		"category": "playlists",
+		"categoryLabel": "Playlists",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "create_playlist",
+		"label": "Making a playlist",
+		"description": "Makes a playlist in the app and optionally fills it: Telegram messages (chat_id + message_ids), every song, voice message or audio file of one chat or channel (whole_chat_id + whole_chat_type), and saved files (file_paths). Tracks stay where they are and play from there. It shows under Playlists in the drawer.",
+		"category": "playlists",
+		"categoryLabel": "Playlists",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "update_playlist",
+		"label": "Changing a playlist",
+		"description": "Changes anything about a playlist: name, description; its cover (a picture from a file or link, a collage of album art, or a gradient colour) and mark (emoji, icon or none); pinned to the top; adds tracks (same ways as create_playlist, skipping ones already in it); removes tracks by track_id; moves one track; sorts or shuffles all its tracks for good.",
+		"category": "playlists",
+		"categoryLabel": "Playlists",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "play_playlist",
+		"label": "Playing a playlist",
+		"description": "Plays a playlist in the app's player, from the top, from one track, or shuffled.",
+		"category": "playlists",
+		"categoryLabel": "Playlists",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "arrange_playlists",
+		"label": "Arranging your playlists",
+		"description": "Arranges the playlists library: put playlists in an exact order (order: playlist ids or names, first to last), or sort it by recently played, recently changed, name or size; show it as a grid or a list; and show or hide the Playlists section of the side drawer.",
+		"category": "playlists",
+		"categoryLabel": "Playlists",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "duplicate_playlist",
+		"label": "Copying a playlist",
+		"description": "Makes a copy of a playlist (tracks, cover and look), optionally under a new name.",
+		"category": "playlists",
+		"categoryLabel": "Playlists",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "share_playlist",
+		"label": "Sharing a playlist",
+		"description": "Shares a playlist. file: sends a playlist file to chat_id that people with Triangle import (cover, order and all; Telegram tracks travel as message links). forward: forwards the playlist's Telegram songs and voice messages themselves to chat_id. save: just writes the file to Files → Exports and returns its path.",
+		"category": "playlists",
+		"categoryLabel": "Playlists",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "import_playlist",
+		"label": "Importing a playlist",
+		"description": "Makes a playlist from a shared playlist file (.playlist.json): a saved file's path, or a file someone sent in Telegram (chat_id + message_id). Telegram tracks are found again by their links; ones this account can't reach are listed.",
+		"category": "playlists",
+		"categoryLabel": "Playlists",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "delete_playlist",
+		"label": "Deleting a playlist",
+		"description": "Deletes a playlist. The songs and voice messages stay in Telegram and Files. Only when the user asks.",
+		"category": "playlists",
+		"categoryLabel": "Playlists",
+		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "like_tracks",
+		"label": "Liking songs",
+		"description": "Adds tracks to (or with unlike: true takes them out of) the Liked songs playlist: tracks of a playlist (playlist + track_ids), Telegram audio (chat_id + message_ids), or what is playing now (now_playing, the default when nothing else is given).",
+		"category": "playlists",
+		"categoryLabel": "Playlists",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "music_stats",
+		"label": "Reading your listening stats",
+		"description": "The user's listening stats from the app's player: minutes listened, plays, day streak, the last 14 days, top tracks, artists and playlists, and what played lately.",
+		"category": "playlists",
+		"categoryLabel": "Playlists",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "player_control",
+		"label": "Controlling the player",
+		"description": "Controls the app's audio player: status (what's playing, the queue), pause, resume, next, previous, stop, seek (seconds), skip (± seconds), shuffle (on), repeat (mode off/all/one), speed (0.5-3), sleep (minutes, or end_of_track; 0 turns it off).",
+		"category": "playlists",
+		"categoryLabel": "Playlists",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "market_stores",
+		"label": "Managing marketplace stores",
+		"description": "The Marketplace's stores: the channels and groups whose posts show as products. list them (with product counts), add or remove (chat_ids), hide or show them in the shop, or reorder.",
+		"category": "marketplace",
+		"categoryLabel": "Marketplace",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "market_search",
+		"label": "Searching the marketplace",
+		"description": "Products in the Marketplace (from its stores), with the AI listing when tidied: name, price, category, trust score (legit 0-100), rating and what buyers say. Filter by words, store, category and price; sort.",
+		"category": "marketplace",
+		"categoryLabel": "Marketplace",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "market_item",
+		"label": "Opening a product",
+		"description": "One product by item_key: everything known about it, its post text, and whether it is in the cart or wishlist. hide true/false hides it from the shop.",
+		"category": "marketplace",
+		"categoryLabel": "Marketplace",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "market_cart",
+		"label": "Updating the cart",
+		"description": "The Marketplace cart: list (with totals per currency), add an item_key, remove, set_quantity, note (a note on an item), or clear.",
+		"category": "marketplace",
+		"categoryLabel": "Marketplace",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "market_wishlist",
+		"label": "Updating the wishlist",
+		"description": "The Marketplace wishlist: list, add an item_key, remove, move_to_cart, or clear.",
+		"category": "marketplace",
+		"categoryLabel": "Marketplace",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "market_ai_settings",
+		"label": "Changing the marketplace AI",
+		"description": "How the Marketplace tidies posts with AI: enabled, auto (as products show), model (free, cheap, main or a model id), which fields (name, description, price, legit trust check, reviews and rating), hiding posts that aren't products, the user's extra instructions, and sort/columns of the shop. Returns the settings.",
+		"category": "marketplace",
+		"categoryLabel": "Marketplace",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "market_tidy",
+		"label": "Tidying products with AI",
+		"description": "Runs the Marketplace AI on products now: item_keys, or the newest of one store (chat_id) or of every store. force redoes ones already tidied.",
+		"category": "marketplace",
+		"categoryLabel": "Marketplace",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "movie_channels",
+		"label": "Managing video channels",
+		"description": "The Movies section's channels (channels and groups that post videos): list with video counts, add, remove, hide or show on Home, reorder.",
+		"category": "movies",
+		"categoryLabel": "Movies",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "find_videos",
+		"label": "Finding videos",
+		"description": "Videos in the Movies section's channels: by words, one channel, length (short, medium, long), sorted; with how much the user watched.",
+		"category": "movies",
+		"categoryLabel": "Movies",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "movie_library",
+		"label": "Managing My list",
+		"description": "The user's Movies library: my_list, history (continue watching), add or remove a video_key from My list, like/unlike, hide/unhide, forget (remove from history), clear_history, or settings (autoplay, sort).",
+		"category": "movies",
+		"categoryLabel": "Movies",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "book_sources",
+		"label": "Managing book sources",
+		"description": "The Library's sources: channels and groups that post books. list, add or remove (chat_ids).",
+		"category": "books",
+		"categoryLabel": "Books library",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "find_books",
+		"label": "Finding books in your channels",
+		"description": "Book files (EPUB, PDF, DOCX, FB2, MOBI…) posted in the Library's sources, by words, one source or format; with whether each is in the library.",
+		"category": "books",
+		"categoryLabel": "Books library",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "list_books",
+		"label": "Listing your books",
+		"description": "Books in the user's Library: status, progress, shelves, rating, minutes read. Filter by status, shelf, favorite or words.",
+		"category": "books",
+		"categoryLabel": "Books library",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "add_book",
+		"label": "Adding a book",
+		"description": "Adds a book to the Library: a post_key from find_books, a Telegram document (chat_id + message_id), or a file on the phone (file_path). download true fetches it now; shelf puts it on a shelf.",
+		"category": "books",
+		"categoryLabel": "Books library",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "update_book",
+		"label": "Updating a book",
+		"description": "Changes a book in the Library (book: its book_id or title): status, favorite, rating 0-5, shelves (replace) or add_shelves/remove_shelves, title, author, notes.",
+		"category": "books",
+		"categoryLabel": "Books library",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "book_shelves",
+		"label": "Arranging shelves",
+		"description": "The Library's shelves: list (with books), create, rename (name → new_name), delete, or reorder (order: shelf names).",
+		"category": "books",
+		"categoryLabel": "Books library",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "book_notes",
+		"label": "Reading your highlights",
+		"description": "Highlights, notes and bookmarks from the Library: all, or one book's. action delete removes one by id.",
+		"category": "books",
+		"categoryLabel": "Books library",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "read_book_text",
+		"label": "Reading a book",
+		"description": "The text of a Library book (EPUB, DOCX, FB2, TXT, HTML) to summarise it, answer questions or quote it: its contents, then a chapter (by number from the contents) or from a percent. Downloads it first if needed.",
+		"category": "books",
+		"categoryLabel": "Books library",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "reading_stats",
+		"label": "Reading your reading stats",
+		"description": "Reading time today and per day, streak, books finished, most-read books; goal_minutes sets the daily goal.",
+		"category": "books",
+		"categoryLabel": "Books library",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "remove_book",
+		"label": "Removing a book",
+		"description": "Removes a book from the Library with its file on the phone, highlights and bookmarks. It stays in its chat. Only when the user asks.",
+		"category": "books",
+		"categoryLabel": "Books library",
+		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "gallery_sources",
+		"label": "Managing gallery sources",
+		"description": "The Gallery's sources: chats whose photos and videos gather there. list, add, remove, hide or show (chat_ids).",
+		"category": "gallery",
+		"categoryLabel": "Gallery",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "gallery_items",
+		"label": "Looking through the gallery",
+		"description": "Photos and videos in the Gallery: all, one source (chat_id), one type, an album, favorites or hidden ones; newest first, with item_keys.",
+		"category": "gallery",
+		"categoryLabel": "Gallery",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "gallery_albums",
+		"label": "Managing albums",
+		"description": "Gallery albums: list, create (name, emoji, item_keys), rename (album → name, emoji), delete, add or remove item_keys, reorder (order: album ids or names).",
+		"category": "gallery",
+		"categoryLabel": "Gallery",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "gallery_mark",
+		"label": "Marking photos",
+		"description": "Favorites or hides Gallery items (item_keys): favorite true/false, hidden true/false.",
+		"category": "gallery",
+		"categoryLabel": "Gallery",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "app_sections",
+		"label": "Arranging the app's sections",
+		"description": "The app's sections (playlists, marketplace, movies, books, gallery, my folders): which show in the side drawer, and which page the app opens on (start_page: assistant, dms, channels, groups, playlists, marketplace, movies, books, gallery, files, brief, canvas, search, calls…). Returns the current setup.",
+		"category": "media",
+		"categoryLabel": "Media & appearance",
 		"access": "modify",
 		"approval": false
 	},
@@ -1176,6 +1581,159 @@
 		"category": "members",
 		"categoryLabel": "Members & administration",
 		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "report_chat",
+		"label": "Reporting to Telegram",
+		"description": "Reports a chat, or messages in it (message_ids), to Telegram moderators: spam, violence, scams, illegal content and the like. Telegram asks for a reason in steps: give reason in words (e.g. \"spam\", \"scam\", \"violence\") and the closest option is picked at each step; without one, the options come back to ask the user. text adds a comment where Telegram wants one. Only when the user asks; it always asks first.",
+		"category": "chats",
+		"categoryLabel": "Chats",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "report_spam",
+		"label": "Reporting spam",
+		"description": "Reports messages as spam. In a group the user administers, reports the members' messages (message_ids) through Telegram's group spam report; elsewhere reports the chat (or messages) as spam. Pair with ban_member or delete_messages to also remove the spammer. Always asks first.",
+		"category": "members",
+		"categoryLabel": "Members & administration",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "set_group_protection",
+		"label": "Changing spam protection",
+		"description": "As an admin of a large group: turns Telegram's aggressive anti-spam on or off, and hides or shows the member list.",
+		"category": "members",
+		"categoryLabel": "Members & administration",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "list_emoji_statuses",
+		"label": "Listing emoji statuses",
+		"description": "Emoji statuses the user can wear next to their name (Premium): default and recent ones, with ids.",
+		"category": "account",
+		"categoryLabel": "Account & security",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "set_emoji_status",
+		"label": "Setting your emoji status",
+		"description": "Sets the emoji status next to the user's name (Telegram Premium), from list_emoji_statuses, for a while or until changed. clear true removes it.",
+		"category": "account",
+		"categoryLabel": "Account & security",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "saved_message_tags",
+		"label": "Reading Saved Messages tags",
+		"description": "The tags (reactions) used in Saved Messages (Premium), with their labels and how many messages each has. With emoji and label, names a tag.",
+		"category": "account",
+		"categoryLabel": "Account & security",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "telegram_transcribe",
+		"label": "Transcribing with Telegram",
+		"description": "Telegram's own speech-to-text for a voice note or video note (Premium, or a few free tries a week). Waits up to wait_seconds for the text. transcribe_message uses the app's AI keys instead.",
+		"category": "media",
+		"categoryLabel": "Media & appearance",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "story_stealth_mode",
+		"label": "Turning on stealth mode",
+		"description": "Story stealth mode (Premium): hides that the user viewed stories in the last 5 minutes and for the next 25. Can be used again after a cooldown.",
+		"category": "stories",
+		"categoryLabel": "Stories",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "list_boost_slots",
+		"label": "Checking your boosts",
+		"description": "The user's Premium boost slots: which chat each boosts, until when, and which are free.",
+		"category": "account",
+		"categoryLabel": "Account & security",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "boost_chat",
+		"label": "Boosting a channel",
+		"description": "Gives a channel or group the user's Premium boosts (slots from list_boost_slots; default the free ones, or one slot when none is free, moving it).",
+		"category": "chats",
+		"categoryLabel": "Chats",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "giveaway_info",
+		"label": "Checking a giveaway",
+		"description": "A giveaway post's state: ongoing or finished, whether the user takes part or won, winners count.",
+		"category": "chats",
+		"categoryLabel": "Chats",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "list_quick_replies",
+		"label": "Listing quick replies",
+		"description": "The user's Telegram Business quick replies (shortcuts like /hello), with ids and their first message. Away and greeting messages use one of these.",
+		"category": "account",
+		"categoryLabel": "Account & security",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "set_away_message",
+		"label": "Setting the away message",
+		"description": "Telegram Business: sends a quick reply automatically when the user is away. schedule: always, outside_hours (outside opening hours) or custom (from and until, ISO times). off true turns it off.",
+		"category": "account",
+		"categoryLabel": "Account & security",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "set_greeting_message",
+		"label": "Setting the greeting",
+		"description": "Telegram Business: greets people who write for the first time, or after inactivity_days (7, 14, 21 or 28) of silence, with a quick reply. off true turns it off.",
+		"category": "account",
+		"categoryLabel": "Account & security",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "set_opening_hours",
+		"label": "Setting opening hours",
+		"description": "Telegram Business: the opening hours shown on the profile. hours: [{\"day\": \"mon\", \"open\": \"09:00\", \"close\": \"17:00\"}, …] (days mon-sun; close after midnight runs into the next day). off true removes them.",
+		"category": "account",
+		"categoryLabel": "Account & security",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "set_business_location",
+		"label": "Setting the business address",
+		"description": "Telegram Business: the address (and map point) shown on the profile. off true removes it.",
+		"category": "account",
+		"categoryLabel": "Account & security",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "set_business_bot",
+		"label": "Connecting a business bot",
+		"description": "Telegram Business: connects a chatbot (by @username) that can read and answer the user's private chats (can_reply), for the recipients given; off true disconnects it. The bot sees those chats, so it always asks.",
+		"category": "bots",
+		"categoryLabel": "Bots",
+		"access": "modify",
 		"approval": true
 	},
 	{
@@ -4446,6 +5004,987 @@
 		"approval": true
 	},
 	{
+		"name": "vercel_account",
+		"label": "Looking at your Vercel account",
+		"description": "The Vercel user the token belongs to, the teams it can reach and which one the tools act on. Shown as an account card.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "vercel_projects",
+		"label": "Listing Vercel projects",
+		"description": "Lists Vercel projects, newest activity first: framework, git repository, production URL and the latest deployment's state. Shown as a project list the user can open.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "vercel_project",
+		"label": "Opening a Vercel project",
+		"description": "One project in full: settings (framework, build and output, root directory, Node version), git link, domains, crons, production and recent deployments. Shown as a project card with actions.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "vercel_deployments",
+		"label": "Listing deployments",
+		"description": "Recent deployments, newest first, across the account or for one project: state (BUILDING, READY, ERROR…), target, branch, commit, who and when. Shown as a live list: building ones update as they finish.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "vercel_deployment",
+		"label": "Checking a deployment",
+		"description": "One deployment: state, URL, aliases, target, branch and commit, timings, and the error when it failed. Shown as a live card that follows a build to the end.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "vercel_build_logs",
+		"label": "Reading build logs",
+		"description": "A deployment's build output (the lines Vercel shows while building), oldest first. errors_only keeps warnings and errors. Use to find why a build failed.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "vercel_runtime_logs",
+		"label": "Reading runtime logs",
+		"description": "Recent runtime logs of a deployment (function invocations, status codes, console output), collected for a few seconds. Defaults to the project's current production deployment.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "vercel_deployment_files",
+		"label": "Listing deployment files",
+		"description": "The file tree of a deployment's source or output, with sizes.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "vercel_env",
+		"label": "Reading environment variables",
+		"description": "A project's environment variables: key, environments, type, branch and when changed. Values stay hidden unless reveal is true; secret values then go to the AI model, so reveal only when the user asks to see them.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "vercel_domains",
+		"label": "Listing domains",
+		"description": "Domains on the account with their registrar, name servers, verification and expiry; with domain, that domain's configuration (misconfigured or not, the records Vercel expects).",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "vercel_project_domains",
+		"label": "Listing a project's domains",
+		"description": "The domains attached to a project: verified or not, redirects, the git branch each follows, and what DNS they still need.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "vercel_domain_check",
+		"label": "Checking a domain",
+		"description": "Whether a domain can be bought through Vercel and its price.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "vercel_dns_records",
+		"label": "Reading Vercel DNS",
+		"description": "DNS records of a domain whose DNS Vercel hosts.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "vercel_aliases",
+		"label": "Listing aliases",
+		"description": "Aliases (custom URLs) pointing at deployments: for one deployment, one project, or the whole account.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "vercel_usage",
+		"label": "Reading Vercel usage and cost",
+		"description": "What the account was billed over a period, by service (functions, bandwidth, builds, edge requests…) and by day. Shown as a chart.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "vercel_team_members",
+		"label": "Listing team members",
+		"description": "Members of the current team with their role and when they joined. Needs a team in Settings.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "vercel_webhooks",
+		"label": "Listing webhooks",
+		"description": "The account's webhooks: URL, the events they send and the projects they cover.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "vercel_edge_config",
+		"label": "Reading Edge Config",
+		"description": "Edge Config stores: with no id lists them; with id lists that store's items (key and value).",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "vercel_firewall",
+		"label": "Reading the firewall",
+		"description": "A project's Vercel Firewall configuration: whether it is on, custom rules, IP blocks and managed rule sets.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "vercel_checks",
+		"label": "Reading deployment checks",
+		"description": "The checks run against a deployment (integrations, tests) with status and conclusion.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "vercel_api_get",
+		"label": "Asking the Vercel API",
+		"description": "GET any Vercel REST path the other tools don't cover (vercel.com/docs/rest-api), e.g. /v1/integrations/configurations. The team is added. Read-only.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "vercel_deploy",
+		"label": "Deploying to Vercel",
+		"description": "Publishes files to a live https URL on Vercel as a static site: files of this conversation (an index.html, a folder's files, images…), inline html, or text files written here. Creates the project if it is new. Returns the URL right away; the card follows the build. Only when the user asked; they approve first.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "vercel_redeploy",
+		"label": "Redeploying",
+		"description": "Builds an existing deployment again from the same source (e.g. after changing env vars), as production or preview. They approve first.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "vercel_promote",
+		"label": "Promoting to production",
+		"description": "Points a project's production domains at an existing deployment without rebuilding. They approve first.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "vercel_rollback",
+		"label": "Rolling back",
+		"description": "Instant rollback: production goes back to an earlier deployment. Auto-assigning production stops until the next promote. They approve first.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "vercel_cancel_deployment",
+		"label": "Cancelling a build",
+		"description": "Stops a deployment that is still queued or building. They approve first.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "vercel_create_project",
+		"label": "Creating a Vercel project",
+		"description": "Creates a project, optionally linked to a GitHub, GitLab or Bitbucket repository so pushes deploy. They approve first.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "vercel_update_project",
+		"label": "Changing project settings",
+		"description": "Changes a project's build settings or name. Give only what changes. They approve first.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "vercel_pause_project",
+		"label": "Pausing or resuming a project",
+		"description": "Pauses a project (its deployments stop serving and stop costing) or resumes it. They approve first.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "vercel_env_set",
+		"label": "Setting an environment variable",
+		"description": "Adds or replaces an environment variable on a project. Takes effect on the next deployment (redeploy to apply). They approve first.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "vercel_add_domain",
+		"label": "Adding a domain",
+		"description": "Adds a domain to a project, or redirects it to another domain. Returns the DNS records still needed. They approve first.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "vercel_verify_domain",
+		"label": "Verifying a domain",
+		"description": "Asks Vercel to check a project domain's verification records again.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "vercel_dns_create",
+		"label": "Adding a Vercel DNS record",
+		"description": "Adds a DNS record to a domain whose DNS Vercel hosts. They approve first.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "vercel_alias_assign",
+		"label": "Assigning an alias",
+		"description": "Points a custom domain or *.vercel.app name at a deployment. They approve first.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "vercel_edge_config_update",
+		"label": "Changing Edge Config",
+		"description": "Creates, updates, upserts or deletes items in an Edge Config store. They approve first.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "vercel_webhook_create",
+		"label": "Adding a webhook",
+		"description": "Creates a webhook that posts events (deployment.created, deployment.succeeded, deployment.error…) to a URL.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "vercel_delete_deployment",
+		"label": "Deleting a deployment",
+		"description": "Deletes a deployment and its URL. Can't be undone.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "vercel_delete_project",
+		"label": "Deleting a project",
+		"description": "Deletes a project with all its deployments, domains and env vars. Can't be undone.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "vercel_env_delete",
+		"label": "Deleting an environment variable",
+		"description": "Removes an environment variable (by key, or by id from vercel_env) from a project.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "vercel_remove_domain",
+		"label": "Removing a domain",
+		"description": "Removes a domain from a project, or with no project from the whole account.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "vercel_dns_delete",
+		"label": "Deleting a Vercel DNS record",
+		"description": "Deletes a DNS record (id from vercel_dns_records). Can take a site or email offline.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "vercel_alias_delete",
+		"label": "Removing an alias",
+		"description": "Removes an alias so it no longer points at its deployment.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "vercel_webhook_delete",
+		"label": "Deleting a webhook",
+		"description": "Deletes a webhook by id (from vercel_webhooks).",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "vercel_api_request",
+		"label": "Changing something on Vercel",
+		"description": "POST, PUT, PATCH or DELETE on any Vercel REST path, with a JSON body written as text, for what the other tools don't cover. The team is added. Always asks first.",
+		"category": "vercel",
+		"categoryLabel": "Vercel",
+		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "resend_emails",
+		"label": "Listing sent emails",
+		"description": "Emails sent through Resend, newest first: to, subject, when, and the last event (delivered, opened, clicked, bounced, complained, scheduled). Shown as a list the user can open.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "resend_email",
+		"label": "Opening a sent email",
+		"description": "One sent email in full: addresses, subject, text and HTML, status and timings.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "resend_domains",
+		"label": "Listing sending domains",
+		"description": "Domains on the Resend account with their status (verified, pending, failed) and region.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "resend_domain",
+		"label": "Checking a domain's DNS",
+		"description": "One domain with every DNS record it needs (SPF, DKIM, MX for return path, DMARC) and whether each is verified. Shown with copy buttons.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "resend_api_keys",
+		"label": "Listing Resend API keys",
+		"description": "The account's API keys: name, when made and when last used. Keys themselves are never shown.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "resend_audiences",
+		"label": "Listing audiences",
+		"description": "Audiences (contact lists) on the account.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "resend_contacts",
+		"label": "Listing contacts",
+		"description": "Contacts in an audience with their names and whether they unsubscribed; with contact, just that one.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "resend_broadcasts",
+		"label": "Listing broadcasts",
+		"description": "Broadcasts (newsletters): status (draft, queued, sent), audience and when; with id, one in full.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "resend_webhooks",
+		"label": "Listing Resend webhooks",
+		"description": "Webhooks that receive email events, with their endpoint and events.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "resend_api_get",
+		"label": "Asking the Resend API",
+		"description": "GET any Resend REST path the other tools don't cover (resend.com/docs/api-reference). Read-only.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "resend_send_email",
+		"label": "Sending an email",
+		"description": "Sends one email through Resend from a verified domain: plain text and/or HTML, cc, bcc, reply-to, files of this conversation as attachments, tags, custom headers, or scheduled for later. from defaults to the address in Settings. Only when the user asked; they approve first. Shown as a card that follows delivery.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "resend_send_batch",
+		"label": "Sending a batch of emails",
+		"description": "Sends up to 100 different emails in one call (each its own to, subject and body). Always asks first.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "resend_reschedule_email",
+		"label": "Rescheduling an email",
+		"description": "Moves a scheduled email to another time. They approve first.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "resend_cancel_email",
+		"label": "Cancelling a scheduled email",
+		"description": "Cancels an email that is scheduled and not yet sent.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "resend_add_domain",
+		"label": "Adding a sending domain",
+		"description": "Adds a domain to send from. Returns the DNS records to create. They approve first.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "resend_verify_domain",
+		"label": "Verifying a domain",
+		"description": "Asks Resend to check a domain's DNS records again.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "resend_update_domain",
+		"label": "Changing domain tracking",
+		"description": "Turns open and click tracking on or off, or sets TLS to opportunistic or enforced.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "resend_create_api_key",
+		"label": "Creating a Resend API key",
+		"description": "Creates an API key (full access, or sending only, optionally for one domain). The key is shown once. They approve first.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "resend_create_audience",
+		"label": "Creating an audience",
+		"description": "Creates an audience (contact list).",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "resend_add_contact",
+		"label": "Adding a contact",
+		"description": "Adds a contact to an audience.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "resend_update_contact",
+		"label": "Changing a contact",
+		"description": "Changes a contact's name or subscription.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "resend_create_broadcast",
+		"label": "Drafting a broadcast",
+		"description": "Creates a broadcast draft for an audience. Nothing is sent until resend_send_broadcast.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "resend_update_broadcast",
+		"label": "Changing a broadcast",
+		"description": "Changes a draft broadcast. Give only what changes.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "resend_send_broadcast",
+		"label": "Sending a broadcast",
+		"description": "Sends a broadcast to its whole audience, now or at scheduled_at. Mass email: always asks first.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "resend_create_webhook",
+		"label": "Adding a Resend webhook",
+		"description": "Creates a webhook that posts email events (email.delivered, email.bounced…) to a URL.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "resend_delete_domain",
+		"label": "Removing a sending domain",
+		"description": "Removes a domain; mail from it stops sending.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "resend_delete_api_key",
+		"label": "Revoking a Resend API key",
+		"description": "Revokes an API key; whatever uses it stops working.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "resend_delete_audience",
+		"label": "Deleting an audience",
+		"description": "Deletes an audience and its contacts.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "resend_delete_contact",
+		"label": "Deleting a contact",
+		"description": "Removes a contact from an audience.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "resend_delete_broadcast",
+		"label": "Deleting a broadcast",
+		"description": "Deletes a draft or scheduled broadcast.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "resend_delete_webhook",
+		"label": "Deleting a Resend webhook",
+		"description": "Deletes a webhook.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "resend_api_request",
+		"label": "Changing something on Resend",
+		"description": "POST, PUT, PATCH or DELETE on any Resend REST path with a JSON body written as text, for what the other tools don't cover. Always asks first.",
+		"category": "resend",
+		"categoryLabel": "Resend email",
+		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "mongodb_overview",
+		"label": "Looking at the MongoDB server",
+		"description": "The server (version, topology, uptime) and every database with its size and collection count. Shown as an overview the user can open.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "mongodb_collections",
+		"label": "Listing collections",
+		"description": "Collections and views in a database with document counts, sizes and index counts. Shown as a list the user can open.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "mongodb_find",
+		"label": "Finding documents",
+		"description": "Documents matching a filter, with projection, sort, skip and limit. Shown as a document browser with paging.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "mongodb_count",
+		"label": "Counting documents",
+		"description": "How many documents match a filter (all of them when no filter).",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "mongodb_distinct",
+		"label": "Listing distinct values",
+		"description": "The distinct values of a field across matching documents, with how many there are.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "mongodb_aggregate",
+		"label": "Running an aggregation",
+		"description": "Runs an aggregation pipeline ($match, $group, $lookup, $facet, $bucket…) and returns its results. Read-only: pipelines that write ($out, $merge) use mongodb_aggregate_write. Results with numbers per group are drawn as a chart.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "mongodb_schema",
+		"label": "Inferring a schema",
+		"description": "Samples documents and reports every field with its types and how often it is present. Use before writing queries on an unfamiliar collection.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "mongodb_indexes",
+		"label": "Listing indexes",
+		"description": "A collection's indexes: keys, unique, TTL, partial filters, size and how often each is used.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "mongodb_stats",
+		"label": "Reading storage stats",
+		"description": "Storage statistics of a database, or with collection, of that collection: documents, data, storage and index sizes.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "mongodb_explain",
+		"label": "Explaining a query",
+		"description": "How MongoDB runs a find or aggregation: the plan (index scan or collection scan), keys and documents examined, time. Use to speed up slow queries.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "mongodb_server_status",
+		"label": "Reading server status",
+		"description": "Live server health: connections, operations per type, memory, network, uptime and replication role. Needs the clusterMonitor role on Atlas.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "mongodb_current_ops",
+		"label": "Listing running operations",
+		"description": "Operations running now (long queries, index builds) with how long they have run.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "mongodb_users",
+		"label": "Listing database users",
+		"description": "Users defined on a database and their roles.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "mongodb_export",
+		"label": "Exporting documents",
+		"description": "Saves matching documents to a JSON (Extended JSON array) or CSV file in this conversation, up to 20,000. The user can open or send it.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "mongodb_run_read_command",
+		"label": "Running a read command",
+		"description": "Runs a database command that only reads (e.g. {\"dbStats\": 1}, {\"collStats\": \"x\"}, {\"hostInfo\": 1}, {\"getParameter\": \"*\"}, {\"listCollections\": 1}, {\"validate\": \"x\"} is not allowed). Commands that change anything use mongodb_run_command.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "mongodb_insert",
+		"label": "Inserting documents",
+		"description": "Inserts one or more documents. They approve first.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "mongodb_update",
+		"label": "Updating documents",
+		"description": "Updates the first or every document matching a filter with update operators ($set, $inc, $push, $unset…) or a pipeline. They approve first.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "mongodb_replace",
+		"label": "Replacing a document",
+		"description": "Replaces the first document matching a filter with a new one (keeping its _id). They approve first.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "mongodb_find_and_modify",
+		"label": "Updating and returning a document",
+		"description": "Updates one document and returns it, before or after the change. They approve first.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "mongodb_import",
+		"label": "Importing documents",
+		"description": "Inserts the records of a file in this conversation: a JSON array, JSON lines (one document per line) or CSV with a header row. They approve first.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "mongodb_create_collection",
+		"label": "Creating a collection",
+		"description": "Creates a collection: plain, capped, time series, with a JSON Schema validator, or a view over a pipeline. They approve first.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "mongodb_create_index",
+		"label": "Creating an index",
+		"description": "Creates an index: single, compound, text, 2dsphere, hashed, unique, sparse, TTL or partial. They approve first.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "mongodb_rename_collection",
+		"label": "Renaming a collection",
+		"description": "Renames a collection (apps using the old name stop finding it). They approve first.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "mongodb_delete",
+		"label": "Deleting documents",
+		"description": "Deletes the first or every document matching a filter. An empty filter needs all: true. Can't be undone.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "mongodb_aggregate_write",
+		"label": "Writing an aggregation's output",
+		"description": "Runs a pipeline that ends in $out (replaces the target collection) or $merge (merges into it).",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "mongodb_drop_index",
+		"label": "Dropping an index",
+		"description": "Drops an index by name (from mongodb_indexes). Queries using it get slower.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "mongodb_drop_collection",
+		"label": "Dropping a collection",
+		"description": "Drops a collection with all its documents and indexes. Can't be undone.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "mongodb_drop_database",
+		"label": "Dropping a database",
+		"description": "Drops a whole database. Can't be undone.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "mongodb_kill_op",
+		"label": "Stopping an operation",
+		"description": "Stops a running operation (opid from mongodb_current_ops).",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "mongodb_run_command",
+		"label": "Running a database command",
+		"description": "Runs any database command (bulk writes, collMod, compact, user and role management, admin commands…). Always asks first.",
+		"category": "mongodb",
+		"categoryLabel": "MongoDB",
+		"access": "destructive",
+		"approval": true
+	},
+	{
+		"name": "track_package",
+		"label": "Tracking a package",
+		"description": "Tracks a parcel by its tracking number, for any carrier (UPS, FedEx, DHL, USPS, postal services like Ethiopian Post, China Post/AliExpress, Amazon…): status, latest scan, every event with place and time, estimated delivery. Also keeps it on the user's tracked list. Without a 17TRACK key it names the likely carrier and gives tracking links. Shown as a card that opens the full timeline.",
+		"category": "parcels",
+		"categoryLabel": "Package tracking",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "tracked_packages",
+		"label": "Checking your packages",
+		"description": "The packages the user is following with their last status; refresh checks each one again (uses 17TRACK).",
+		"category": "parcels",
+		"categoryLabel": "Package tracking",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "untrack_package",
+		"label": "Stop tracking a package",
+		"description": "Removes a package from the tracked list and stops 17TRACK following it.",
+		"category": "parcels",
+		"categoryLabel": "Package tracking",
+		"access": "modify",
+		"approval": true
+	},
+	{
 		"name": "device_info",
 		"label": "Checking the phone",
 		"description": "The phone's specs and state: maker and model, chip, Android version and security patch, CPU cores, RAM and storage (total and free), screen, uptime and battery.",
@@ -5042,7 +6581,7 @@
 	{
 		"name": "system_check",
 		"label": "Running a system check",
-		"description": "Checks everything the app depends on and reports what works, what is broken and what could be better, with a health score out of 100: AI keys and models, Telegram accounts (TDLib, two-step verification, unknown sessions), decisions, MCP servers, skills, connected apps, the phone and its connection (storage, memory, battery saver, network, DNS), watches and the check-in, routines (failed or stalled runs), privacy (app lock, approvals, what Block & mute hides), home-screen widgets, voice, tools and usage, money and call data, and upkeep (memories, briefs, backups, storage). It only reads. Use it when something isn't working, or the user asks how the app or phone is doing. The user sees a card with the score and a sheet with every finding, so answer with what matters most and how to fix it, not the whole list. A full check can take half a minute; give areas to check only some.",
+		"description": "Checks everything the app depends on and reports what works, what is broken and what could be better, with a health score out of 100: AI keys and models, Telegram accounts (TDLib, two-step verification, unknown sessions), decisions, MCP servers, skills, connected apps (and tracked packages), development and phone calls (tests the Vercel, Resend, MongoDB and Vapi keys), the phone and its connection (storage, memory, battery saver, network, DNS), watches and the check-in, routines (failed or stalled runs), privacy (app lock, approvals, what Block & mute hides), home-screen widgets, voice, tools and usage, money and call data, and upkeep (memories, briefs, backups, storage, your own folders). It only reads. Use it when something isn't working, or the user asks how the app or phone is doing. The user sees a card with the score and a sheet with every finding, so answer with what matters most and how to fix it, not the whole list. A full check can take half a minute; give areas to check only some.",
 		"category": "system",
 		"categoryLabel": "System check",
 		"access": "read",
@@ -5105,7 +6644,7 @@
 	{
 		"name": "list_api_keys",
 		"label": "Checking API keys",
-		"description": "Lists every service the app can use a key for and whether each has one: AI (chat, images & video, voice, decisions), connected apps (Composio), your cloud (Cloudflare, R2, E2B), web data (Exa search, YouTube, Reddit, NASA, CoinGecko, papers, metal prices, translation, sports, the Bible) and money (Verify.ET). Shows what each is used for, the last four characters of a key that is set and where to get one. Never shows a whole key. Give check true to also test the keys that can be tested.",
+		"description": "Lists every service the app can use a key for and whether each has one: AI (chat, images & video, voice, decisions), connected apps (Composio, Vapi phone calls), your cloud and development (Cloudflare, R2, E2B, Vercel, Resend, MongoDB), web data (Exa search, YouTube, Reddit, NASA, CoinGecko, papers, metal prices, translation, sports, package tracking, the Bible) and money (Verify.ET). Shows what each is used for, the last four characters of a key that is set and where to get one. Never shows a whole key. Give check true to also test the keys that can be tested.",
 		"category": "system",
 		"categoryLabel": "System check",
 		"access": "read",
@@ -5132,7 +6671,7 @@
 	{
 		"name": "load_tools",
 		"label": "Loading tools",
-		"description": "Loads more tools for this conversation, by group. You start with the everyday ones (Telegram messages and chats, memory, files, the web, watches and reminders, creating images and audio, the vault and app settings); call this when a request needs another group, then use its tools from your next step. Load every group you need in one call. Groups: account (Account & security), contacts (Contacts & profile), members (Members & administration), bots (Bots), calls (Calls & live streams), analytics (Analytics), media (Media & appearance), canvas (Canvas), code (Code sandbox), routines (Routines), stories (Stories), folders (Folders), developer (Public GitHub), discover (Video, music & social), markets (Markets, weather & travel), news (Reddit & Hacker News), library (Books, audiobooks, radio & podcasts), explore (Countries, space & Pokémon), utilities (Ethiopian calendar & QR codes), games (Retro games), youtube (YouTube), papers (Research papers), bible (Bible), finance (Money & banking), callHistory (Call history), screenTime (Screen time), imageTools (Image tools), packages (Packages, domains & xkcd), world (Prices, quakes & air quality), food (Recipes & nutrition), reference (Dictionary, translation & Wikipedia), sports (Sports), stars (Stars), device (Device), screen (Screen control), gmail (Gmail), outlook (Outlook), calendar (Google Calendar), googleDocs (Drive, Docs & Sheets), slack (Slack), notion (Notion), githubAccount (Your GitHub), linear (Linear), todoist (Todoist), apps (Any connected app), cloudflare (Cloudflare), r2 (Cloudflare R2 storage), decisions (Decisions (Jev)), mcp (MCP servers), skills (Skills), e2b (E2B code sandbox).",
+		"description": "Loads more tools for this conversation, by group. You start with the everyday ones (Telegram messages and chats, memory, files, the web, watches and reminders, creating images and audio, the vault and app settings); call this when a request needs another group, then use its tools from your next step. Load every group you need in one call. Groups: account (Account & security), contacts (Contacts & profile), members (Members & administration), bots (Bots), calls (Calls & live streams), analytics (Analytics), media (Media & appearance), canvas (Canvas), code (Code sandbox), routines (Routines), stories (Stories), folders (Folders), playlists (Playlists), marketplace (Marketplace), movies (Movies), books (Books library), gallery (Gallery), developer (Public GitHub), discover (Video, music & social), markets (Markets, weather & travel), news (Reddit & Hacker News), library (Books, audiobooks, radio & podcasts), explore (Countries, space & Pokémon), utilities (Ethiopian calendar & QR codes), games (Retro games), youtube (YouTube), papers (Research papers), bible (Bible), finance (Money & banking), callHistory (Call history), screenTime (Screen time), imageTools (Image tools), packages (Packages, domains & xkcd), world (Prices, quakes & air quality), food (Recipes & nutrition), reference (Dictionary, translation & Wikipedia), sports (Sports), stars (Stars), device (Device), screen (Screen control), gmail (Gmail), outlook (Outlook), calendar (Google Calendar), googleDocs (Drive, Docs & Sheets), slack (Slack), notion (Notion), githubAccount (Your GitHub), linear (Linear), todoist (Todoist), apps (Any connected app), cloudflare (Cloudflare), r2 (Cloudflare R2 storage), vercel (Vercel), resend (Resend email), mongodb (MongoDB), parcels (Package tracking), decisions (Decisions (Jev)), mcp (MCP servers), skills (Skills), e2b (E2B code sandbox).",
 		"category": "system",
 		"categoryLabel": "System check",
 		"access": "read",
@@ -5163,6 +6702,105 @@
 		"category": "system",
 		"categoryLabel": "System check",
 		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "test_api_key",
+		"label": "Testing an API key",
+		"description": "Checks whether an API key works, without saving it, and says what it can see (account, plan, model count, balance). service is a saved service from list_api_keys (tests the saved key when no key is given) or one of: openai, anthropic, groq, mistral, deepseek, xai, together, fireworks, cerebras, cohere, perplexity, huggingface, github, stripe, telegram_bot, replicate, resend, sendgrid, notion. For any other API give url (an https endpoint that needs the key), auth and key. Only test a key the user gave in their own message. Never shows a whole key.",
+		"category": "system",
+		"categoryLabel": "System check",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "api_request",
+		"label": "Calling an API",
+		"description": "Makes a GET, HEAD or OPTIONS request to any http(s) API and returns status, timing, key headers and the body (parsed JSON when it is JSON). The app shows the response as a card, so summarise what matters rather than repeating it. Add headers or query as needed. use_key sends a saved key (by service id, e.g. openrouter, github) but only to that service's own host. For POST, PUT, PATCH or DELETE use api_send. Prefer fetch_url for reading web pages.",
+		"category": "web",
+		"categoryLabel": "Web & browsing",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "api_send",
+		"label": "Sending an API request",
+		"description": "Sends a POST, PUT, PATCH or DELETE request to an http(s) API (it may change data there, so it waits for the user's approval) and returns status, timing, headers and the body, shown as a card. json sends a JSON body; body sends raw text (set Content-Type in headers). use_key as in api_request.",
+		"category": "web",
+		"categoryLabel": "Web & browsing",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "ai_balances",
+		"label": "Checking AI balances",
+		"description": "The remaining credit or quota on each AI provider with a saved key: OpenRouter and Vercel AI Gateway credit in USD, ElevenLabs characters left this period, and a note for providers that don't publish a balance. Shown as a card.",
+		"category": "system",
+		"categoryLabel": "System check",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "http_diagnose",
+		"label": "Diagnosing an address",
+		"description": "Why is a site or API slow or failing? Times each step of a request: DNS, TCP connect, TLS handshake (with the certificate), every redirect, first byte and download, plus the server, caching and security headers.",
+		"category": "web",
+		"categoryLabel": "Web & browsing",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "dns_lookup",
+		"label": "Looking up DNS",
+		"description": "A domain's DNS records (A, AAAA, CNAME, MX, TXT, NS, CAA, SOA…) over DNS-over-HTTPS.",
+		"category": "web",
+		"categoryLabel": "Web & browsing",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "ssl_certificate",
+		"label": "Checking a certificate",
+		"description": "The TLS certificate a host presents: whether it is trusted, who issued it, and when it expires.",
+		"category": "web",
+		"categoryLabel": "Web & browsing",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "port_check",
+		"label": "Checking ports",
+		"description": "Whether TCP ports on a host accept connections (up to 20), with connect time. For the user's own servers.",
+		"category": "web",
+		"categoryLabel": "Web & browsing",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "my_ip",
+		"label": "Finding this phone's IP",
+		"description": "The phone's public IP address, its network provider and rough location.",
+		"category": "web",
+		"categoryLabel": "Web & browsing",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "whois_lookup",
+		"label": "Looking up a domain",
+		"description": "Who registered a domain and when (RDAP, the modern WHOIS): registrar, created, expiry, status, name servers, or that it is unregistered.",
+		"category": "web",
+		"categoryLabel": "Web & browsing",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "url_check",
+		"label": "Checking addresses",
+		"description": "Whether up to 15 addresses are up, each with status and response time, checked at once.",
+		"category": "web",
+		"categoryLabel": "Web & browsing",
+		"access": "read",
 		"approval": false
 	},
 	{
@@ -5488,5 +7126,68 @@
 		"categoryLabel": "Skills",
 		"access": "destructive",
 		"approval": true
+	},
+	{
+		"name": "place_phone_call",
+		"label": "Placing a phone call",
+		"description": "Phones a number for the user through Vapi. An AI voice agent carries out the goal and reports back with a summary, the collected answers and the transcript. Returns the call id at once (the user sees the call live); check it with get_phone_call. Costs money and reaches a real person: only when the user asked.",
+		"category": "calls",
+		"categoryLabel": "Calls & live streams",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "place_phone_calls",
+		"label": "Placing phone calls",
+		"description": "Phones several numbers at once with the same goal (asking shops for a price, restaurants for a table). Returns each call id; compare results with get_phone_call. Only when the user asked.",
+		"category": "calls",
+		"categoryLabel": "Calls & live streams",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "get_phone_call",
+		"label": "Checking a phone call",
+		"description": "A call's status, outcome, summary, collected answers, cost and transcript. With wait true, waits (up to max_wait_seconds) for the call to end and its summary to arrive.",
+		"category": "calls",
+		"categoryLabel": "Calls & live streams",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "list_phone_calls",
+		"label": "Listing phone calls",
+		"description": "Recent calls made or received through Vapi, newest first, with outcome and summary.",
+		"category": "calls",
+		"categoryLabel": "Calls & live streams",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "control_phone_call",
+		"label": "Steering a phone call",
+		"description": "Steers a call in progress: say makes the agent say text now, note gives the agent a new instruction or fact, transfer hands the call to a number, end hangs up.",
+		"category": "calls",
+		"categoryLabel": "Calls & live streams",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "phone_call_recording",
+		"label": "Getting a call recording",
+		"description": "A fresh link to a finished call's recording (it expires after a while).",
+		"category": "calls",
+		"categoryLabel": "Calls & live streams",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "list_phone_numbers",
+		"label": "Listing phone numbers",
+		"description": "The numbers in the Vapi account that calls can be made from.",
+		"category": "calls",
+		"categoryLabel": "Calls & live streams",
+		"access": "read",
+		"approval": false
 	}
 ]
