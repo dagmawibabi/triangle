@@ -571,7 +571,7 @@
 		"label": "Listing your playlists",
 		"description": "The user's playlists in the app: name, description, track count and length. with_tracks true also lists each one's tracks.",
 		"category": "playlists",
-		"categoryLabel": "Playlists",
+		"categoryLabel": "Music & playlists",
 		"access": "read",
 		"approval": false
 	},
@@ -580,7 +580,7 @@
 		"label": "Opening a playlist",
 		"description": "The tracks of one playlist in order: track_id, title, artist, type (music, voice, podcast, audiobook, audio), where it's from (Telegram chat and message, or a saved file) and length.",
 		"category": "playlists",
-		"categoryLabel": "Playlists",
+		"categoryLabel": "Music & playlists",
 		"access": "read",
 		"approval": false
 	},
@@ -589,7 +589,7 @@
 		"label": "Finding audio",
 		"description": "Finds audio to put in playlists. source telegram (default) searches songs, voice messages or audio files in one chat or channel (chat_id) or across every chat, optionally by words (title, artist, file name); it returns chat_id and message_id for each. source files lists audio the app saved (podcast episodes, audiobook chapters, downloads, Telegram audio saved to Files), with file_path.",
 		"category": "playlists",
-		"categoryLabel": "Playlists",
+		"categoryLabel": "Music & playlists",
 		"access": "read",
 		"approval": false
 	},
@@ -598,7 +598,7 @@
 		"label": "Making a playlist",
 		"description": "Makes a playlist in the app and optionally fills it: Telegram messages (chat_id + message_ids), every song, voice message or audio file of one chat or channel (whole_chat_id + whole_chat_type), and saved files (file_paths). Tracks stay where they are and play from there. It shows under Playlists in the drawer.",
 		"category": "playlists",
-		"categoryLabel": "Playlists",
+		"categoryLabel": "Music & playlists",
 		"access": "modify",
 		"approval": false
 	},
@@ -607,7 +607,7 @@
 		"label": "Changing a playlist",
 		"description": "Changes anything about a playlist: name, description; its cover (a picture from a file or link, a collage of album art, or a gradient colour) and mark (emoji, icon or none); pinned to the top; adds tracks (same ways as create_playlist, skipping ones already in it); removes tracks by track_id; moves one track; sorts or shuffles all its tracks for good.",
 		"category": "playlists",
-		"categoryLabel": "Playlists",
+		"categoryLabel": "Music & playlists",
 		"access": "modify",
 		"approval": false
 	},
@@ -616,7 +616,7 @@
 		"label": "Playing a playlist",
 		"description": "Plays a playlist in the app's player, from the top, from one track, or shuffled.",
 		"category": "playlists",
-		"categoryLabel": "Playlists",
+		"categoryLabel": "Music & playlists",
 		"access": "modify",
 		"approval": false
 	},
@@ -625,7 +625,7 @@
 		"label": "Arranging your playlists",
 		"description": "Arranges the playlists library: put playlists in an exact order (order: playlist ids or names, first to last), or sort it by recently played, recently changed, name or size; show it as a grid or a list; and show or hide the Playlists section of the side drawer.",
 		"category": "playlists",
-		"categoryLabel": "Playlists",
+		"categoryLabel": "Music & playlists",
 		"access": "modify",
 		"approval": false
 	},
@@ -634,7 +634,7 @@
 		"label": "Copying a playlist",
 		"description": "Makes a copy of a playlist (tracks, cover and look), optionally under a new name.",
 		"category": "playlists",
-		"categoryLabel": "Playlists",
+		"categoryLabel": "Music & playlists",
 		"access": "modify",
 		"approval": false
 	},
@@ -643,7 +643,7 @@
 		"label": "Sharing a playlist",
 		"description": "Shares a playlist. file: sends a playlist file to chat_id that people with Triangle import (cover, order and all; Telegram tracks travel as message links). forward: forwards the playlist's Telegram songs and voice messages themselves to chat_id. save: just writes the file to Files → Exports and returns its path.",
 		"category": "playlists",
-		"categoryLabel": "Playlists",
+		"categoryLabel": "Music & playlists",
 		"access": "modify",
 		"approval": false
 	},
@@ -652,7 +652,7 @@
 		"label": "Importing a playlist",
 		"description": "Makes a playlist from a shared playlist file (.playlist.json): a saved file's path, or a file someone sent in Telegram (chat_id + message_id). Telegram tracks are found again by their links; ones this account can't reach are listed.",
 		"category": "playlists",
-		"categoryLabel": "Playlists",
+		"categoryLabel": "Music & playlists",
 		"access": "modify",
 		"approval": false
 	},
@@ -661,7 +661,7 @@
 		"label": "Deleting a playlist",
 		"description": "Deletes a playlist. The songs and voice messages stay in Telegram and Files. Only when the user asks.",
 		"category": "playlists",
-		"categoryLabel": "Playlists",
+		"categoryLabel": "Music & playlists",
 		"access": "destructive",
 		"approval": true
 	},
@@ -670,7 +670,7 @@
 		"label": "Liking songs",
 		"description": "Adds tracks to (or with unlike: true takes them out of) the Liked songs playlist: tracks of a playlist (playlist + track_ids), Telegram audio (chat_id + message_ids), or what is playing now (now_playing, the default when nothing else is given).",
 		"category": "playlists",
-		"categoryLabel": "Playlists",
+		"categoryLabel": "Music & playlists",
 		"access": "modify",
 		"approval": false
 	},
@@ -679,7 +679,7 @@
 		"label": "Reading your listening stats",
 		"description": "The user's listening stats from the app's player: minutes listened, plays, day streak, the last 14 days, top tracks, artists and playlists, and what played lately.",
 		"category": "playlists",
-		"categoryLabel": "Playlists",
+		"categoryLabel": "Music & playlists",
 		"access": "read",
 		"approval": false
 	},
@@ -688,7 +688,7 @@
 		"label": "Controlling the player",
 		"description": "Controls the app's audio player: status (what's playing, the queue), pause, resume, next, previous, stop, seek (seconds), skip (± seconds), shuffle (on), repeat (mode off/all/one), speed (0.5-3), sleep (minutes, or end_of_track; 0 turns it off).",
 		"category": "playlists",
-		"categoryLabel": "Playlists",
+		"categoryLabel": "Music & playlists",
 		"access": "modify",
 		"approval": false
 	},
@@ -758,27 +758,81 @@
 	{
 		"name": "movie_channels",
 		"label": "Managing video channels",
-		"description": "The Movies section's channels (channels and groups that post videos): list with video counts, add, remove, hide or show on Home, reorder.",
+		"description": "The Video section's channels (channels and groups that post videos): list with video counts, add, remove, hide or show on Home, reorder.",
 		"category": "movies",
-		"categoryLabel": "Movies",
+		"categoryLabel": "Video",
 		"access": "modify",
 		"approval": false
 	},
 	{
 		"name": "find_videos",
 		"label": "Finding videos",
-		"description": "Videos in the Movies section's channels: by words, one channel, length (short, medium, long), sorted; with how much the user watched.",
+		"description": "Videos in the Video section's channels: by words, one channel, length (short, medium, long), sorted; with how much the user watched.",
 		"category": "movies",
-		"categoryLabel": "Movies",
+		"categoryLabel": "Video",
 		"access": "read",
 		"approval": false
 	},
 	{
 		"name": "movie_library",
 		"label": "Managing My list",
-		"description": "The user's Movies library: my_list, history (continue watching), add or remove a video_key from My list, like/unlike, hide/unhide, forget (remove from history), clear_history, or settings (autoplay, sort).",
+		"description": "The user's Video library: my_list, history (continue watching), add or remove a video_key from My list, like/unlike, hide/unhide, forget (remove from history), clear_history, or settings (autoplay, sort).",
 		"category": "movies",
-		"categoryLabel": "Movies",
+		"categoryLabel": "Video",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "video_stats",
+		"label": "Reading your watch time",
+		"description": "Time spent watching in Video (and Cinema, which plays in the same player): today, per day, streak, most-watched videos and channels.",
+		"category": "movies",
+		"categoryLabel": "Video",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "cinema_channels",
+		"label": "Managing cinema channels",
+		"description": "Cinema's channels: the ones that post films and series, read as a catalogue. list (with video counts), add, remove, hide, show or reorder (chat_ids). poster_posts true/false also reads (or skips) poster posts: a picture with the plot, ratings and links but no video.",
+		"category": "cinema",
+		"categoryLabel": "Cinema",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "find_titles",
+		"label": "Browsing the cinema",
+		"description": "Films and shows in Cinema: videos from its channels gathered into titles by name, year and season/episode, newest first, plus the user's own series. Filter by words or genre, kind, the watchlist, or only titles with a video. Returns title_keys for cinema_title.",
+		"category": "cinema",
+		"categoryLabel": "Cinema",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "cinema_title",
+		"label": "Opening a film or show",
+		"description": "One Cinema title by title_key (or its name): plot, genres, IMDb rating, cast, director and runtime looked up online; a film's copies, or a show's episodes by season with how much was watched and what is up next; and the links from its poster post. Each video_key plays in Video.",
+		"category": "cinema",
+		"categoryLabel": "Cinema",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "cinema_watchlist",
+		"label": "Updating the watchlist",
+		"description": "Cinema's watchlist: list (default), add or remove a title_key.",
+		"category": "cinema",
+		"categoryLabel": "Cinema",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "cinema_series",
+		"label": "Putting a series together",
+		"description": "The user's own series in Cinema, made from channels: list (default); create (name, year, chat_ids whose posts are sorted into seasons by \"S02E03\" and the like); update (series → name, year, chat_ids); set_season (series, season, chat_ids whose videos are that season's episodes in posting order, season_name); remove_season; delete.",
+		"category": "cinema",
+		"categoryLabel": "Cinema",
 		"access": "modify",
 		"approval": false
 	},
@@ -909,11 +963,128 @@
 		"approval": false
 	},
 	{
+		"name": "gallery_search",
+		"label": "Searching the gallery",
+		"description": "Searches the Gallery's photos and videos by what they show and say: words in captions, source names, and (once indexed with gallery_index) what is in the picture: \"receipts\", \"whiteboard\", \"beach at sunset\", \"cat\". Narrow by type, dates, source, shape or favorites. deep true also asks Telegram for captions in older posts that aren't loaded. Returns item_keys the other gallery tools take.",
+		"category": "gallery",
+		"categoryLabel": "Gallery",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "gallery_index",
+		"label": "Indexing photos",
+		"description": "Smart search for the Gallery: a vision model describes photos (objects, scene, any text in them) so gallery_search can find them by what they show. status (default) says how many are indexed; run indexes up to limit loaded photos not indexed yet (uses the model, costs tokens); stop; forget clears the index.",
+		"category": "gallery",
+		"categoryLabel": "Gallery",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "podcast_discover",
+		"label": "Finding podcasts",
+		"description": "Searches Apple's podcast directory (query, optional genre such as Technology or History, country code), or gives today's top shows when there is no query. Follow one with podcast_shows.",
+		"category": "podcasts",
+		"categoryLabel": "Podcasts & radio",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "podcast_shows",
+		"label": "Managing podcast shows",
+		"description": "The user's podcast shows: list (default), follow (feed_url or apple_id), unfollow (show_id), add_telegram (chat_ids of channels whose audio posts become episodes), refresh.",
+		"category": "podcasts",
+		"categoryLabel": "Podcasts & radio",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "podcast_library",
+		"label": "Listing episodes",
+		"description": "Episodes: of one show (show_id), or a list: new (default), in_progress, queue, downloaded, history, saved. query filters by words.",
+		"category": "podcasts",
+		"categoryLabel": "Podcasts & radio",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "podcast_play",
+		"label": "Playing a podcast",
+		"description": "Acts on an episode_id: play (resumes where the user stopped), play_next, queue, dequeue, played, unplayed, download, remove_download, favorite; or clear_queue.",
+		"category": "podcasts",
+		"categoryLabel": "Podcasts & radio",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "radio",
+		"label": "Live radio",
+		"description": "Live radio from every country: search (default; query, tag such as jazz or news, country name or code), play (station_id, or query to play the top match), favorite, unfavorite, favorites, recent.",
+		"category": "podcasts",
+		"categoryLabel": "Podcasts & radio",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "opportunity_sources",
+		"label": "Managing event and job channels",
+		"description": "The Opportunity page's sources: channels and groups whose posts are read as events (kind events) or jobs (kind jobs). list, add, remove, hide, show or reorder (chat_ids).",
+		"category": "opportunities",
+		"categoryLabel": "Events & jobs",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "find_events",
+		"label": "Finding events",
+		"description": "Events from the event channels: when, where, online or not, price, registration link, organizer, in time order. Filter by words, when (upcoming, today, week, weekend, month, past), a date, online, free, category or one channel. Includes which ones the user is going to.",
+		"category": "opportunities",
+		"categoryLabel": "Events & jobs",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "event_plan",
+		"label": "Planning an event",
+		"description": "The user's events: list (default) what they saved; going, interested or went for an event_key; remove; remind (minutes_before the start: makes a reminder); note (a note on it).",
+		"category": "opportunities",
+		"categoryLabel": "Events & jobs",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "find_jobs",
+		"label": "Finding jobs",
+		"description": "Jobs from the job channels: role, company, place, remote or not, type, level, pay, deadline, how to apply, requirements, and a match score when the user has a profile. Filter and sort. Closed ones are left out unless include_closed.",
+		"category": "opportunities",
+		"categoryLabel": "Events & jobs",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "job_tracker",
+		"label": "Tracking applications",
+		"description": "The user's job applications: list (default, optionally one status); for a job_key: save, applied, interview, offer, rejected (moves it there), remove, note, or remind (a reminder the day before its deadline).",
+		"category": "opportunities",
+		"categoryLabel": "Events & jobs",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "opportunity_settings",
+		"label": "Setting up events and jobs",
+		"description": "The Opportunity page's AI tidy-up (a model turns posts into clean events and jobs, and gives job ads a trust score) and the user's job profile (skills, experience, what they want: used for match scores and drafted applications). Change any of: ai_enabled, auto, hide_others, model (free, cheap, main or an id), profile, city. read events or jobs reads the loaded posts now (force reads them again).",
+		"category": "opportunities",
+		"categoryLabel": "Events & jobs",
+		"access": "modify",
+		"approval": false
+	},
+	{
 		"name": "app_sections",
 		"label": "Arranging the app's sections",
-		"description": "The app's sections (playlists, marketplace, movies, books, gallery, my folders): which show in the side drawer, and which page the app opens on (start_page: assistant, dms, channels, groups, playlists, marketplace, movies, books, gallery, files, brief, canvas, search, calls…). Returns the current setup.",
-		"category": "media",
-		"categoryLabel": "Media & appearance",
+		"description": "The side drawer's Explore pages (music, video, cinema, podcasts, books, gallery, opportunity, marketplace), the whole explore heading, and my_folders: which show; and which page the app opens on (start_page: assistant, dms, channels, groups, playlists, movies, cinema, podcasts, books, gallery, opportunity, marketplace, files, brief, canvas, search, calls…). Returns the current setup.",
+		"category": "sections",
+		"categoryLabel": "Explore pages",
 		"access": "modify",
 		"approval": false
 	},
@@ -1982,7 +2153,16 @@
 	{
 		"name": "create_routine",
 		"label": "Building a routine",
-		"description": "Builds a routine the user can see and edit under Settings → Routines. Steps run in order; text in steps may use {{last}} (previous step's result), {{step2}}, {{trigger}}, {{date}}, {{time}} and {{vault:Label}}. Kinds: ask (prompt: an instruction for the assistant), tool (tool + args: one tool with fixed inputs, no AI; not for tools that delete or spend), notify (title, body), wait (seconds), condition (test: contains, not_contains, is_empty, not_empty, succeeded or failed; value; otherwise: stop or skip_next). Triggers: manual, daily (at \"HH:MM\", days 1 Monday … 7 Sunday), interval (every_minutes, 15 or more) or phone (phone_event and its details).",
+		"description": "Builds a routine the user can see and edit under Settings → Routines. Steps run in order; text in steps may use {{last}} (previous step's result), {{step2}}, {{trigger}}, {{date}}, {{time}} and {{vault:Label}}. Kinds: ask (prompt: an instruction for the assistant), tool (tool + args: one tool with fixed inputs, no AI; not for tools that delete or spend), notify (title, body), wait (seconds), condition (test: contains, not_contains, is_empty, not_empty, succeeded or failed; value; otherwise: stop or skip_next). Triggers: manual, daily (at \"HH:MM\", days 1 Monday … 7 Sunday), interval (every_minutes, 15 or more), phone (phone_event and its details) or location (location_event arrive, leave or stay; the place as saved_place or place_latitude + place_longitude; optional place_radius_m, stay_minutes, days, active_from/active_until and once_per_day).",
+		"category": "routines",
+		"categoryLabel": "Routines",
+		"access": "modify",
+		"approval": false
+	},
+	{
+		"name": "saved_places",
+		"label": "Managing saved places",
+		"description": "The user's saved places (Home, Work, Gym…) that location routines use. list (default), save (place_name, place_latitude, place_longitude, optional place_radius_m, emoji, address), remove (place_name), or search (query: an address or landmark, from OpenStreetMap, returns coordinates).",
 		"category": "routines",
 		"categoryLabel": "Routines",
 		"access": "modify",
@@ -6671,7 +6851,7 @@
 	{
 		"name": "load_tools",
 		"label": "Loading tools",
-		"description": "Loads more tools for this conversation, by group. You start with the everyday ones (Telegram messages and chats, memory, files, the web, watches and reminders, creating images and audio, the vault and app settings); call this when a request needs another group, then use its tools from your next step. Load every group you need in one call. Groups: account (Account & security), contacts (Contacts & profile), members (Members & administration), bots (Bots), calls (Calls & live streams), analytics (Analytics), media (Media & appearance), canvas (Canvas), code (Code sandbox), routines (Routines), stories (Stories), folders (Folders), playlists (Playlists), marketplace (Marketplace), movies (Movies), books (Books library), gallery (Gallery), developer (Public GitHub), discover (Video, music & social), markets (Markets, weather & travel), news (Reddit & Hacker News), library (Books, audiobooks, radio & podcasts), explore (Countries, space & Pokémon), utilities (Ethiopian calendar & QR codes), games (Retro games), youtube (YouTube), papers (Research papers), bible (Bible), finance (Money & banking), callHistory (Call history), screenTime (Screen time), imageTools (Image tools), packages (Packages, domains & xkcd), world (Prices, quakes & air quality), food (Recipes & nutrition), reference (Dictionary, translation & Wikipedia), sports (Sports), stars (Stars), device (Device), screen (Screen control), gmail (Gmail), outlook (Outlook), calendar (Google Calendar), googleDocs (Drive, Docs & Sheets), slack (Slack), notion (Notion), githubAccount (Your GitHub), linear (Linear), todoist (Todoist), apps (Any connected app), cloudflare (Cloudflare), r2 (Cloudflare R2 storage), vercel (Vercel), resend (Resend email), mongodb (MongoDB), parcels (Package tracking), decisions (Decisions (Jev)), mcp (MCP servers), skills (Skills), e2b (E2B code sandbox).",
+		"description": "Loads more tools for this conversation, by group. You start with the everyday ones (Telegram messages and chats, memory, files, the web, watches and reminders, creating images and audio, the vault and app settings); call this when a request needs another group, then use its tools from your next step. Load every group you need in one call. Groups: account (Account & security), contacts (Contacts & profile), members (Members & administration), bots (Bots), calls (Calls & live streams), analytics (Analytics), media (Media & appearance), canvas (Canvas), code (Code sandbox), routines (Routines), stories (Stories), folders (Folders), sections (Explore pages), playlists (Music & playlists), movies (Video), cinema (Cinema), podcasts (Podcasts & radio), books (Books library), gallery (Gallery), opportunities (Events & jobs), marketplace (Marketplace), developer (Public GitHub), discover (Video, music & social), markets (Markets, weather & travel), news (Reddit & Hacker News), library (Books, audiobooks, radio & podcasts), explore (Countries, space & Pokémon), utilities (Ethiopian calendar & QR codes), games (Retro games), youtube (YouTube), papers (Research papers), bible (Bible), finance (Money & banking), callHistory (Call history), screenTime (Screen time), imageTools (Image tools), packages (Packages, domains & xkcd), world (Prices, quakes & air quality), food (Recipes & nutrition), reference (Dictionary, translation & Wikipedia), sports (Sports), stars (Stars), device (Device), screen (Screen control), gmail (Gmail), outlook (Outlook), calendar (Google Calendar), googleDocs (Drive, Docs & Sheets), slack (Slack), notion (Notion), githubAccount (Your GitHub), linear (Linear), todoist (Todoist), apps (Any connected app), cloudflare (Cloudflare), r2 (Cloudflare R2 storage), vercel (Vercel), resend (Resend email), mongodb (MongoDB), parcels (Package tracking), decisions (Decisions (Jev)), mcp (MCP servers), skills (Skills), e2b (E2B code sandbox).",
 		"category": "system",
 		"categoryLabel": "System check",
 		"access": "read",
@@ -7189,5 +7369,41 @@
 		"categoryLabel": "Calls & live streams",
 		"access": "read",
 		"approval": false
+	},
+	{
+		"name": "mcp_diagnose",
+		"label": "Diagnosing MCP servers",
+		"description": "Checks installed MCP servers and says what is wrong and how to fix it: the address and transport, the key or sign-in (and when it runs out), a fresh timed connection, its tools, resources and prompts, tool names some models reject, permissions, and how many recent calls failed. A failed connection is explained (needs a sign-in, key refused, wrong address, unreachable, timed out). Use it when an MCP tool fails or the user asks if a server works. Only reads. The user sees a card per server and a sheet with every finding.",
+		"category": "mcp",
+		"categoryLabel": "MCP servers",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "mcp_setup",
+		"label": "Setting up an MCP server",
+		"description": "Changes an installed MCP server, then tests it: its address or transport, the headers it sends (a key, e.g. {\"Authorization\": \"Bearer …\"}), which of its tools run without asking, ask first or are off, a fresh reconnect, refreshing or ending its sign-in. Signing in with OAuth for the first time is done by the user in Settings → MCP & Skills. Header values are never shown back. Asks first.",
+		"category": "mcp",
+		"categoryLabel": "MCP servers",
+		"access": "modify",
+		"approval": true
+	},
+	{
+		"name": "skill_diagnose",
+		"label": "Diagnosing skills",
+		"description": "Checks installed skills: whether each has instructions and a description that says when to use it, its size in tokens, files its instructions mention but don't bundle, bundled scripts, how often it was loaded, how much of every chat the skill list takes, look-alike descriptions, and (check_updates) whether its source has a newer version. Only reads. The user sees a card and a sheet with every finding.",
+		"category": "skills",
+		"categoryLabel": "Skills",
+		"access": "read",
+		"approval": false
+	},
+	{
+		"name": "skill_setup",
+		"label": "Setting up a skill",
+		"description": "Changes an installed skill, then checks it: update it from its source, rename it, rewrite its description (say what it does and \"Use when…\"), replace its instructions, add or remove bundled files, or defer it (left out of every chat's skill list; the assistant still finds it). Asks first.",
+		"category": "skills",
+		"categoryLabel": "Skills",
+		"access": "modify",
+		"approval": true
 	}
 ]

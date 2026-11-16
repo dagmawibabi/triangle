@@ -761,14 +761,14 @@ class _ChatViewScreenState extends ConsumerState<ChatViewScreen> {
                         );
     return Scaffold(
       extendBodyBehindAppBar: true,
-      body: Column(
+      body: ChatBackdrop(
+        background: chat?.background,
+        child: Column(
         children: [
           Expanded(
             child: Stack(
               children: [
-                Positioned.fill(
-                  child: ChatBackdrop(background: chat?.background, child: body),
-                ),
+                Positioned.fill(child: body),
                 if (!forumRoot)
                   Positioned(
                     right: Space.m,
@@ -860,6 +860,7 @@ class _ChatViewScreenState extends ConsumerState<ChatViewScreen> {
                   )
                 : _ReadOnlyBar(chat: chat),
         ],
+      ),
       ),
     );
   }
@@ -1581,14 +1582,14 @@ class _ChatComposerState extends ConsumerState<_ChatComposer> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              decoration: BoxDecoration(
-                color: AppColors.surface2,
-                borderRadius: BorderRadius.circular(Radii.xl + 4),
-                border: Border.all(
-                  color: dictation.listening ? AppColors.tint.withValues(alpha: 0.6) : AppColors.line,
-                ),
-              ),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+            Expanded(
+              child: Glass(
+              radius: Radii.xl + 4,
+              opacity: 0.72,
+              tint: dictation.listening ? Color.lerp(AppColors.surface2, AppColors.tint, 0.18) : null,
               padding: const EdgeInsets.all(5),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -1763,24 +1764,27 @@ class _ChatComposerState extends ConsumerState<_ChatComposer> {
                           tooltip: 'Scheduled messages',
                           onTap: widget.onScheduled,
                         ),
-                      // Like Telegram: the mic records a voice message; hold
-                      // it to dictate into the box instead. Hold send to pick
-                      // an animated effect (private chats).
-                      _ComposerButton(
-                        tooltip: canSend ? 'Send' : (dictation.listening ? 'Stop dictation' : 'Voice message (hold to dictate)'),
-                        icon: canSend
-                            ? Icons.arrow_upward_rounded
-                            : (dictation.listening ? Icons.stop_rounded : Icons.mic_none_rounded),
-                        filled: canSend || dictation.listening,
-                        busy: _sending || dictation.transcribing,
-                        label: canSend && _effect != 0 ? _effectEmoji : null,
-                        onTap: _sending ? null : (canSend ? _send : (dictation.listening ? _dictate : _recordVoice)),
-                        onLongPress: _sending ? null : (canSend ? _pickEffect : _dictate),
-                      ),
                     ],
                   ),
                 ],
               ),
+            ),
+            ),
+            const SizedBox(width: 6),
+            // Like Telegram: the mic records a voice message; hold it to
+            // dictate into the box instead. Hold send to pick an animated
+            // effect (private chats).
+            _SendButton(
+              tooltip: canSend ? 'Send' : (dictation.listening ? 'Stop dictation' : 'Voice message (hold to dictate)'),
+              icon: canSend
+                  ? Icons.send_rounded
+                  : (dictation.listening ? Icons.stop_rounded : Icons.mic_rounded),
+              busy: _sending || dictation.transcribing,
+              label: canSend && _effect != 0 ? _effectEmoji : null,
+              onTap: _sending ? null : (canSend ? _send : (dictation.listening ? _dictate : _recordVoice)),
+              onLongPress: _sending ? null : (canSend ? _pickEffect : _dictate),
+            ),
+              ],
             ),
             if (_panel)
               Padding(
@@ -1865,58 +1869,91 @@ Future<void> openComments(BuildContext context, WidgetRef ref, td.Message post) 
   }
 }
 
-/// A composer button the size of the AI box's: 36 px, a plain icon, or a
-/// filled circle for send.
+/// A plain composer icon button, 36 px: lit in the accent while [active].
 class _ComposerButton extends StatelessWidget {
   const _ComposerButton({
     required this.icon,
     required this.tooltip,
     this.onTap,
-    this.onLongPress,
-    this.filled = false,
     this.active = false,
-    this.busy = false,
-    this.label,
     this.size = 36,
     this.iconSize,
   });
   final IconData icon;
   final String tooltip;
   final VoidCallback? onTap;
-  final VoidCallback? onLongPress;
-  final bool filled;
 
   /// Lit in the accent colour (the emoji panel is open).
   final bool active;
-  final bool busy;
-
-  /// Shown instead of the icon: the chosen effect's emoji.
-  final String? label;
   final double size;
   final double? iconSize;
 
   @override
+  Widget build(BuildContext context) => Tooltip(
+    message: tooltip,
+    child: Material(
+      type: MaterialType.transparency,
+      shape: const CircleBorder(),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: SizedBox.square(
+          dimension: size,
+          child: Icon(icon, size: iconSize ?? 22, color: active ? AppColors.accent : AppColors.text2),
+        ),
+      ),
+    ),
+  );
+}
+
+/// The round accent button beside the composer: send, or the mic.
+class _SendButton extends StatelessWidget {
+  const _SendButton({required this.icon, required this.tooltip, this.onTap, this.onLongPress, this.busy = false, this.label});
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
+  final bool busy;
+  final String? label;
+
+  @override
   Widget build(BuildContext context) {
-    final fg = filled ? AppColors.bg : (active ? AppColors.accent : AppColors.text2);
+    final bg = AppColors.accent;
+    final fg = bg.computeLuminance() > 0.5 ? const Color(0xFF0B0B0D) : Colors.white;
     return Tooltip(
       message: tooltip,
-      child: Material(
-        color: filled ? AppColors.text : Colors.transparent,
-        shape: const CircleBorder(),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: onTap,
-          onLongPress: onLongPress,
-          child: SizedBox.square(
-            dimension: size,
-            child: busy
-                ? Padding(
-                    padding: const EdgeInsets.all(9),
-                    child: CircularProgressIndicator(strokeWidth: 2, color: fg),
-                  )
-                : label != null
-                ? Center(child: Text(label!, style: const TextStyle(fontSize: 18)))
-                : Icon(icon, size: iconSize ?? (filled ? 20 : 22), color: fg),
+      child: Container(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color.lerp(bg, Colors.white, 0.18)!, bg],
+          ),
+          boxShadow: [BoxShadow(color: bg.withValues(alpha: 0.35), blurRadius: 14, offset: const Offset(0, 4))],
+        ),
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: onTap,
+            onLongPress: onLongPress,
+            child: SizedBox.square(
+              dimension: 50,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                transitionBuilder: (c, a) => ScaleTransition(scale: a, child: FadeTransition(opacity: a, child: c)),
+                child: busy
+                    ? Padding(
+                        key: const ValueKey('busy'),
+                        padding: const EdgeInsets.all(15),
+                        child: CircularProgressIndicator(strokeWidth: 2, color: fg),
+                      )
+                    : label != null
+                    ? Center(key: ValueKey(label), child: Text(label!, style: const TextStyle(fontSize: 20)))
+                    : Icon(icon, key: ValueKey(icon), size: 24, color: fg),
+              ),
+            ),
           ),
         ),
       ),

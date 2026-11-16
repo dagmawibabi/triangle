@@ -96,10 +96,21 @@ const plan = [
 	},
 	{
 		id: 'sections',
-		title: 'Channels as apps',
-		text: 'Channels and groups you pick, read as a shop, a streaming service, a library and a gallery, plus playlists of any audio.',
+		title: 'Explore pages',
+		text: 'The channels and groups you pick, read as apps: music, video, a cinema, podcasts and radio, books, a gallery, events and jobs, and a shop.',
 		from: 'app',
-		categories: ['marketplace', 'movies', 'books', 'gallery', 'playlists']
+		// The side drawer's order.
+		categories: [
+			'sections',
+			'playlists',
+			'movies',
+			'cinema',
+			'podcasts',
+			'books',
+			'gallery',
+			'opportunities',
+			'marketplace'
+		]
 	},
 	{
 		id: 'web',

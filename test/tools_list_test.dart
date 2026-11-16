@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:teleai/app/start_page.dart';
 import 'package:teleai/features/settings/data/settings.dart';
 import 'package:teleai/features/telegram/data/telegram_tools.dart';
 
@@ -53,6 +54,28 @@ void main() {
     expect(on, isNotEmpty);
     // Modify tools that run without asking are blocked too.
     expect(telegramTools.where((t) => t.access == ToolAccess.modify && !t.requiresApproval).every((t) => !t.isOn(s)), isTrue);
+  });
+
+  test('every Explore page has tools, grouped in the drawer\'s order, and can be a start page', () {
+    final explore = [for (final c in ToolCategory.values) if (c.isExplore) c];
+    expect(explore, [
+      ToolCategory.sections,
+      ToolCategory.playlists,
+      ToolCategory.movies,
+      ToolCategory.cinema,
+      ToolCategory.podcasts,
+      ToolCategory.books,
+      ToolCategory.gallery,
+      ToolCategory.opportunities,
+      ToolCategory.marketplace,
+    ]);
+    for (final c in explore) {
+      expect(telegramTools.where((t) => t.category == c), isNotEmpty, reason: c.name);
+    }
+    expect(
+      [for (final p in StartPage.values) p.name].where({'playlists', 'movies', 'cinema', 'podcasts', 'books', 'gallery', 'opportunity', 'marketplace'}.contains),
+      ['playlists', 'movies', 'cinema', 'podcasts', 'books', 'gallery', 'opportunity', 'marketplace'],
+    );
   });
 
   test('Telegram-only tools are not grouped under Apps & web', () {

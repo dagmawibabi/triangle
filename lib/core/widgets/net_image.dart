@@ -1,6 +1,10 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../../app/theme.dart';
+import 'image_disk_cache.dart';
 
 /// A shimmering placeholder block, for content that's on its way.
 class Skeleton extends StatefulWidget {
@@ -93,27 +97,18 @@ class NetImage extends StatelessWidget {
         );
     final Widget image = u.isEmpty || !(u.startsWith('http://') || u.startsWith('https://'))
         ? fallback()
-        : Image.network(
-            u,
+        // Downloaded once into the app's folder, then read from there
+        // (offline too).
+        : _DiskImage(
+            key: ValueKey(u),
+            url: u,
             width: width,
             height: height,
             fit: fit,
             alignment: alignment,
-            // Decode at the size shown, not the source size.
             cacheWidth: width != null && width!.isFinite ? (width! * MediaQuery.devicePixelRatioOf(context)).round() : null,
-            frameBuilder: (context, child, frame, sync) => sync
-                ? child
-                : AnimatedOpacity(opacity: frame == null ? 0 : 1, duration: const Duration(milliseconds: 260), curve: Curves.easeOut, child: child),
-            loadingBuilder: (context, child, progress) => progress == null
-                ? child
-                : Stack(
-                    fit: StackFit.passthrough,
-                    children: [
-                      Skeleton(width: width, height: height, shape: circle ? BoxShape.circle : BoxShape.rectangle),
-                      Opacity(opacity: 0, child: child),
-                    ],
-                  ),
-            errorBuilder: (_, _, _) => fallback(),
+            loading: Skeleton(width: width, height: height, shape: circle ? BoxShape.circle : BoxShape.rectangle),
+            fallback: fallback,
           );
     if (circle) return ClipOval(child: image);
     return radius > 0 ? ClipRRect(borderRadius: BorderRadius.circular(radius), child: image) : image;
@@ -122,5 +117,64 @@ class NetImage extends StatelessWidget {
   double get _iconSize {
     final s = [width, height].whereType<double>().where((x) => x.isFinite).fold<double?>(null, (a, b) => a == null || b < a ? b : a);
     return s == null ? 22 : (s * 0.4).clamp(14, 32);
+  }
+}
+
+
+class _DiskImage extends StatefulWidget {
+  const _DiskImage({super.key, required this.url, this.width, this.height, required this.fit, required this.alignment, this.cacheWidth, required this.loading, required this.fallback});
+  final String url;
+  final double? width;
+  final double? height;
+  final BoxFit fit;
+  final Alignment alignment;
+  final int? cacheWidth;
+  final Widget loading;
+  final Widget Function() fallback;
+
+  @override
+  State<_DiskImage> createState() => _DiskImageState();
+}
+
+class _DiskImageState extends State<_DiskImage> {
+  late File? _file = ImageDiskCache.peek(widget.url);
+
+  /// It was already on the phone: shown at once, no fade.
+  late final bool _instant = _file != null;
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_file == null) {
+      ImageDiskCache.get(widget.url).then((f) {
+        if (!mounted) return;
+        setState(() => f == null ? _failed = true : _file = f);
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_failed) return widget.fallback();
+    final f = _file;
+    if (f == null) return widget.loading;
+    return Image.file(
+      f,
+      width: widget.width,
+      height: widget.height,
+      fit: widget.fit,
+      alignment: widget.alignment,
+      cacheWidth: widget.cacheWidth,
+      gaplessPlayback: true,
+      frameBuilder: (context, child, frame, sync) => sync || _instant
+          ? child
+          : AnimatedOpacity(opacity: frame == null ? 0 : 1, duration: const Duration(milliseconds: 260), curve: Curves.easeOut, child: child),
+      errorBuilder: (_, _, _) {
+        // A broken file: drop it so it's fetched again next time.
+        unawaited(f.delete().catchError((_) => f));
+        return widget.fallback();
+      },
+    );
   }
 }

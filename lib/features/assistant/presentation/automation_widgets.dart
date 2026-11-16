@@ -504,6 +504,25 @@ class _DeviceConditionEditorState extends State<DeviceConditionEditor> {
             label: '${v.radius} m',
             onChanged: (x) => widget.onChanged(v.copyWith(radius: (x / 50).round() * 50)),
           ),
+          if (v.kind == DeviceTriggerKind.stay) ...[
+            Text('Stay for', style: context.text.titleSmall),
+            const SizedBox(height: Space.xs),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final m in const [5, 10, 15, 30, 60, 120])
+                  ChoiceChip(
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: const VisualDensity(horizontal: -1, vertical: -3),
+                    label: Text(m < 60 ? '$m min' : '${m ~/ 60} h'),
+                    selected: v.dwellMinutes == m,
+                    onSelected: (_) => widget.onChanged(v.copyWith(dwellMinutes: m)),
+                  ),
+              ],
+            ),
+            const SizedBox(height: Space.s),
+          ],
           Text(
             'Triangle checks where the phone is every couple of minutes while it runs in the background. '
             'Allow location "all the time" in Android settings for this to work with the screen off.',

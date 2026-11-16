@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart' show Color, IconData, Icons;
+import 'package:flutter/material.dart' show Color, FileImage, IconData, Icons;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:handy_tdlib/api.dart' as td;
 import 'package:path_provider/path_provider.dart';
@@ -436,6 +436,9 @@ final _exists = <String, bool>{};
 bool fileExists(String path) => _exists[path] ??= File(path).existsSync();
 void forgetFile(String path) => _exists.remove(path);
 
+/// Forgets every remembered answer (after cached pictures are cleared).
+void forgetAllFiles() => _exists.clear();
+
 /// A named list of tracks with a cover: a picture the person picked, or a
 /// gradient with an emoji.
 @immutable
@@ -455,12 +458,17 @@ class Playlist {
     required this.updatedAt,
     this.playedAt,
     this.plays = 0,
+    this.shelf = 'music',
   });
 
   final String id;
   final String name;
   final String description;
   final String emoji;
+
+  /// Which page it lives on: 'music', or 'podcasts' for a podcast playlist.
+  final String shelf;
+  bool get isPodcast => shelf == 'podcasts';
 
   /// One of the plain icons ([playlistIcons]) instead of the emoji. With no
   /// icon and an empty emoji, the cover has no mark.
@@ -542,6 +550,7 @@ class Playlist {
     updatedAt: touch ? DateTime.now() : updatedAt,
     playedAt: playedAt ?? this.playedAt,
     plays: plays ?? this.plays,
+    shelf: shelf,
   );
 
   Map<String, dynamic> toJson() => {
@@ -559,6 +568,7 @@ class Playlist {
     'updated': updatedAt.millisecondsSinceEpoch,
     if (playedAt != null) 'played': playedAt!.millisecondsSinceEpoch,
     if (plays > 0) 'plays': plays,
+    if (shelf != 'music') 'shelf': shelf,
   };
 
   factory Playlist.fromJson(Map j) {
@@ -578,6 +588,7 @@ class Playlist {
       updatedAt: at('updated'),
       playedAt: j['played'] == null ? null : at('played'),
       plays: (j['plays'] as num?)?.toInt() ?? 0,
+      shelf: '${j['shelf'] ?? 'music'}',
     );
   }
 
@@ -594,6 +605,7 @@ class Playlist {
     if (pinned) 'pinned': true,
     if (playedAt != null) 'last_played': playedAt!.toIso8601String().substring(0, 16),
     if (plays > 0) 'plays': plays,
+    if (isPodcast) 'shelf': 'podcasts',
   };
 }
 
@@ -705,10 +717,12 @@ class PlaylistsStore extends Notifier<PlaylistsState> {
     int? palette,
     String? coverPath,
     List<PlaylistTrack> tracks = const [],
+    String shelf = 'music',
   }) async {
     await ready;
     final now = DateTime.now();
     final p = Playlist(
+      shelf: shelf,
       id: _shortId(),
       name: name.trim().isEmpty ? 'New playlist' : name.trim(),
       description: description.trim(),
@@ -912,38 +926,66 @@ class PlaylistsStore extends Notifier<PlaylistsState> {
 
   // ---- album art -------------------------------------------------------------
 
-  final _artTried = <String>{};
+  /// Tracks with no album art to find (so they aren't asked again), and
+  /// how often fetching failed for the rest (retried a few times: Telegram
+  /// may not be ready yet when the app starts).
+  final _artNone = <String>{};
+  final _artFails = <String, int>{};
   bool _fetching = false;
+  bool _fetchAgain = false;
 
   /// Saves full-size album art for [id]'s tracks that have none yet: the
   /// album cover Telegram keeps for a song, or the picture inside a file.
   /// It is shared by every playlist with the same track, and runs in the
-  /// background a few at a time.
+  /// background a few at a time. Asked while it runs, it runs again after.
   Future<void> ensureArt([String? id]) async {
-    if (_fetching) return;
+    if (_fetching) {
+      _fetchAgain = true;
+      return;
+    }
     _fetching = true;
     try {
-      final lists = id == null ? state.playlists : [?byId(id)];
-      final want = <String, PlaylistTrack>{};
-      for (final p in lists) {
-        for (final t in p.tracks) {
-          if (t.artPath == null && t.source != TrackSource.stream && !_artTried.contains(t.key)) want[t.key] = t;
+      do {
+        _fetchAgain = false;
+        final lists = state.playlists;
+        final want = <String, PlaylistTrack>{};
+        // The asked-for playlist first, then the rest.
+        for (final p in [?byId(id ?? ''), ...lists]) {
+          for (final t in p.tracks) {
+            final missing = t.artPath == null || !fileExists(t.artPath!);
+            if (missing && t.source != TrackSource.stream && !_artNone.contains(t.key) && (_artFails[t.key] ?? 0) < 3) want[t.key] = t;
+          }
         }
-      }
-      var done = 0;
-      for (final t in want.values) {
-        if (done >= 60) break;
-        _artTried.add(t.key);
-        final art = await _fetchArt(t);
-        done++;
-        if (art == null) continue;
-        await _set(state.copyWith(playlists: [
-          for (final p in state.playlists)
-            p.tracks.any((x) => x.key == t.key)
-                ? p.copyWith(touch: false, tracks: [for (final x in p.tracks) x.key == t.key ? x.copyWith(artPath: art) : x])
-                : p,
-        ]));
-      }
+        var done = 0;
+        for (final t in want.values) {
+          if (done >= 80) {
+            _fetchAgain = true;
+            break;
+          }
+          done++;
+          final r = await _fetchArt(t);
+          if (r.none) {
+            _artNone.add(t.key);
+            continue;
+          }
+          final art = r.path;
+          if (art == null) {
+            _artFails[t.key] = (_artFails[t.key] ?? 0) + 1;
+            continue;
+          }
+          await _set(state.copyWith(playlists: [
+            for (final p in state.playlists)
+              p.tracks.any((x) => x.key == t.key)
+                  ? p.copyWith(touch: false, tracks: [for (final x in p.tracks) x.key == t.key ? x.copyWith(artPath: art) : x])
+                  : p,
+          ]));
+        }
+        // Failures get another go a little later.
+        if (!_fetchAgain && want.keys.any((k) => (_artFails[k] ?? 0) > 0 && (_artFails[k] ?? 0) < 3)) {
+          await Future<void>.delayed(const Duration(seconds: 8));
+          _fetchAgain = true;
+        }
+      } while (_fetchAgain);
     } catch (e) {
       debugPrint('[Playlists] art: $e');
     } finally {
@@ -951,7 +993,19 @@ class PlaylistsStore extends Notifier<PlaylistsState> {
     }
   }
 
-  Future<String?> _fetchArt(PlaylistTrack t) async {
+  /// [t]'s album art saved on the phone; `none` when it has none to find,
+  /// a null path when fetching failed.
+  /// [t]'s album art saved on the phone (fetched now if need be), or null
+  /// when it has none.
+  Future<String?> artFor(PlaylistTrack t) async {
+    if (t.artPath != null && fileExists(t.artPath!)) return t.artPath;
+    if (t.source == TrackSource.stream || _artNone.contains(t.key)) return null;
+    final r = await _fetchArt(t);
+    if (r.none) _artNone.add(t.key);
+    return r.path;
+  }
+
+  Future<({String? path, bool none})> _fetchArt(PlaylistTrack t) async {
     try {
       Uint8List? bytes;
       String? from;
@@ -965,14 +1019,14 @@ class PlaylistsStore extends Notifier<PlaylistsState> {
           td.MessageDocument(:final document) => document.thumbnail?.file,
           _ => null,
         };
-        if (file == null) return null;
+        if (file == null) return (path: null, none: true);
         final got = await client.send<td.File>(
           td.DownloadFile(fileId: file.id, priority: 2, offset: 0, limit: 0, synchronous: true),
           timeout: const Duration(seconds: 40),
         );
         if (got.local.isDownloadingCompleted) from = got.local.path;
       }
-      if (bytes == null && from == null) return null;
+      if (bytes == null && from == null) return (path: null, none: t.source == TrackSource.file);
       final dir = Directory('${(await getApplicationSupportDirectory()).path}/playlist_art');
       await dir.create(recursive: true);
       final out = File('${dir.path}/${t.key.hashCode.toUnsigned(32).toRadixString(16)}.jpg');
@@ -982,10 +1036,12 @@ class PlaylistsStore extends Notifier<PlaylistsState> {
         await File(from!).copy(out.path);
       }
       forgetFile(out.path);
-      return out.path;
+      // A new picture at a path shown before: drop the old one from memory.
+      await FileImage(out).evict();
+      return (path: out.path, none: false);
     } catch (e) {
       debugPrint('[Playlists] art for ${t.key}: $e');
-      return null;
+      return (path: null, none: false);
     }
   }
 
@@ -1042,16 +1098,17 @@ class PlaylistsStore extends Notifier<PlaylistsState> {
           queueTag: tag,
           artPath: t.artPath,
           info: t.info,
+          account: t.account,
           resolve: () => _resolveTelegram(t, base),
         );
         return base;
     }
   }
 
-  List<Track> tracksFor(Playlist p) => [for (final t in p.tracks) trackFor(t, tag: p.id)];
+  /// A podcast playlist's tracks are talk: their own speed, no lyrics.
+  List<Track> tracksFor(Playlist p) => [for (final t in p.tracks) p.isPodcast ? trackFor(t, tag: p.id).withPlayback(spoken: true) : trackFor(t, tag: p.id)];
 
-  /// Finds the message's audio again and, for another account than the one
-  /// open, downloads it through that account.
+  /// Finds the message's audio again, in the account it was added from.
   Future<Track?> _resolveTelegram(PlaylistTrack t, Track base) async {
     final account = t.account, chatId = t.chatId, messageId = t.messageId;
     if (account == null || chatId == null || messageId == null) return null;
@@ -1068,12 +1125,9 @@ class PlaylistsStore extends Notifier<PlaylistsState> {
       _ => (null, 0),
     };
     if (file == null) return null;
-    if (account == ref.read(activeAccountIdProvider)) return base.withSource(file: file, seconds: seconds, artFile: art);
-    final done = await client.send<td.File>(
-      td.DownloadFile(fileId: file.id, priority: 32, offset: 0, limit: 0, synchronous: true),
-      timeout: const Duration(minutes: 5),
-    );
-    return done.local.isDownloadingCompleted ? base.withSource(localPath: done.local.path, seconds: seconds) : null;
+    // The player fetches the file through [account] (the track says so),
+    // whichever account is on screen by then.
+    return base.withSource(file: file, seconds: seconds, artFile: art, account: account);
   }
 
   // ---- sharing ----------------------------------------------------------------

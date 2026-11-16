@@ -126,7 +126,7 @@ class _Sheet extends ConsumerWidget {
           Text('This watch has since been removed.', style: context.text.bodySmall)
         else ...[
           row('Status', watch.enabled ? 'On' : 'Paused'),
-          row('When', watchTrigger(watch, store)),
+          row('When', watchTrigger(watch, store, find: (id) => chatAnywhere(ref, store, id))),
           row('Then', '${watch.mode.label}: ${watch.mode.explanation}'),
           if (watch.instructions.isNotEmpty) row('Instructions', watch.instructions),
           if (!watch.includeMuted) row('Muted chats', 'Ignored'),

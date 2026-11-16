@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -36,6 +37,7 @@ class Video {
     this.file,
     this.fileName = '',
     this.streaming = false,
+    this.caption,
   });
   final String account;
   final int chatId;
@@ -54,6 +56,9 @@ class Video {
   final td.File? file;
   final String fileName;
   final bool streaming;
+
+  /// The post's words with their links, @mentions and styles.
+  final td.FormattedText? caption;
 
   String get key => postKey(account, chatId, messageId);
   bool get vertical => height > width && width > 0;
@@ -74,8 +79,9 @@ class Video {
 
     final views = m.interactionInfo?.viewCount ?? 0;
     switch (m.content) {
-      case td.MessageVideo(:final video):
+      case td.MessageVideo(:final video, caption: final cap):
         return Video(
+          caption: cap,
           account: account,
           chatId: m.chatId,
           messageId: m.id,
@@ -94,13 +100,14 @@ class Video {
           fileName: video.fileName,
           streaming: video.supportsStreaming,
         );
-      case td.MessageDocument(:final document) when document.mimeType.startsWith('video/') || _videoExt.contains(document.fileName.split('.').last.toLowerCase()):
+      case td.MessageDocument(:final document, caption: final cap) when document.mimeType.startsWith('video/') || _videoExt.contains(document.fileName.split('.').last.toLowerCase()):
         return Video(
           account: account,
           chatId: m.chatId,
           messageId: m.id,
           channel: channel,
           title: titleFrom(document.fileName),
+          caption: cap,
           description: caption,
           size: document.document.size > 0 ? document.document.size : document.document.expectedSize,
           date: unixDate(m.date),
@@ -364,15 +371,27 @@ class VideoFeedState {
 }
 
 class VideoFeed extends Notifier<VideoFeedState> {
+  static final _memory = FeedMemory('videos');
+
   @override
   VideoFeedState build() => const VideoFeedState();
 
   Future<void> load(SourceRef s, {bool more = false}) async {
     if (state.loading.contains(s.key)) return;
+    // Loaded before this run: a refresh adds what's new to what's there
+    // (keeping what was paged in and where paging left off).
+    final refreshing = !more && state.next.containsKey('${s.key}|v');
     state = VideoFeedState(bySource: state.bySource, loading: {...state.loading, s.key}, next: state.next, errors: {...state.errors}..remove(s.key));
     try {
       final client = ref.read(telegramClientFamily(s.account));
       final title = ref.read(telegramStoreFamily(s.account)).chat(s.chatId)?.title ?? s.title;
+      // First time this run: what it showed last time, at once.
+      if (!more && !state.bySource.containsKey(s.key)) {
+        final kept = [for (final m in await _memory.recall(client, s)) ?Video.fromMessage(m, s.account, title)];
+        if (kept.isNotEmpty && !state.bySource.containsKey(s.key)) {
+          state = VideoFeedState(bySource: {...state.bySource, s.key: kept}, loading: state.loading, next: state.next, errors: state.errors);
+        }
+      }
       final next = {...state.next};
       final found = <Video>[];
       for (final (kind, filter) in const [('v', td.SearchMessagesFilterVideo()), ('d', td.SearchMessagesFilterDocument())]) {
@@ -383,12 +402,13 @@ class VideoFeed extends Notifier<VideoFeedState> {
           final v = Video.fromMessage(m, s.account, title);
           if (v != null) found.add(v);
         }
-        next[k] = page.next;
+        if (!refreshing || !next.containsKey(k)) next[k] = page.next;
       }
-      final have = more ? (state.bySource[s.key] ?? const <Video>[]) : const <Video>[];
+      final have = more || refreshing ?(state.bySource[s.key] ?? const <Video>[]) : const <Video>[];
       final keys = {for (final v in have) v.key};
       final all = [...have, for (final v in found) if (keys.add(v.key)) v]..sort((a, b) => b.messageId.compareTo(a.messageId));
       state = VideoFeedState(bySource: {...state.bySource, s.key: all}, loading: {...state.loading}..remove(s.key), next: next, errors: state.errors);
+      unawaited(_memory.remember(s, all.map((v) => v.messageId)));
     } catch (e) {
       state = VideoFeedState(bySource: state.bySource, loading: {...state.loading}..remove(s.key), next: state.next, errors: {...state.errors, s.key: '$e'});
     }
@@ -396,6 +416,20 @@ class VideoFeed extends Notifier<VideoFeedState> {
 
   Future<void> loadAll(Iterable<SourceRef> sources, {bool refresh = false}) =>
       pooled([for (final s in sources) if (refresh || !state.bySource.containsKey(s.key)) s], 3, (s) => load(s));
+
+  /// Pull to refresh: what's loaded is mixed into a new order at once, then
+  /// what's new is fetched in the background and mixed in further down, so
+  /// the feed neither waits on the network nor jumps.
+  void refreshMixed() {
+    final shuffle = ref.read(videoShuffleProvider.notifier);
+    final m = ref.read(moviesProvider);
+    shuffle.reshuffle(allVideos(m, state).map((v) => v.key));
+    final account = ref.read(activeAccountIdProvider);
+    unawaited(
+      loadAll(m.sources.where((s) => s.account == account), refresh: true)
+          .then((_) => shuffle.mixIn(allVideos(ref.read(moviesProvider), state).map((v) => v.key))),
+    );
+  }
 
   Video? byKey(String key) {
     for (final list in state.bySource.values) {
@@ -418,14 +452,57 @@ class VideoFeed extends Notifier<VideoFeedState> {
 
 final videoFeedProvider = NotifierProvider<VideoFeed, VideoFeedState>(VideoFeed.new);
 
+/// The order a refresh mixed the feeds into: a place for each video that
+/// was loaded then. Videos loaded later (scrolling further) come after
+/// them in their usual order, so the mix stays put instead of reshuffling
+/// as more arrive. Empty: no mix (sorted).
+class VideoShuffle extends Notifier<Map<String, int>> {
+  @override
+  Map<String, int> build() => const {};
+
+  /// Mixes [keys] (everything loaded now) into a new order.
+  void reshuffle(Iterable<String> keys) {
+    final list = keys.toSet().toList()..shuffle(math.Random());
+    state = {for (final (i, k) in list.indexed) k: i};
+  }
+
+  /// Places [keys] not in the mix yet at random spots past the first
+  /// [keep], so what's on screen stays put.
+  void mixIn(Iterable<String> keys, {int keep = 8}) {
+    if (state.isEmpty) return;
+    final fresh = [for (final k in keys.toSet()) if (!state.containsKey(k)) k];
+    if (fresh.isEmpty) return;
+    final order = [...state.keys]..sort((a, b) => state[a]!.compareTo(state[b]!));
+    final rnd = math.Random();
+    for (final k in fresh) {
+      final from = math.min(order.length, keep);
+      order.insert(from + rnd.nextInt(order.length - from + 1), k);
+    }
+    state = {for (final (i, k) in order.indexed) k: i};
+  }
+
+  void clear() => state = const {};
+}
+
+final videoShuffleProvider = NotifierProvider<VideoShuffle, Map<String, int>>(VideoShuffle.new);
+
+/// [list] in the refresh's mixed order ([rank]); unmixed ones after.
+List<Video> shuffledBy(List<Video> list, Map<String, int> rank) {
+  if (rank.isEmpty) return list;
+  final mixed = [for (final v in list) if (rank.containsKey(v.key)) v]..sort((a, b) => rank[a.key]!.compareTo(rank[b.key]!));
+  return [...mixed, for (final v in list) if (!rank.containsKey(v.key)) v];
+}
+
 /// Every visible source's videos (or one source's), filtered and sorted.
-List<Video> allVideos(MoviesState m, VideoFeedState feed, {String? sourceKey, String query = '', String length = 'any', bool includeHidden = false, VideoSort? sort}) {
+/// [shape] picks 'wide' (regular videos) or 'tall' (shorts) only.
+List<Video> allVideos(MoviesState m, VideoFeedState feed, {String? sourceKey, String query = '', String length = 'any', bool includeHidden = false, VideoSort? sort, String shape = 'any'}) {
   final q = query.toLowerCase().trim();
   final out = <Video>[
     for (final s in m.sources)
       if (sourceKey != null ? s.key == sourceKey : !s.hidden)
         for (final v in feed.bySource[s.key] ?? const <Video>[])
           if ((includeHidden || !m.hidden.contains(v.key)) &&
+              (shape == 'any' || (shape == 'tall') == v.vertical) &&
               (q.isEmpty || '${v.title} ${v.description} ${v.channel} ${v.fileName}'.toLowerCase().contains(q)) &&
               switch (length) {
                 'short' => v.seconds > 0 && v.seconds < 240,

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:handy_tdlib/api.dart' as td;
 
+import '../../../infrastructure/telegram/accounts.dart';
 import '../../../infrastructure/telegram/telegram_client.dart';
 
 /// Downloads Telegram files and keeps track of the ones already on the
@@ -117,11 +118,23 @@ class FileLoader {
   void dispose() => _sub.cancel();
 }
 
-final fileLoaderProvider = Provider<FileLoader>((ref) {
-  final loader = FileLoader(ref.watch(telegramClientProvider));
+/// Each account's loader. TDLib file ids belong to one instance: the same
+/// number names a different file (or none) in another account, so a file
+/// must be fetched through the account its message came from.
+final fileLoaderFamily = Provider.family<FileLoader, String>((ref, account) {
+  final loader = FileLoader(ref.watch(telegramClientFamily(account)));
   ref.onDispose(loader.dispose);
   return loader;
 });
+
+/// The loader of the account on screen.
+final fileLoaderProvider = Provider<FileLoader>(
+  (ref) => ref.watch(fileLoaderFamily(ref.watch(activeAccountIdProvider))),
+);
+
+/// [account]'s loader, or the one on screen when it isn't known.
+FileLoader fileLoaderFor(WidgetRef ref, String? account) =>
+    ref.read(account == null ? fileLoaderProvider : fileLoaderFamily(account));
 
 String formatBytes(int b) {
   if (b < 1024) return '$b B';

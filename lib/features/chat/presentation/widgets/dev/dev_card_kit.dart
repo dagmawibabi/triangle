@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart' show DateFormat, NumberFormat;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
@@ -589,9 +590,75 @@ Future<Map<String, dynamic>> devRun(
     );
     if (!ok) throw const _Cancelled();
   }
+  final reading = t == null || !t.modifiesData;
+  final key = reading ? _devCacheKey(tool, args) : null;
+  if (devCacheOnly) {
+    final hit = key == null ? null : await _devCacheRead(key);
+    if (hit == null) throw const DevNoCache();
+    return hit;
+  }
   final r = await ref.read(toolRunnerProvider).run(tool, args);
   if (r.json['error'] != null) throw '${r.json['error']}';
+  if (key != null) unawaited(_devCacheWrite(key, r.json));
   return r.json;
+}
+
+// ---- what the manager pages saw last time ------------------------------------
+//
+// The manager pages (mail, Vercel, MongoDB, …) show what reading tools
+// returned last time straight away, then refresh behind it: a first pass
+// runs their loaders inside [devFromCache], where [devRun] answers from
+// this cache (memory, then the phone) or throws [DevNoCache].
+
+/// Inside a [devFromCache] pass: reading tools answer from the cache only.
+bool get devCacheOnly => Zone.current[#devCacheOnly] == true;
+
+/// Thrown in a [devFromCache] pass when there is nothing saved.
+class DevNoCache implements Exception {
+  const DevNoCache();
+}
+
+/// Runs [load] answering only from what was saved last time.
+Future<T> devFromCache<T>(Future<T> Function() load) => runZoned(load, zoneValues: {#devCacheOnly: true});
+
+final _devMem = <String, Map<String, dynamic>>{};
+const _devPrefix = 'devcache.v1:';
+
+String _devCacheKey(String tool, Map<String, dynamic> args) {
+  // Times ("from two hours ago") change every call; the same view should
+  // still find what it showed last time.
+  final stable = jsonEncode(args, toEncodable: (o) => '$o').replaceAll(RegExp(r'\d{4}-\d{2}-\d{2}T[\d:.]+Z?'), 'T');
+  return '$tool $stable';
+}
+
+Future<Map<String, dynamic>?> _devCacheRead(String key) async {
+  final mem = _devMem[key];
+  if (mem != null) return mem;
+  try {
+    final raw = (await SharedPreferences.getInstance()).getString('$_devPrefix$key');
+    if (raw == null) return null;
+    final j = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+    _devMem[key] = j;
+    return j;
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<void> _devCacheWrite(String key, Map<String, dynamic> value) async {
+  _devMem[key] = value;
+  try {
+    final raw = jsonEncode(value);
+    if (raw.length > 400 * 1024) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('$_devPrefix$key', raw);
+    // Keeps the newest 120 views.
+    final order = [...(prefs.getStringList('${_devPrefix}order') ?? const <String>[])]..remove(key)..add(key);
+    while (order.length > 120) {
+      await prefs.remove('$_devPrefix${order.removeAt(0)}');
+    }
+    await prefs.setStringList('${_devPrefix}order', order);
+  } catch (_) {}
 }
 
 class _Cancelled implements Exception {

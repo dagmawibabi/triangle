@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show SystemUiOverlayStyle;
 
+import '../core/widgets/swipe_back.dart';
+
 /// One set of colours for the whole app: surfaces, lines, three text tones
 /// and the status colours.
 class Palette {
@@ -117,6 +119,17 @@ const tabularFigures = [FontFeature.tabularFigures()];
 abstract final class AppLook {
   /// Icons at the start of list rows.
   static bool leadingIcons = true;
+
+  /// The Explore pages (Music, Gallery, Video, Marketplace) drop their
+  /// branded colours and headers for the app's own monochrome look.
+  static bool minimalExplore = false;
+
+  /// A section's brand colour, or the app's text colour in the minimal look.
+  static Color brand(Color c) => minimalExplore ? AppColors.text : c;
+
+  /// What reads on [brand]: white on a colour, the page colour on the
+  /// monochrome one.
+  static Color onBrand(Color c) => minimalExplore ? AppColors.bg : Colors.white;
 }
 
 /// A list row's leading icon, or none when Appearance turns them off (the
@@ -160,6 +173,17 @@ ThemeData buildTheme({
   );
   return base.copyWith(
     scaffoldBackgroundColor: AppColors.bg,
+    // Every page slides in like Telegram's and swipes back from anywhere.
+    pageTransitionsTheme: const PageTransitionsTheme(
+      builders: {
+        TargetPlatform.android: SwipeBackPageTransitionsBuilder(),
+        TargetPlatform.iOS: SwipeBackPageTransitionsBuilder(),
+        TargetPlatform.fuchsia: SwipeBackPageTransitionsBuilder(),
+        TargetPlatform.linux: SwipeBackPageTransitionsBuilder(),
+        TargetPlatform.macOS: SwipeBackPageTransitionsBuilder(),
+        TargetPlatform.windows: SwipeBackPageTransitionsBuilder(),
+      },
+    ),
     textTheme: text.copyWith(
       headlineMedium: text.headlineMedium?.copyWith(
         fontWeight: FontWeight.w600,

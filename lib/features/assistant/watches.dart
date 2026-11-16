@@ -27,6 +27,26 @@ enum WatchScope {
   /// Fires on Telegram messages, so it needs Telegram connected. Schedules
   /// and app watches work without it.
   bool get needsTelegram => this != schedule && this != app && this != device;
+
+  /// Message triggers can be combined in one watch (DMs and groups, say);
+  /// a schedule, an app or a phone event stands alone.
+  bool get combinable => needsTelegram;
+
+  /// Covers many chats, so it can leave some out.
+  bool get broad => this == allDms || this == allGroups || this == allChannels || this == folder || this == mentions;
+}
+
+/// Where a watch's assistant answers.
+enum RespondIn {
+  sameChat('Same chat', 'In the chat the message came from'),
+  dm('Their DMs', 'A private message to whoever wrote it'),
+  comments('Comments', 'In the comment section under the channel post'),
+  chosen('Chats I pick', 'In groups or channels you choose'),
+  appOnly('Only in the app', 'Nothing is sent in Telegram; it answers in its chat here');
+
+  const RespondIn(this.label, this.explanation);
+  final String label;
+  final String explanation;
 }
 
 /// What a watch does when it fires.
@@ -120,7 +140,36 @@ class Watch {
     this.model = WatchModel.free,
     this.keywords = const [],
     this.keywordFrom = KeywordFrom.anyone,
+    this.extraScopes = const [],
+    this.excludeChatIds = const [],
+    this.includeOwn = false,
+    this.respondIn = const {},
+    this.respondChatIds = const [],
+    this.wakeOnReplies = false,
   });
+
+  /// More message triggers besides [scope] (e.g. all DMs and all groups).
+  final List<WatchScope> extraScopes;
+
+  /// Every message trigger it has, [scope] first.
+  List<WatchScope> get scopes => [scope, for (final s in extraScopes) if (s != scope && s.combinable && scope.combinable) s];
+
+  /// Chats it never listens to, even when a trigger covers them.
+  final List<int> excludeChatIds;
+
+  /// Also the user's own messages: Saved Messages, and what they post in
+  /// their own groups and channels (never the assistant's own replies).
+  final bool includeOwn;
+
+  /// Where its assistant answers; empty: wherever its instructions say.
+  final Set<RespondIn> respondIn;
+
+  /// For [RespondIn.chosen]: the chats to answer in.
+  final List<int> respondChatIds;
+
+  /// Also wakes when someone replies to a message it sent, wherever that
+  /// was, keyword or not.
+  final bool wakeOnReplies;
 
   /// Trigger words: when set, a message only fires the watch if it says
   /// one of them (e.g. "Triangle" or "/agent"); everything else is ignored
@@ -226,6 +275,12 @@ class Watch {
     String? model,
     List<String>? keywords,
     KeywordFrom? keywordFrom,
+    List<WatchScope>? extraScopes,
+    List<int>? excludeChatIds,
+    bool? includeOwn,
+    Set<RespondIn>? respondIn,
+    List<int>? respondChatIds,
+    bool? wakeOnReplies,
   }) => Watch(
     id: id,
     name: name ?? this.name,
@@ -254,6 +309,12 @@ class Watch {
     model: model ?? this.model,
     keywords: keywords ?? this.keywords,
     keywordFrom: keywordFrom ?? this.keywordFrom,
+    extraScopes: extraScopes ?? this.extraScopes,
+    excludeChatIds: excludeChatIds ?? this.excludeChatIds,
+    includeOwn: includeOwn ?? this.includeOwn,
+    respondIn: respondIn ?? this.respondIn,
+    respondChatIds: respondChatIds ?? this.respondChatIds,
+    wakeOnReplies: wakeOnReplies ?? this.wakeOnReplies,
   );
 
   Map<String, dynamic> toJson() => {
@@ -284,6 +345,12 @@ class Watch {
     'model': model,
     if (keywords.isNotEmpty) 'keywords': keywords,
     if (keywordFrom != KeywordFrom.anyone) 'keyword_from': keywordFrom.name,
+    if (extraScopes.isNotEmpty) 'extra_scopes': [for (final s in extraScopes) s.name],
+    if (excludeChatIds.isNotEmpty) 'exclude_chat_ids': excludeChatIds,
+    if (includeOwn) 'include_own': true,
+    if (respondIn.isNotEmpty) 'respond_in': [for (final r in respondIn) r.name],
+    if (respondChatIds.isNotEmpty) 'respond_chat_ids': respondChatIds,
+    if (wakeOnReplies) 'wake_on_replies': true,
   };
 
   factory Watch.fromJson(Map<String, dynamic> j) => Watch(
@@ -316,6 +383,12 @@ class Watch {
     model: '${j['model'] ?? WatchModel.free}',
     keywords: [for (final k in (j['keywords'] as List? ?? const [])) if ('$k'.trim().isNotEmpty) '$k'.trim()],
     keywordFrom: KeywordFrom.values.asNameMap()[j['keyword_from']] ?? KeywordFrom.anyone,
+    extraScopes: [for (final x in (j['extra_scopes'] as List? ?? const [])) ?WatchScope.values.asNameMap()['$x']],
+    excludeChatIds: [for (final c in (j['exclude_chat_ids'] as List? ?? const [])) (c as num).toInt()],
+    includeOwn: j['include_own'] == true,
+    respondIn: {for (final x in (j['respond_in'] as List? ?? const [])) ?RespondIn.values.asNameMap()['$x']},
+    respondChatIds: [for (final c in (j['respond_chat_ids'] as List? ?? const [])) (c as num).toInt()],
+    wakeOnReplies: j['wake_on_replies'] == true,
   );
 
   /// For the assistant and the Watches screen.
@@ -324,6 +397,12 @@ class Watch {
     'name': name,
     'enabled': enabled,
     'trigger': scope.name,
+    if (scopes.length > 1) 'triggers': [for (final s in scopes) s.name],
+    if (excludeChatIds.isNotEmpty) 'excluded_chat_ids': excludeChatIds,
+    if (includeOwn) 'includes_own_messages': true,
+    if (respondIn.isNotEmpty) 'responds_in': [for (final r in respondIn) r.name],
+    if (respondChatIds.isNotEmpty) 'respond_chat_ids': respondChatIds,
+    if (wakeOnReplies) 'wakes_on_replies': true,
     if (chatIds.isNotEmpty) 'chat_ids': chatIds,
     'folder_id': ?folderId,
     'daily_at': ?dailyAt,

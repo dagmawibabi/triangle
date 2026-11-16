@@ -51,6 +51,7 @@ Widget? appManagerFor(String slug) => switch (slug) {
 /// workflow runs…). When the slug is unknown, the closest action found by
 /// [find] is used instead.
 Future<Object?> _composio(WidgetRef ref, String slug, Map<String, dynamic> args, {String? find}) async {
+  if (devCacheOnly) throw const DevNoCache();
   final client = await ref.read(integrationsProvider.notifier).client();
   if (client == null) throw 'Add a Composio key in Settings → Apps & web.';
   try {
@@ -1589,6 +1590,7 @@ class VapiManagerScreen extends ConsumerWidget {
           Icons.dialpad_rounded,
           (context) => ManagedList(
             load: (context, ref) async {
+              if (devCacheOnly) throw const DevNoCache();
               await VapiStore.load();
               return [for (final n in await client.listPhoneNumbers()) {'_n': n}];
             },
@@ -1619,7 +1621,10 @@ class VapiManagerScreen extends ConsumerWidget {
           'Assistants',
           Icons.support_agent_rounded,
           (context) => ManagedList(
-            load: (context, ref) async => [for (final a in await client.listAssistants()) {'_a': a}],
+            load: (context, ref) async {
+              if (devCacheOnly) throw const DevNoCache();
+              return [for (final a in await client.listAssistants()) {'_a': a}];
+            },
             empty: 'No saved assistants. The app makes a fresh agent for each call.',
             itemBuilder: (context, m, _) {
               final a = m['_a'] as VapiAssistant;
@@ -1670,6 +1675,7 @@ class VapiManagerScreen extends ConsumerWidget {
 
 /// GET [path] on Vapi with the saved key, as JSON.
 Future<Object?> _vapiGet(String path, [Map<String, String>? query]) async {
+  if (devCacheOnly) throw const DevNoCache();
   await VapiStore.load();
   if (!VapiStore.ready) throw 'Add a Vapi key in Settings → Phone calls.';
   final res = await http

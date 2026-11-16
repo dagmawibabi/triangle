@@ -306,23 +306,7 @@ class AccountDetailScreen extends ConsumerWidget {
                 style: OutlinedButton.styleFrom(foregroundColor: AppColors.danger, minimumSize: const Size(0, 48)),
                 icon: const Icon(Icons.logout_rounded, size: 18),
                 label: const Text('Sign out of this account'),
-                onPressed: () async {
-                  final last = accounts.signedIn.length == 1;
-                  if (!await confirmAction(
-                    context,
-                    title: 'Sign out of ${account.label}?',
-                    message: last
-                        ? 'This ends Triangle\'s Telegram session and removes your conversations from this device. '
-                              'Nothing in your Telegram account is deleted.'
-                        : 'This ends Triangle\'s session for this account and deletes its data from this phone. '
-                              'Your other accounts stay signed in. Nothing in your Telegram account is deleted.',
-                    action: 'Sign out',
-                  )) {
-                    return;
-                  }
-                  if (last) await ref.read(settingsProvider.notifier).setTelegramSkipped(true);
-                  await ref.read(authControllerProvider.notifier).signOut(accountId);
-                },
+                onPressed: () => confirmSignOut(context, ref, accountId),
               ),
             ],
           ),
@@ -330,4 +314,30 @@ class AccountDetailScreen extends ConsumerWidget {
       ),
     );
   }
+}
+
+/// Asks, then signs [accountId] out (the account on screen when null).
+/// Used by account settings, your profile's app bar and the drawer's
+/// accounts sheet. Returns whether it signed out.
+Future<bool> confirmSignOut(BuildContext context, WidgetRef ref, [String? accountId]) async {
+  final accounts = ref.read(accountsProvider);
+  final id = accountId ?? accounts.activeId;
+  final account = accounts.byId(id);
+  if (account == null) return false;
+  final last = accounts.signedIn.length <= 1;
+  if (!await confirmAction(
+    context,
+    title: 'Sign out of ${account.label}?',
+    message: last
+        ? 'This ends Triangle\'s Telegram session and removes your conversations from this device. '
+              'Nothing in your Telegram account is deleted.'
+        : 'This ends Triangle\'s session for this account and deletes its data from this phone. '
+              'Your other accounts stay signed in. Nothing in your Telegram account is deleted.',
+    action: 'Sign out',
+  )) {
+    return false;
+  }
+  if (last) await ref.read(settingsProvider.notifier).setTelegramSkipped(true);
+  await ref.read(authControllerProvider.notifier).signOut(id);
+  return true;
 }

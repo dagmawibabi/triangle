@@ -22,6 +22,7 @@ import '../../finance/finance_store.dart';
 import '../../library/library_favorites.dart';
 import '../../routines/routines.dart';
 import '../../telegram/data/content_filters.dart';
+import '../../telegram/data/telegram_store.dart' show telegramStoreFamily;
 import '../../usage/spend_limits.dart';
 import '../../vault/vault.dart';
 import '../../brief/brief_prefs.dart';
@@ -39,8 +40,13 @@ import '../../custom_folders/custom_folders.dart' show customFoldersProvider;
 import '../../books/books.dart' show BooksStore, booksProvider, bookFeedProvider;
 import '../../gallery/gallery.dart' show GalleryStore, galleryProvider, galleryFeedProvider;
 import '../../marketplace/market.dart' show MarketStore, marketProvider, marketFeedProvider;
-import '../../media/music_stats.dart' show musicStatsProvider;
+import '../../media/music_stats.dart' show MusicStatsStore, musicStatsProvider;
+import '../../podcasts/podcast_store.dart' show podcastsProvider;
+import '../../podcasts/radio_store.dart' show radioProvider;
+import '../../gallery/gallery_search.dart' show galleryIndexProvider;
+import '../../sections/activity_stats.dart' show activityStatsProvider;
 import '../../movies/movies.dart' show MoviesStore, moviesProvider, videoFeedProvider;
+import '../../opportunity/opportunity.dart' show opportunityProvider, oppFeedProvider;
 import '../../playlists/playlists.dart' show playlistsProvider;
 import '../../development/mongo_session.dart';
 import '../../info/info_keys.dart';
@@ -89,9 +95,34 @@ abstract final class AppData {
   static const _accountPrefs = ['watches.v1', 'reminders.v1', 'brief_prefs.v1', 'approval_rules.v1', _customFoldersKey, ..._sectionKeys];
 
   /// Playlists and the sections built from chats (Marketplace, Movies,
-  /// Books, Gallery): their sources and tracks name their account as
-  /// `a` (books as `ac`), and their items' keys start with it.
-  static const _sectionKeys = ['playlists.v1', MarketStore.key, MarketStore.listingsKey, MoviesStore.key, BooksStore.key, BooksStore.notesKey, GalleryStore.key];
+  /// Books, Gallery, Opportunities): their sources and tracks name their
+  /// account as `a` (books as `ac`), and their items' keys start with it.
+  static const _sectionKeys = ['playlists.v1', MarketStore.key, MarketStore.listingsKey, MoviesStore.key, BooksStore.key, BooksStore.notesKey, GalleryStore.key, _opportunityKey, _opportunityReadKey, MusicStatsStore.key];
+
+  /// Explore's own files: podcast subscriptions and progress (Telegram shows
+  /// as `tg:<account>:<chat>`), radio stations, and the gallery's search
+  /// index (by item key). Backed up and restored, but not wiped by
+  /// [clearAll], which is about the assistant's data.
+  static const _exploreFiles = ['podcasts.json', 'radio.json', 'gallery_index.json'];
+
+  /// Explore files that name Telegram accounts, remapped like [_sectionKeys].
+  static const _accountFiles = ['podcasts.json', 'gallery_index.json'];
+
+  /// Whether the setting or file [key] keeps Telegram account ids in its
+  /// items (`a`, `ac`) and keys (`account:chat[:message]`).
+  static bool _keepsAccounts(String key) => _sectionKeys.contains(key) || _accountFiles.contains(key) || key == _briefPrefsKey || _isStatsKey(key);
+
+  /// Explore's time stats (`activity_stats.video` and the like): their
+  /// items are keyed `account:chat:message`.
+  static bool _isStatsKey(String key) => key.startsWith(_statsPrefix);
+  static const _statsPrefix = 'activity_stats.';
+
+  /// Brief settings: left-out folders are keyed `account:folder`.
+  static const _briefPrefsKey = 'brief_prefs.v1';
+
+  /// Opportunities' sources and saved posts, and what it has read of them.
+  static const _opportunityKey = 'opportunity.v1';
+  static const _opportunityReadKey = 'opportunity_read.v1';
 
   /// Pictures a profile carries (small ones): playlist covers and book
   /// covers, by their path under the app's folder.
@@ -135,7 +166,7 @@ abstract final class AppData {
     final prefs = await SharedPreferences.getInstance();
     final root = await _root();
     final files = <String, String>{};
-    for (final name in _profileFiles) {
+    for (final name in [..._profileFiles, ..._exploreFiles]) {
       final f = File('$root/$name');
       if (await f.exists()) files[name] = await f.readAsString();
     }
@@ -226,6 +257,15 @@ abstract final class AppData {
     }
   }
 
+  static int _innerFile(Map files, String name, String list) {
+    try {
+      final v = (jsonDecode('${files[name] ?? '{}'}') as Map)[list];
+      return v is List ? v.length : (v is Map ? v.length : 0);
+    } catch (_) {
+      return 0;
+    }
+  }
+
   static int _inner(Map prefs, String key, String list) {
     try {
       return (((jsonDecode('${prefs[key] ?? '{}'}') as Map)[list] as List?) ?? const []).length;
@@ -265,6 +305,9 @@ abstract final class AppData {
       'video_channels': _inner(prefs, MoviesStore.key, 'sources'),
       'books': _inner(prefs, BooksStore.key, 'books'),
       'gallery_sources': _inner(prefs, GalleryStore.key, 'sources'),
+      'opportunity_sources': _inner(prefs, _opportunityKey, 'event_sources') + _inner(prefs, _opportunityKey, 'job_sources'),
+      'podcasts': _innerFile(files, 'podcasts.json', 'subscriptions'),
+      'radio': _innerFile(files, 'radio.json', 'stations'),
       'mcp': mcp != null ? _count({'m': mcp}, 'm') : ((profile['mcp_servers'] as List?) ?? const []).length,
     };
   }
@@ -287,9 +330,9 @@ abstract final class AppData {
       final k = '${e.key}';
       if (_devicePref(k)) continue;
       var v = e.value;
-      if (accountIds != null && v is String && _accountPrefs.contains(k)) v = remapAccounts(k, v, accountIds);
+      if (accountIds != null && v is String && (_accountPrefs.contains(k) || _isStatsKey(k))) v = remapAccounts(k, v, accountIds);
       // Paths saved on another install point into this one's folder.
-      if (v is String && oldRoot.isNotEmpty && oldRoot != root && _sectionKeys.contains(k)) {
+      if (v is String && oldRoot.isNotEmpty && oldRoot != root && (_sectionKeys.contains(k) || _isStatsKey(k))) {
         v = v.replaceAll(jsonEncode(oldRoot).replaceAll('"', ''), jsonEncode(root).replaceAll('"', ''));
       }
       switch (v) {
@@ -332,10 +375,16 @@ abstract final class AppData {
     for (final e in ((profile['files'] as Map?) ?? const {}).entries) {
       final name = '${e.key}';
       // Only the files a profile writes, never a path outside the app.
-      if (name.contains('..') || !(name.startsWith('conversations/') || _profileFiles.contains(name))) continue;
+      if (name.contains('..') || !(name.startsWith('conversations/') || _profileFiles.contains(name) || _exploreFiles.contains(name))) continue;
+      var text = '${e.value}';
+      if (accountIds != null && _accountFiles.contains(name)) text = remapAccounts(name, text, accountIds);
+      // Saved paths (downloaded episodes) point into this install's folder.
+      if (oldRoot.isNotEmpty && oldRoot != root && _exploreFiles.contains(name)) {
+        text = text.replaceAll(jsonEncode(oldRoot).replaceAll('"', ''), jsonEncode(root).replaceAll('"', ''));
+      }
       final f = File('$root/$name');
       await f.parent.create(recursive: true);
-      await f.writeAsString('${e.value}');
+      await f.writeAsString(text);
     }
     _reload(ref);
     // The restored widgets' rows (and pictures) go back to the home screen.
@@ -454,10 +503,127 @@ abstract final class AppData {
       ..invalidate(bookFeedProvider)
       ..invalidate(galleryProvider)
       ..invalidate(galleryFeedProvider)
+      ..invalidate(opportunityProvider)
+      ..invalidate(oppFeedProvider)
       ..invalidate(componentPrefsProvider)
       ..invalidate(mcpPermissionsProvider)
       ..invalidate(bibleSettingsProvider)
-      ..invalidate(infoKeysProvider);
+      ..invalidate(infoKeysProvider)
+      ..invalidate(podcastsProvider)
+      ..invalidate(radioProvider)
+      ..invalidate(galleryIndexProvider)
+      ..invalidate(activityStatsProvider);
+  }
+
+  /// Where a removed account's Explore things are kept: the sections'
+  /// settings, playlists, music stats and My folders, plus [_accountFiles].
+  static const _rehomeKeys = [..._sectionKeys, _customFoldersKey];
+
+  /// After account [from] is removed: what Explore, playlists, podcasts and
+  /// My folders kept under it moves to a signed-in account that is in the
+  /// same chat (the one on screen first). Channels and supergroups read the
+  /// same from any member, so sources keep working. A source or folder chat
+  /// no remaining account is in is dropped (it couldn't be read); saved
+  /// items (favorites, albums, cart, books, tracks) move to the account on
+  /// screen and stay listed.
+  static Future<void> rehomeAccount(Ref ref, String from) async {
+    final accounts = ref.read(accountsProvider);
+    final order = [
+      for (final a in [accounts.active, ...accounts.signedIn])
+        if (a.signedIn && a.id != from) a.id,
+    ].toSet().toList();
+    if (order.isEmpty) return;
+    final known = <String, Set<int>>{};
+    for (final id in order) {
+      final store = ref.read(telegramStoreFamily(id));
+      try {
+        await store.ensureChatsLoaded().timeout(const Duration(seconds: 20));
+      } catch (_) {}
+      known[id] = store.chats.keys.toSet();
+    }
+    String? owner(int chat) => order.where((id) => known[id]!.contains(chat)).firstOrNull;
+    final fallback = order.first;
+    final pattern = _accountKey(from);
+    String rekey(String s) {
+      final m = pattern.firstMatch(s);
+      if (m == null) return s;
+      final chat = int.parse(m[2]!.substring(1).split(':').first);
+      return '${m[1] ?? ''}${owner(chat) ?? fallback}${m[2]}';
+    }
+
+    const drop = Object();
+    Object? walk(Object? v) {
+      if (v is String) return rekey(v);
+      if (v is List) {
+        final out = <Object?>[];
+        final seen = <String>{};
+        for (final e in v) {
+          final w = walk(e);
+          if (identical(w, drop)) continue;
+          // A source or folder chat now listed twice is kept once.
+          if (w is Map && w['a'] is String && w['c'] is num && !w.containsKey('m') && !seen.add('${w['a']}:${w['c']}')) continue;
+          out.add(w);
+        }
+        return out;
+      }
+      if (v is! Map) return v;
+      final chat = v['c'] is num ? (v['c'] as num).toInt() : null;
+      final mine = v['a'] == from || v['ac'] == from;
+      final to = chat == null ? null : owner(chat);
+      // A source (it has no message) no other account can read goes.
+      if (mine && chat != null && to == null && !v.containsKey('m')) return drop;
+      final out = <String, dynamic>{};
+      for (final e in v.entries) {
+        final k = '${e.key}';
+        if ((k == 'a' || k == 'ac') && e.value == from) {
+          out[k] = to ?? fallback;
+          continue;
+        }
+        final w = walk(e.value);
+        if (!identical(w, drop)) out[rekey(k)] = w;
+      }
+      return out;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    for (final k in [..._rehomeKeys, ...prefs.getKeys().where(_isStatsKey)]) {
+      final raw = prefs.getString(k);
+      if (raw == null || !raw.contains(from)) continue;
+      try {
+        await prefs.setString(k, jsonEncode(walk(jsonDecode(raw))));
+      } catch (e) {
+        debugPrint('[AppData] re-homing $k: $e');
+      }
+    }
+    final root = await _root();
+    for (final name in _accountFiles) {
+      final f = File('$root/$name');
+      try {
+        if (!await f.exists()) continue;
+        final raw = await f.readAsString();
+        if (raw.contains(from)) await f.writeAsString(jsonEncode(walk(jsonDecode(raw))));
+      } catch (e) {
+        debugPrint('[AppData] re-homing $name: $e');
+      }
+    }
+    // The stores read it all again.
+    ref
+      ..invalidate(customFoldersProvider)
+      ..invalidate(playlistsProvider)
+      ..invalidate(musicStatsProvider)
+      ..invalidate(marketProvider)
+      ..invalidate(marketFeedProvider)
+      ..invalidate(moviesProvider)
+      ..invalidate(videoFeedProvider)
+      ..invalidate(booksProvider)
+      ..invalidate(bookFeedProvider)
+      ..invalidate(galleryProvider)
+      ..invalidate(galleryFeedProvider)
+      ..invalidate(galleryIndexProvider)
+      ..invalidate(opportunityProvider)
+      ..invalidate(oppFeedProvider)
+      ..invalidate(podcastsProvider)
+      ..invalidate(activityStatsProvider);
   }
 
   /// [raw] (the setting [key] as JSON) with the Telegram account ids it
@@ -479,9 +645,9 @@ abstract final class AppData {
         if (k == 'accounts' && x is List) {
           final mapped = [for (final id in x) ?ids['$id']];
           if (mapped.isNotEmpty) out[k] = mapped;
-        } else if ((k == 'account' || k == 'folder_account' || (k == 'a' && (key == _customFoldersKey || _sectionKeys.contains(key))) || (k == 'ac' && key == BooksStore.key)) && x is String) {
+        } else if ((k == 'account' || k == 'folder_account' || (k == 'a' && (key == _customFoldersKey || _keepsAccounts(key))) || (k == 'ac' && _keepsAccounts(key))) && x is String) {
           out[k] = ids[x] ?? x;
-        } else if (_sectionKeys.contains(key) && x is String && x.contains(':')) {
+        } else if (_keepsAccounts(key) && x is String && x.contains(':')) {
           // Item keys ("account:chat:message") and the like.
           out[k] = _remapKey(x, ids);
         } else {
@@ -492,7 +658,7 @@ abstract final class AppData {
     }
 
     Object? keys(Object? v) {
-      if (!_sectionKeys.contains(key)) return v;
+      if (!_keepsAccounts(key)) return v;
       if (v is List) return [for (final e in v) e is String ? _remapKey(e, ids) : keys(e)];
       if (v is Map) return {for (final e in v.entries) _remapKey('${e.key}', ids): keys(e.value)};
       return v;
@@ -509,10 +675,15 @@ abstract final class AppData {
   /// account.
   static String _remapKey(String s, Map<String, String> ids) {
     for (final e in ids.entries) {
-      if (s.startsWith('${e.key}:') && RegExp(r':-?\d+:\d+$').hasMatch(s)) return '${e.value}${s.substring(e.key.length)}';
+      final m = _accountKey(e.key).firstMatch(s);
+      if (m != null) return '${m[1] ?? ''}${e.value}${m[2]}';
     }
     return s;
   }
+
+  /// `account:chat`, `account:chat:message`, and the same after `tg:`
+  /// (podcast shows, track keys), for [account].
+  static RegExp _accountKey(String account) => RegExp('^(tg:)?${RegExp.escape(account)}(:-?\\d+(?::-?\\d+)?)\$');
 
   /// [profile] as a pretty JSON file's bytes.
   static List<int> encode(Map<String, dynamic> profile) =>
@@ -528,4 +699,7 @@ class AppDataActions {
 
   Future<void> restore(Map<String, dynamic> profile) => AppData.restore(_ref, profile);
   Future<void> clearAll({bool settings = false}) => AppData.clearAll(_ref, settings: settings);
+
+  /// See [AppData.rehomeAccount].
+  Future<void> rehomeAccount(String from) => AppData.rehomeAccount(_ref, from);
 }

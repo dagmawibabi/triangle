@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../account/account_router.dart' show openChatInAccount;
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -10,12 +11,12 @@ import 'package:open_filex/open_filex.dart';
 import '../../app/theme.dart';
 import '../../core/widgets/app_sheet.dart';
 import '../../core/widgets/fullscreen_image.dart';
-import '../sections/section_kit.dart' show BottomAudioBar, showFieldsSheet, SheetField;
+import '../sections/section_kit.dart' show BottomAudioBar, showFieldsSheet, SheetField, SectionHero, MinimalFlexibleHeader;
 import 'music_stats_screen.dart';
 import '../auth/data/auth_controller.dart';
 import '../development/manage/manage_kit.dart' show HeroStat;
 import '../media/audio_center.dart';
-import '../telegram/presentation/chat_view_screen.dart';
+import '../media/audio_player_ui.dart' show AudioCoverArt, showAudioPlayer;
 import 'add_tracks_screen.dart';
 import 'playlist_sources.dart';
 import 'playlist_widgets.dart';
@@ -60,7 +61,7 @@ class _PlaylistsScreenState extends ConsumerState<PlaylistsScreen> {
     final s = ref.watch(playlistsProvider);
     final store = ref.read(playlistsProvider.notifier);
     final a = ref.watch(audioCenterProvider);
-    final lists = s.sorted;
+    final lists = [for (final p in s.sorted) if (!p.isPodcast) p];
     final tracks = lists.fold<int>(0, (n, p) => n + p.tracks.length);
     final seconds = lists.fold<int>(0, (n, p) => n + p.seconds);
     final chats = {for (final p in lists) for (final t in p.tracks) if (t.chatId != null) t.chatId};
@@ -72,6 +73,9 @@ class _PlaylistsScreenState extends ConsumerState<PlaylistsScreen> {
     final base = playingList?.colors ?? const [Color(0xFF6D28D9), Color(0xFF1E1B4B)];
     final header = [Color.lerp(base.first, Colors.black, 0.35)!, Color.lerp(base.last, Colors.black, 0.78)!];
     final custom = s.sort == PlaylistSort.custom;
+    final minimal = AppLook.minimalExplore;
+    final recent = [for (final p in lists) if (p.playedAt != null && p.tracks.isNotEmpty) p]..sort((x, y) => y.playedAt!.compareTo(x.playedAt!));
+    if (recent.length > 8) recent.removeRange(8, recent.length);
 
     return Scaffold(
       bottomNavigationBar: const BottomAudioBar(),
@@ -79,12 +83,14 @@ class _PlaylistsScreenState extends ConsumerState<PlaylistsScreen> {
         slivers: [
           SliverAppBar(
             pinned: true,
-            stretch: true,
-            expandedHeight: 236,
-            backgroundColor: header.last,
-            foregroundColor: Colors.white,
+            stretch: !minimal,
+            expandedHeight: minimal ? 226 : 236,
+            backgroundColor: minimal ? AppColors.bg : header.last,
+            surfaceTintColor: Colors.transparent,
+            scrolledUnderElevation: 0,
+            foregroundColor: minimal ? AppColors.text : Colors.white,
             titleSpacing: 0,
-            title: Row(
+            title: minimal ? null : Row(
               children: [
                 Container(
                   width: 30,
@@ -96,7 +102,7 @@ class _PlaylistsScreenState extends ConsumerState<PlaylistsScreen> {
                   child: const Icon(Icons.queue_music_rounded, size: 18, color: Colors.white),
                 ),
                 const SizedBox(width: Space.s),
-                const Text('Playlists', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                const Text('Music', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
               ],
             ),
             actions: [
@@ -128,7 +134,23 @@ class _PlaylistsScreenState extends ConsumerState<PlaylistsScreen> {
               IconButton(tooltip: 'New playlist', icon: const Icon(Icons.add_rounded), onPressed: _new),
               const SizedBox(width: Space.xs),
             ],
-            flexibleSpace: FlexibleSpaceBar(
+            flexibleSpace: minimal
+                ? MinimalFlexibleHeader(
+                    title: 'Music',
+                    expandedHeight: 226,
+                    bottomHeight: 52,
+                    leadingGap: ModalRoute.of(context)?.canPop ?? false,
+                    hero: SectionHero(
+                      subtitle: lists.isEmpty ? 'Songs, voice and audio from your chats, in playlists.' : 'Your playlists, from chats and Files',
+                      stats: [
+                        ('${lists.length}', lists.length == 1 ? 'playlist' : 'playlists'),
+                        ('$tracks', 'tracks'),
+                        (seconds == 0 ? '–' : playlistLength(seconds), 'of audio'),
+                        ('${chats.length}', chats.length == 1 ? 'chat' : 'chats'),
+                      ],
+                    ),
+                  )
+                : FlexibleSpaceBar(
               collapseMode: CollapseMode.parallax,
               stretchModes: const [StretchMode.zoomBackground],
               background: AnimatedContainer(
@@ -177,17 +199,34 @@ class _PlaylistsScreenState extends ConsumerState<PlaylistsScreen> {
                       _HeaderChip(icon: Icons.mic_rounded, label: 'Voice messages', onTap: () => openAddTracks(context, type: TgAudioType.voice)),
                       _HeaderChip(icon: Icons.audio_file_rounded, label: 'Audio files', onTap: () => openAddTracks(context, type: TgAudioType.files)),
                     ],
-                    _HeaderChip(icon: Icons.podcasts_rounded, label: 'From Files', onTap: () => openAddTracks(context, files: true)),
+                    _HeaderChip(icon: Icons.folder_open_rounded, label: 'From Files', onTap: () => openAddTracks(context, files: true)),
                   ],
                 ),
               ),
             ),
           ),
+          // Podcasts and radio have their own page.
+          if (a.current != null && !a.current!.spoken && !a.current!.live && !s.playlists.any((p) => p.isPodcast && p.id == a.queueTag))
+            SliverToBoxAdapter(child: _NowPlayingCard(colors: base)),
+          if (recent.length >= 2) SliverToBoxAdapter(child: _RecentRail(lists: recent)),
+          if (lists.isNotEmpty)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(Space.l, Space.xl, Space.l, 0),
+                child: Row(
+                  children: [
+                    Text('Your playlists', style: context.text.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+                    const SizedBox(width: 6),
+                    Text('${lists.length}', style: context.text.bodySmall?.copyWith(color: AppColors.text3)),
+                  ],
+                ),
+              ),
+            ),
           if (lists.isEmpty)
             SliverFillRemaining(hasScrollBody: false, child: _EmptyLibrary(onNew: _new, onImport: _import))
           else if (s.grid)
             SliverPadding(
-              padding: const EdgeInsets.fromLTRB(Space.l, Space.l, Space.l, Space.x4),
+              padding: const EdgeInsets.fromLTRB(Space.l, Space.m, Space.l, Space.x4),
               sliver: SliverGrid.builder(
                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: columns,
@@ -233,11 +272,14 @@ class _HeaderChip extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => Padding(
+  Widget build(BuildContext context) {
+    final minimal = AppLook.minimalExplore;
+    final fg = minimal ? AppColors.text : Colors.white;
+    return Padding(
     padding: const EdgeInsets.only(right: Space.s),
     child: Material(
-      color: Colors.white.withValues(alpha: 0.12),
-      shape: StadiumBorder(side: BorderSide(color: Colors.white.withValues(alpha: 0.14))),
+      color: minimal ? AppColors.surface2 : Colors.white.withValues(alpha: 0.12),
+      shape: StadiumBorder(side: BorderSide(color: minimal ? AppColors.line : Colors.white.withValues(alpha: 0.14))),
       child: InkWell(
         customBorder: const StadiumBorder(),
         onTap: onTap,
@@ -246,15 +288,193 @@ class _HeaderChip extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 16, color: Colors.white),
+              Icon(icon, size: 16, color: fg),
               const SizedBox(width: 6),
-              Text('+ $label', style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w600)),
+              Text('+ $label', style: TextStyle(color: fg, fontSize: 12.5, fontWeight: FontWeight.w600)),
             ],
           ),
         ),
       ),
     ),
   );
+  }
+}
+
+/// What's playing, at the top of the library: art, title, progress and
+/// the controls, in the colours of its playlist. Tap to open the player.
+class _NowPlayingCard extends ConsumerWidget {
+  const _NowPlayingCard({required this.colors});
+  final List<Color> colors;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final a = ref.watch(audioCenterProvider);
+    final t = a.current;
+    if (t == null) return const SizedBox.shrink();
+    final total = a.duration.inMilliseconds;
+    final f = total <= 0 ? 0.0 : (a.position.inMilliseconds / total).clamp(0.0, 1.0);
+    final minimal = AppLook.minimalExplore;
+    final c1 = minimal ? AppColors.surface2 : Color.lerp(colors.first, Colors.black, 0.25)!;
+    final c2 = minimal ? AppColors.surface : Color.lerp(colors.last, Colors.black, 0.55)!;
+    // Words and controls: white on the colours, the text tones on grey.
+    final fg = minimal ? AppColors.text : Colors.white;
+    final fg2 = minimal ? AppColors.text2 : Colors.white70;
+    final dim = minimal ? AppColors.text3 : Colors.white38;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(Space.l, Space.l, Space.l, 0),
+      child: Material(
+        borderRadius: BorderRadius.circular(Radii.xl),
+        clipBehavior: Clip.antiAlias,
+        child: Ink(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [c1, c2]),
+            borderRadius: BorderRadius.circular(Radii.xl),
+            border: minimal ? Border.all(color: AppColors.line) : null,
+          ),
+          child: InkWell(
+            onTap: () => showAudioPlayer(context),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(Space.m, Space.m, Space.s, Space.m),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(Radii.m),
+                        child: SizedBox.square(dimension: 60, child: AudioCoverArt(key: ValueKey(t.key), track: t, path: a.currentPath, size: 60)),
+                      ),
+                      const SizedBox(width: Space.m),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                EqualizerBars(playing: a.playing, size: 11),
+                                const SizedBox(width: 6),
+                                Text(a.playing ? 'NOW PLAYING' : 'PAUSED', style: TextStyle(color: fg2, fontSize: 10.5, fontWeight: FontWeight.w800, letterSpacing: 1.2)),
+                              ],
+                            ),
+                            const SizedBox(height: 3),
+                            Text(t.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: fg, fontSize: 16, fontWeight: FontWeight.w800)),
+                            if (t.subtitle.isNotEmpty) Text(t.subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: fg2, fontSize: 12.5)),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.skip_previous_rounded, color: fg),
+                        onPressed: a.previous,
+                      ),
+                      Material(
+                        color: minimal ? AppColors.text : Colors.white,
+                        shape: const CircleBorder(),
+                        child: InkWell(
+                          customBorder: const CircleBorder(),
+                          onTap: a.toggle,
+                          child: SizedBox.square(
+                            dimension: 44,
+                            child: a.loading
+                                ? Padding(padding: const EdgeInsets.all(13), child: CircularProgressIndicator(strokeWidth: 2, color: minimal ? AppColors.bg : Colors.black))
+                                : Icon(a.playing ? Icons.pause_rounded : Icons.play_arrow_rounded, color: minimal ? AppColors.bg : Colors.black, size: 28),
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.skip_next_rounded, color: a.hasNext ? fg : dim),
+                        onPressed: a.hasNext ? a.next : null,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: Space.m),
+                  Padding(
+                    padding: const EdgeInsets.only(right: Space.s),
+                    child: Row(
+                      children: [
+                        Text(_mmss(a.position), style: TextStyle(color: fg2, fontSize: 11, fontFeatures: tabularFigures)),
+                        const SizedBox(width: Space.s),
+                        Expanded(
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(99),
+                            child: LinearProgressIndicator(value: f, minHeight: 4, color: fg, backgroundColor: minimal ? AppColors.line : Colors.white24),
+                          ),
+                        ),
+                        const SizedBox(width: Space.s),
+                        Text(_mmss(a.duration), style: TextStyle(color: fg2, fontSize: 11, fontFeatures: tabularFigures)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _mmss(Duration d) => '${d.inMinutes}:${(d.inSeconds % 60).toString().padLeft(2, '0')}';
+
+/// Playlists played lately, to get back to in one tap.
+class _RecentRail extends ConsumerWidget {
+  const _RecentRail({required this.lists});
+  final List<Playlist> lists;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final a = ref.watch(audioCenterProvider);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(Space.l, Space.xl, Space.l, Space.m),
+          child: Text('Jump back in', style: context.text.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+        ),
+        SizedBox(
+          height: 64,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: Space.l),
+            itemCount: lists.length,
+            separatorBuilder: (_, _) => const SizedBox(width: Space.s),
+            itemBuilder: (_, i) {
+              final p = lists[i];
+              final live = a.queueTag == p.id;
+              return Material(
+                color: live && !AppLook.minimalExplore ? p.colors.first.withValues(alpha: AppColors.isLight ? 0.14 : 0.22) : AppColors.surface2,
+                borderRadius: BorderRadius.circular(Radii.m),
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  onTap: () => _openPlaylist(context, p),
+                  onLongPress: () => live ? a.toggle() : ref.read(playlistsProvider.notifier).play(p),
+                  child: SizedBox(
+                    width: 210,
+                    child: Row(
+                      children: [
+                        PlaylistCover(playlist: p, size: 64, radius: 0),
+                        const SizedBox(width: Space.m),
+                        Expanded(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: context.text.bodyMedium?.copyWith(fontWeight: FontWeight.w700)),
+                              Text('${p.tracks.length} tracks', style: context.text.bodySmall?.copyWith(color: AppColors.text3)),
+                            ],
+                          ),
+                        ),
+                        if (live) ...[EqualizerBars(playing: a.playing, size: 12), const SizedBox(width: Space.m)],
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 /// Picks a shared playlist file and imports it.
@@ -438,7 +658,7 @@ class _PlaylistCard extends ConsumerWidget {
                   child: Container(
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(Radii.l),
-                      boxShadow: [BoxShadow(color: p.colors.last.withValues(alpha: AppColors.isLight ? 0.25 : 0.35), blurRadius: 22, offset: const Offset(0, 10))],
+                      boxShadow: [BoxShadow(color: AppLook.minimalExplore ? Colors.black.withValues(alpha: AppColors.isLight ? 0.10 : 0.35) : p.colors.last.withValues(alpha: AppColors.isLight ? 0.25 : 0.35), blurRadius: 22, offset: const Offset(0, 10))],
                     ),
                     child: Hero(tag: 'playlist-${p.id}', flightShuttleBuilder: coverFlight, child: PlaylistCover(playlist: p)),
                   ),
@@ -582,7 +802,7 @@ class _PlaylistRow extends ConsumerWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Material(
-        color: live ? p.colors.first.withValues(alpha: AppColors.isLight ? 0.10 : 0.16) : Colors.transparent,
+        color: live ? (AppLook.minimalExplore ? AppColors.surface2 : p.colors.first.withValues(alpha: AppColors.isLight ? 0.10 : 0.16)) : Colors.transparent,
         borderRadius: BorderRadius.circular(Radii.l),
         child: InkWell(
           borderRadius: BorderRadius.circular(Radii.l),
@@ -596,7 +816,7 @@ class _PlaylistRow extends ConsumerWidget {
                 Container(
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(Radii.m),
-                    boxShadow: [BoxShadow(color: p.colors.last.withValues(alpha: 0.3), blurRadius: 12, offset: const Offset(0, 5))],
+                    boxShadow: [BoxShadow(color: AppLook.minimalExplore ? Colors.black.withValues(alpha: AppColors.isLight ? 0.08 : 0.3) : p.colors.last.withValues(alpha: 0.3), blurRadius: 12, offset: const Offset(0, 5))],
                   ),
                   child: Hero(tag: 'playlist-${p.id}', flightShuttleBuilder: coverFlight, child: PlaylistCover(playlist: p, size: 76, radius: Radii.m)),
                 ),
@@ -909,7 +1129,7 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
       case 'art':
         await openFullscreenFile(context, t.artPath!, title: t.title);
       case 'chat':
-        await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ChatViewScreen(chatId: t.chatId!, openAt: t.messageId)));
+        await openChatInAccount(context, t.chatId!, hint: t.account, openAt: t.messageId);
       case 'add':
         await showAddToPlaylist(context, ref, [t]);
       case 'rename':
@@ -1012,8 +1232,9 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
             pinned: true,
             stretch: true,
             expandedHeight: 330,
-            backgroundColor: Color.lerp(AppColors.bg, topColor, 0.25),
-            foregroundColor: Colors.white,
+            backgroundColor: AppLook.minimalExplore ? AppColors.bg : Color.lerp(AppColors.bg, topColor, 0.25),
+            surfaceTintColor: Colors.transparent,
+            foregroundColor: AppLook.minimalExplore ? AppColors.text : Colors.white,
             title: Text(p.name),
             actions: [
               IconButton(
@@ -1048,7 +1269,7 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
                   if (cover != null) {
                     openFullscreenFile(context, cover, title: p.name);
                   } else if (arts.isNotEmpty) {
-                    openFullscreenFile(context, arts.first, title: p.name);
+                    openFullscreenImages(context, [for (final a in arts) FileImage(File(a))], title: p.name);
                   } else {
                     showPlaylistEditor(context, ref, playlist: p);
                   }
@@ -1062,7 +1283,7 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [Color.lerp(AppColors.bg, topColor, 0.12)!, AppColors.bg],
+                  colors: [AppLook.minimalExplore ? AppColors.bg : Color.lerp(AppColors.bg, topColor, 0.12)!, AppColors.bg],
                 ),
               ),
               padding: const EdgeInsets.fromLTRB(Space.l, Space.l, Space.l, Space.s),
@@ -1223,7 +1444,9 @@ class _Header extends StatelessWidget {
     return Stack(
       fit: StackFit.expand,
       children: [
-        if (cover != null)
+        if (AppLook.minimalExplore)
+          ColoredBox(color: AppColors.bg)
+        else if (cover != null)
           ImageFiltered(
             imageFilter: ui.ImageFilter.blur(sigmaX: 40, sigmaY: 40),
             child: Image.file(File(cover), fit: BoxFit.cover, cacheWidth: 200),
@@ -1235,7 +1458,9 @@ class _Header extends StatelessWidget {
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
-              colors: [Colors.black.withValues(alpha: 0.25), Colors.transparent, Color.lerp(AppColors.bg, p.colors.first, 0.12)!],
+              colors: AppLook.minimalExplore
+                  ? [Colors.transparent, Colors.transparent, AppColors.bg]
+                  : [Colors.black.withValues(alpha: 0.25), Colors.transparent, Color.lerp(AppColors.bg, p.colors.first, 0.12)!],
               stops: const [0, 0.45, 1],
             ),
           ),

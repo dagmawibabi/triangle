@@ -15,6 +15,31 @@ const accountArgument = 'account';
 /// so is routed to one and switchable per account).
 bool isAccountTool(TelegramTool t) => t.needsTelegram;
 
+/// Tools that work without Telegram but keep what they touch per account:
+/// the Explore sections (each account has its own sources, and their items
+/// are read through it) and playlists' Telegram tracks. With several
+/// accounts they take an optional `account` (default: the one on screen);
+/// unlike [isAccountTool] ones they never require it, nor Telegram.
+const accountScopedToolNames = {
+  ...sectionToolNames,
+  'find_audio',
+  'create_playlist',
+  'update_playlist',
+  'like_tracks',
+  'import_playlist',
+};
+
+/// Section tools that don't involve any account's chats.
+const _accountFree = {'podcast_discover', 'radio', 'app_sections'};
+
+bool isAccountScopedTool(TelegramTool t) =>
+    !isAccountTool(t) && accountScopedToolNames.contains(t.name) && !_accountFree.contains(t.name);
+
+/// The account a call works in: the one it names (for tools that take one),
+/// else the default.
+String workAccountFor(AccountsState s, TelegramTool t, Map<String, dynamic> args) =>
+    isAccountTool(t) || isAccountScopedTool(t) ? accountForCall(s, args) : defaultAiAccount(s);
+
 /// Whether the assistant gets [t] in [a]: the account's own switches when it
 /// has them, Settings → Tools otherwise. Read-only mode applies either way.
 bool toolOnFor(TelegramTool t, AppSettings s, TelegramAccount a) {
@@ -149,10 +174,26 @@ String accountHandle(TelegramAccount a) => a.username != null ? '@${a.username}'
 Map<String, dynamic> parametersWithAccount(TelegramTool t, AccountsState s, AppSettings settings) {
   final params = t.parameters;
   final ai = s.forAi;
-  if (!isAccountTool(t) || ai.length < 2) return params;
+  if (ai.length < 2) return params;
+  final active = s.byId(defaultAiAccount(s));
+  if (isAccountScopedTool(t)) {
+    return {
+      ...params,
+      'properties': {
+        ...?(params['properties'] as Map?)?.cast<String, dynamic>(),
+        accountArgument: {
+          'type': 'string',
+          'enum': [for (final a in ai) accountHandle(a)],
+          'description':
+              "Which Telegram account's sources and chats this works with (each account keeps its own). "
+              'Default: ${active == null ? 'the active one' : accountHandle(active)}.',
+        },
+      },
+    };
+  }
+  if (!isAccountTool(t)) return params;
   // Only the accounts where the tool is on can be picked.
   final on = [for (final a in ai) if (toolOnFor(t, settings, a)) a];
-  final active = s.byId(defaultAiAccount(s));
   return {
     ...params,
     'properties': {

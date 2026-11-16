@@ -281,6 +281,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
     return Scaffold(
       drawer: HistoryDrawer(onOpenSettings: _openSettings),
+      // A swipe from anywhere opens the drawer, not just from the edge.
+      // Sideways scrolling inside (code, cards) still wins where it can.
+      drawerEdgeDragWidth: MediaQuery.sizeOf(context).width,
       appBar: AppBar(
         leading: lead(Builder(
           builder: (context) => IconButton(

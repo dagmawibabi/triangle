@@ -146,9 +146,9 @@ class _Meta extends StatelessWidget {
 }
 
 class _Thumb extends StatelessWidget {
-  const _Thumb(this.url, {this.size = 56});
+  const _Thumb(this.url);
   final String? url;
-  final double size;
+  final double size = 56;
 
   @override
   Widget build(BuildContext context) {

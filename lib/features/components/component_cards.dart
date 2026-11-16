@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
@@ -10,6 +11,8 @@ import '../chat/domain/chat_models.dart';
 import '../chat/presentation/widgets/info_card_kit.dart' show openLink;
 import '../chat/presentation/widgets/message_view.dart' show MarkdownTable;
 import 'components.dart';
+
+part 'component_cards_more.dart';
 
 /// The card for a show_component call; null for other tools.
 Widget? componentResultFor(ToolPart part, Map<String, dynamic> j) {
@@ -74,13 +77,33 @@ class ComponentView extends ConsumerWidget {
       ComponentKind.timeline => _Timeline(items: _items(data), color: colors.first),
       ComponentKind.comparison => _Comparison(d: data, colors: colors),
       ComponentKind.gauge => _Gauge(d: data, color: colors.first),
+      ComponentKind.radar => _Radar(d: data, colors: colors),
+      ComponentKind.heatmap => _Heatmap(d: data, color: colors.first),
+      ComponentKind.funnel => _Funnel(items: _items(data), colors: colors, unit: _s(data['unit'])),
+      ComponentKind.breakdown => _Breakdown(items: _items(data), colors: colors, unit: _s(data['unit'])),
+      ComponentKind.metric => _Metric(d: data, color: colors.first),
+      ComponentKind.rings => _Rings(items: _items(data), colors: colors),
+      ComponentKind.leaderboard => _Leaderboard(items: _items(data), color: colors.first, unit: _s(data['unit'])),
+      ComponentKind.checklist => _Checklist(items: _items(data), color: colors.first),
+      ComponentKind.steps => _Steps(items: _items(data), color: colors.first),
+      ComponentKind.board => _Board(d: data, colors: colors),
+      ComponentKind.callout => _Callout(d: data),
+      ComponentKind.facts => _Facts(d: data, color: colors.first),
+      ComponentKind.receipt => _Receipt(d: data, color: colors.first),
+      ComponentKind.countdown => _Countdown(d: data, color: colors.first),
     };
+    // A callout is its own coloured box: no card around it.
+    if (kind == ComponentKind.callout) {
+      return Padding(padding: framed ? const EdgeInsets.only(bottom: Space.s) : const EdgeInsets.all(Space.l), child: body);
+    }
+    // The fact sheet draws its own header (emoji, title) edge to edge.
+    final ownHeader = kind == ComponentKind.facts;
     final title = _s(data['title']);
     final subtitle = _s(data['subtitle']);
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (title.isNotEmpty || subtitle.isNotEmpty)
+        if (!ownHeader && (title.isNotEmpty || subtitle.isNotEmpty))
           Padding(
             padding: const EdgeInsets.fromLTRB(Space.l, Space.m, Space.l, Space.s),
             child: Row(
@@ -99,7 +122,7 @@ class ComponentView extends ConsumerWidget {
               ],
             ),
           ),
-        Padding(padding: const EdgeInsets.fromLTRB(Space.l, Space.xs, Space.l, Space.l), child: body),
+        if (ownHeader) body else Padding(padding: const EdgeInsets.fromLTRB(Space.l, Space.xs, Space.l, Space.l), child: body),
       ],
     );
     if (!framed) return content;

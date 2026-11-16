@@ -34,6 +34,7 @@ import '../../assistant/approval_rules.dart';
 import '../../assistant/untrusted.dart';
 import '../../assistant/activity_log.dart';
 import '../../assistant/device_events.dart';
+import '../../assistant/places.dart';
 import '../../assistant/tool_allowlist.dart';
 import '../../routines/routine_runner.dart';
 import '../../routines/routines.dart';
@@ -44,6 +45,7 @@ import '../../finance/finance_tools.dart';
 import '../../calls/call_history_tools.dart';
 import '../../info/info_tools.dart';
 import '../../telegram/data/safety_tools.dart';
+import '../../telegram/data/capability_setup_tools.dart';
 import '../../telegram/data/system_tools.dart' show redactKeyArguments, runSystemTool;
 import '../../screen/screen_tools.dart';
 import '../../../core/files/download_progress.dart';
@@ -167,6 +169,7 @@ const _localTools = {
   'create_routine',
   'update_routine',
   'delete_routine',
+  'saved_places',
   'bible_passage',
   'bible_chapter',
   'bible_compare',
@@ -1691,10 +1694,32 @@ class ChatController extends Notifier<ChatState> {
           'daily' => RoutineTriggerKind.daily,
           'interval' => RoutineTriggerKind.interval,
           'phone' => RoutineTriggerKind.device,
+          'location' => RoutineTriggerKind.location,
           _ => RoutineTriggerKind.manual,
         };
         final phone = trigger == RoutineTriggerKind.device ? phoneConditionFrom(a) : null;
         if (phone?.error != null) return ToolOutput({'error': phone!.error});
+        DeviceCondition? place;
+        if (trigger == RoutineTriggerKind.location) {
+          final places = ref.read(savedPlacesProvider.notifier);
+          await places.ready;
+          final named = str('saved_place').isEmpty ? null : places.named(str('saved_place'));
+          if (str('saved_place').isNotEmpty && named == null) {
+            return ToolOutput({'error': 'No saved place "${str('saved_place')}". Saved: ${ref.read(savedPlacesProvider).map((p) => p.name).join(', ')}. Or give place_latitude and place_longitude.'});
+          }
+          final r = phoneConditionFrom({
+            ...a,
+            'phone_event': switch (str('location_event')) {
+              'leave' => 'leave',
+              'stay' => 'stay',
+              _ => 'arrive',
+            },
+            if (named != null) ...{'place_latitude': named.lat, 'place_longitude': named.lng, 'place_name': str('place_name').isEmpty ? named.name : str('place_name'), if (a['place_radius_m'] == null) 'place_radius_m': named.radius},
+          });
+          if (r.error != null) return ToolOutput({'error': '${r.error} For a location routine give saved_place, or place_latitude and place_longitude.'});
+          place = r.condition;
+        }
+        String? hhmm(String k) => RegExp(r'^\d{1,2}:\d{2}$').hasMatch(str(k)) ? str(k).padLeft(5, '0') : null;
         final unknown = <String>[];
         final tools = _toolsArgument(a['tools'], unknown);
         if (unknown.isNotEmpty) return ToolOutput({'error': 'Unknown tools or categories: ${unknown.join(', ')}.'});
@@ -1733,6 +1758,10 @@ class ChatController extends Notifier<ChatState> {
               days: days.isEmpty ? const {1, 2, 3, 4, 5, 6, 7} : days,
               everyMinutes: ((a['every_minutes'] as num?)?.toInt() ?? 60).clamp(15, 7 * 24 * 60),
               device: phone?.condition,
+              place: place,
+              from: hhmm('active_from') != null && hhmm('active_until') != null ? hhmm('active_from')! : '',
+              until: hhmm('active_from') != null && hhmm('active_until') != null ? hhmm('active_until')! : '',
+              oncePerDay: a['once_per_day'] == true,
             ),
             steps: steps,
             model: str('model').isEmpty ? WatchModel.free : str('model'),
@@ -1754,6 +1783,37 @@ class ChatController extends Notifier<ChatState> {
         return r == null
             ? const ToolOutput({'error': 'No routine with that id.'})
             : ToolOutput({'updated': true, 'routine_id': r.id, 'name': r.name, 'enabled': r.enabled});
+      case 'saved_places':
+        final places = ref.read(savedPlacesProvider.notifier);
+        await places.ready;
+        switch (str('action')) {
+          case 'save':
+            final lat = (a['place_latitude'] as num?)?.toDouble(), lng = (a['place_longitude'] as num?)?.toDouble();
+            if (str('place_name').isEmpty || lat == null || lng == null) return const ToolOutput({'error': 'save needs place_name, place_latitude and place_longitude.'});
+            final p = await places.put(SavedPlace(
+              id: SavedPlacesStore.newId(),
+              name: str('place_name'),
+              lat: lat,
+              lng: lng,
+              radius: ((a['place_radius_m'] as num?)?.toInt() ?? 150).clamp(50, 50000),
+              emoji: str('emoji').isEmpty ? '📍' : str('emoji'),
+              address: str('address'),
+            ));
+            return ToolOutput({'saved': p.describe()});
+          case 'remove':
+            final p = places.named(str('place_name'));
+            if (p == null) return ToolOutput({'error': 'No saved place "${str('place_name')}".'});
+            await places.remove(p.id);
+            return ToolOutput({'removed': p.name});
+          case 'search':
+            try {
+              final hits = await searchPlaces(str('query'));
+              return ToolOutput({'results': [for (final h in hits) {'name': h.name, 'address': h.address, 'latitude': h.lat, 'longitude': h.lng}]});
+            } catch (e) {
+              return ToolOutput({'error': '$e'});
+            }
+        }
+        return ToolOutput({'places': [for (final p in ref.read(savedPlacesProvider)) p.describe()]});
       case 'delete_routine':
         return await store.remove(str('routine_id'))
             ? const ToolOutput({'deleted': true})
@@ -2003,7 +2063,7 @@ class ChatController extends Notifier<ChatState> {
     _touch(c);
     unawaited(_persist(c));
     final accounts = ref.read(accountsProvider);
-    final account = isAccountTool(tool) ? accountForCall(accounts, args) : defaultAiAccount(accounts);
+    final account = workAccountFor(accounts, tool, args);
     await _execute(tool, part.callId, c, ref.read(toolRunnerFamily(account)));
     _touch(c);
     await _persist(c);
@@ -2027,7 +2087,7 @@ class ChatController extends Notifier<ChatState> {
     c.entries.add(AssistantEntry(id: _uuid.v4(), steps: [ModelStep(tools: [part])]));
     _asked.add(part.callId);
     final accounts = ref.read(accountsProvider);
-    final account = isAccountTool(tool) ? accountForCall(accounts, args) : defaultAiAccount(accounts);
+    final account = workAccountFor(accounts, tool, args);
     await _execute(tool, part.callId, c, ref.read(toolRunnerFamily(account)));
     return part;
   }
@@ -2062,12 +2122,12 @@ class ChatController extends Notifier<ChatState> {
     );
     final c = Conversation(id: 'routine-step-${_uuid.v4()}', title: routine.name);
     final accounts = ref.read(accountsProvider);
-    final account = isAccountTool(tool) ? accountForCall(accounts, args) : defaultAiAccount(accounts);
+    final account = workAccountFor(accounts, tool, args);
     final part = ToolPart(callId: _uuid.v4(), name: name, arguments: jsonEncode(args));
     final clock = Stopwatch()..start();
     ToolOutput out;
     try {
-      if (_localTools.contains(name) || financeToolNames.contains(name) || callHistoryToolNames.contains(name) || infoToolNames.contains(name) || safetyToolNames.contains(name) || systemToolNames.contains(name) || screenToolNames.contains(name)) {
+      if (_localTools.contains(name) || financeToolNames.contains(name) || callHistoryToolNames.contains(name) || infoToolNames.contains(name) || safetyToolNames.contains(name) || capabilitySetupToolNames.contains(name) || systemToolNames.contains(name) || screenToolNames.contains(name)) {
         out = await _runLocalTool(name, withoutAccount(args), c, account: account);
       } else if (canvasToolNames.contains(name)) {
         out = await runCanvasTool(ref, name, withoutAccount(args), account: account);
@@ -2121,7 +2181,7 @@ class ChatController extends Notifier<ChatState> {
         servers.isEmpty
             ? '- No MCP servers are installed; mcp_search finds them and mcp_install_catalog installs one.'
             : '- Installed MCP servers: ${servers.map((s) => s.id).join(', ')}. mcp_list_tools shows a server\'s tools; '
-                  'mcp_call_tool uses one.',
+                  'mcp_call_tool uses one; when one fails, mcp_diagnose says why and mcp_setup fixes keys, addresses and permissions.',
       );
     }
     return out.toString();
@@ -2404,7 +2464,7 @@ class ChatController extends Notifier<ChatState> {
       part
         ..status = ToolStatus.denied
         ..result = jsonEncode({'error': why});
-      if (part.name == 'set_api_key' || part.name == 'test_api_key') part.arguments = redactKeyArguments(part.arguments);
+      if (part.name == 'set_api_key' || part.name == 'test_api_key' || part.name == 'mcp_setup') part.arguments = redactKeyArguments(part.arguments);
       _touch(c);
       _logAction(
         tool,
@@ -2439,6 +2499,16 @@ class ChatController extends Notifier<ChatState> {
   /// Why a Telegram call can't go ahead in the account it names (or doesn't
   /// name), or null when it can.
   String? _accountProblem(TelegramTool tool, Map<String, dynamic> args, Watch? watch, Conversation c) {
+    if (isAccountScopedTool(tool)) {
+      // Optional, but a name that matches nothing isn't quietly taken as
+      // the default.
+      final accounts = _accountsFor(c.id);
+      final named = args[accountArgument];
+      if (named != null && '$named'.trim().isNotEmpty && accounts.forAi.length > 1 && resolveAccount(accounts, named) == null) {
+        return 'No Telegram account "$named" the assistant may use. Use one of: ${accounts.forAi.map(accountHandle).join(', ')}.';
+      }
+      return null;
+    }
     if (!isAccountTool(tool)) return null;
     final accounts = _accountsFor(c.id);
     if (accounts.forAi.isEmpty && _accountViews[c.id] != null) {
@@ -2494,9 +2564,10 @@ class ChatController extends Notifier<ChatState> {
     final accounts = _accountsFor(c.id);
     final accountId = isAccountTool(tool) ? accountForCall(accounts, part.args) : null;
     final account = accountId == null ? null : accounts.byId(accountId);
-    // Tools that touch Telegram without being routed (view_image reading a
-    // post) use the run's default account.
-    final runAccount = accountId ?? defaultAiAccount(accounts);
+    // Explore and playlist tools work in the account they name; tools that
+    // touch Telegram without being routed (view_image reading a post) use
+    // the run's default account.
+    final runAccount = accountId ?? workAccountFor(accounts, tool, part.args);
     final accountProblem = _accountProblem(tool, part.args, watch, c);
     if (accountProblem != null) {
       final out = {'error': accountProblem};
@@ -2566,7 +2637,7 @@ class ChatController extends Notifier<ChatState> {
         return _generateCreativeAudio(part.args, music: false);
       if (part.name == generateMusicTool.name)
         return _generateCreativeAudio(part.args, music: true);
-      if (_localTools.contains(part.name) || financeToolNames.contains(part.name) || callHistoryToolNames.contains(part.name) || infoToolNames.contains(part.name) || safetyToolNames.contains(part.name) || systemToolNames.contains(part.name) || screenToolNames.contains(part.name))
+      if (_localTools.contains(part.name) || financeToolNames.contains(part.name) || callHistoryToolNames.contains(part.name) || infoToolNames.contains(part.name) || safetyToolNames.contains(part.name) || capabilitySetupToolNames.contains(part.name) || systemToolNames.contains(part.name) || screenToolNames.contains(part.name))
         return _runLocalTool(part.name, withoutAccount(part.args), c, account: runAccount);
       if (capabilityToolNames.contains(part.name))
         return _runCapability(part.name, part.args, c);
@@ -2609,7 +2680,7 @@ class ChatController extends Notifier<ChatState> {
           : ToolStatus.done
       ..durationMs = timer.elapsedMilliseconds;
     // A key the user gave isn't kept in the conversation.
-    if (part.name == 'set_api_key' || part.name == 'test_api_key') part.arguments = redactKeyArguments(part.arguments);
+    if (part.name == 'set_api_key' || part.name == 'test_api_key' || part.name == 'mcp_setup') part.arguments = redactKeyArguments(part.arguments);
     _touch(c);
     if (tool.modifiesData || _readsPersonalData(tool)) {
       _logAction(
@@ -2904,6 +2975,8 @@ class ChatController extends Notifier<ChatState> {
         return runInfoTool(name, a);
       case _ when safetyToolNames.contains(name):
         return runSafetyTool(ref.read, name, a, account: account);
+      case _ when capabilitySetupToolNames.contains(name):
+        return runCapabilitySetupTool(ref.read, name, a);
       case _ when systemToolNames.contains(name):
         return runSystemTool(ref.read, name, a);
       case _ when screenToolNames.contains(name):
@@ -3010,7 +3083,7 @@ class ChatController extends Notifier<ChatState> {
         });
       case 'vault_list' || 'vault_get' || 'vault_save' || 'vault_delete':
         return _vaultTool(name, a, c);
-      case 'list_routines' || 'run_routine' || 'create_routine' || 'update_routine' || 'delete_routine':
+      case 'list_routines' || 'run_routine' || 'create_routine' || 'update_routine' || 'delete_routine' || 'saved_places':
         return _routineTool(name, a, c);
       case 'delete_watch':
         if (watches.byId(str('watch_id'))?.builtIn ?? false) {
@@ -4180,7 +4253,9 @@ class ChatController extends Notifier<ChatState> {
               'Telegram tools take an account argument. Reading defaults to ${defaultAccount == null ? 'the active account' : accountHandle(defaultAccount)} (the one on screen); '
               'when a question could cover both ("what did I miss?"), read each account and say which account each result is from. '
               'Anything that sends or changes must name the account explicitly; if it is unclear which account the user means, ask. '
-              'A chat_id refers to the same chat in every account, but an account only sees chats it is in.\n';
+              'A chat_id refers to the same chat in every account, but an account only sees chats it is in. '
+              'Explore (Shop, Movies, Books, Gallery, Opportunities, Podcasts) and playlists keep each account\'s sources apart: '
+              'their tools take an optional account too (default: the one on screen).\n';
     final approvals = switch (settings.approvalMode) {
       ApprovalMode.ask => 'The app asks the user to approve each one; if they decline, accept that.',
       ApprovalMode.watches =>

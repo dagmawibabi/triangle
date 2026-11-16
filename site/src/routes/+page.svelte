@@ -80,6 +80,19 @@
 			]
 		},
 		{
+			name: 'Explore your channels',
+			title: 'The channels you follow, as apps.',
+			text: 'Music, video, a cinema of films and series, podcasts and radio, books, a gallery, events and jobs, and a shop. Each is a page of its own, and the assistant can use all of them.',
+			prompt: 'What should I watch tonight from my film channels?',
+			tools: ['Browsing the cinema', 'Opening a film or show'],
+			answer: 'Pick up where you left off.',
+			details: [
+				'You’re on season 2, episode 4 of the series you started on Sunday.',
+				'New this week: two films, both rated above 7 on IMDb.',
+				'Want one added to your watchlist?'
+			]
+		},
+		{
 			name: 'Browse the web',
 			title: 'It uses websites for you.',
 			text: 'A real browser that reads pages, fills in forms, downloads files and takes screenshots. Watch it live, or take over whenever you like.',
@@ -252,6 +265,11 @@
 			question: 'Can I hide people, channels or words in Telegram?',
 			answer:
 				'Yes. Settings → Block & mute hides messages from people you blocked, posts forwarded from channels and groups you block, and anything with a word you muted, in chats, groups, channels and comments. Each can leave a “tap to view” notice or disappear completely.'
+		},
+		{
+			question: 'What are the Explore pages?',
+			answer:
+				'Pages built from the Telegram channels and groups you pick: Music, Video (with shorts, comments and watch time), Cinema (films and series gathered into seasons, with posters and a watchlist), Podcasts and live radio, Books, a Gallery you can search by what’s in the photos, Events & jobs, and a Marketplace with a cart. Show or hide each one in Settings → Appearance, open the app on any of them, and ask the assistant to use them for you.'
 		},
 		{
 			question: 'How do I install it?',
@@ -840,17 +858,23 @@
 			<article class="cell span-3 cell-sections wipe" data-reveal>
 				<div class="art" aria-hidden="true">
 					<ul class="section-tiles">
-						<li><b>Marketplace</b><span>Cart · 3</span></li>
-						<li><b>Movies</b><span>Continue · 42%</span></li>
+						<li><b>Music</b><span>Focus mix</span></li>
+						<li><b>Video</b><span>Continue · 42%</span></li>
+						<li><b>Cinema</b><span>S2 · E4 next</span></li>
+						<li><b>Podcasts</b><span>Live radio</span></li>
 						<li><b>Books</b><span>Chapter 7</span></li>
 						<li><b>Gallery</b><span>4 albums</span></li>
+						<li><b>Events &amp; jobs</b><span>Going · Sat</span></li>
+						<li><b>Marketplace</b><span>Cart · 3</span></li>
 					</ul>
 				</div>
 				<div class="copy">
-					<h3>Channels as apps</h3>
+					<h3>Explore pages</h3>
 					<p>
-						Pick the channels and groups you follow, and read them as a shop with a cart, a place to
-						watch films, a library with a real reader, and a photo gallery.
+						The channels you follow, read as apps: music, a streaming service with shorts, a cinema of
+						films and series, podcasts and live radio, a library with a real reader, a photo gallery
+						you can search by what’s in the pictures, events and jobs, and a shop with a cart. The
+						assistant can use every one of them.
 					</p>
 				</div>
 			</article>
@@ -864,10 +888,10 @@
 					</ul>
 				</div>
 				<div class="copy">
-					<h3>Playlists</h3>
+					<h3>One player for everything</h3>
 					<p>
-						Songs, voice messages and podcasts from any chat in one player, with covers, lyrics and
-						stats on what you listen to most.
+						Songs, voice messages, podcasts and radio in one player, with covers, lyrics, lock-screen
+						controls and stats. Videos keep playing in a mini player or picture-in-picture.
 					</p>
 				</div>
 			</article>

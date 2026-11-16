@@ -108,7 +108,11 @@ class GalleryItem {
 
 @immutable
 class GalleryAlbum {
-  const GalleryAlbum({required this.id, required this.name, this.keys = const [], this.minis = const {}, this.emoji = '', required this.createdAt});
+  const GalleryAlbum({required this.id, required this.name, this.keys = const [], this.minis = const {}, this.emoji = '', this.icon, required this.createdAt});
+
+  /// One of the app's monochrome icons (see folderIcons); wins over
+  /// [emoji]. Neither: no mark.
+  final String? icon;
   final String id;
   final String name;
 
@@ -120,16 +124,17 @@ class GalleryAlbum {
   final String emoji;
   final DateTime createdAt;
 
-  GalleryAlbum copyWith({String? name, List<String>? keys, Map<String, String>? minis, String? emoji}) =>
-      GalleryAlbum(id: id, name: name ?? this.name, keys: keys ?? this.keys, minis: minis ?? this.minis, emoji: emoji ?? this.emoji, createdAt: createdAt);
+  GalleryAlbum copyWith({String? name, List<String>? keys, Map<String, String>? minis, String? emoji, String? icon, bool clearIcon = false}) =>
+      GalleryAlbum(id: id, name: name ?? this.name, keys: keys ?? this.keys, minis: minis ?? this.minis, emoji: emoji ?? this.emoji, icon: clearIcon ? null : (icon ?? this.icon), createdAt: createdAt);
 
-  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'keys': keys, 'minis': minis, if (emoji.isNotEmpty) 'emoji': emoji, 'at': createdAt.millisecondsSinceEpoch};
+  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'keys': keys, 'minis': minis, if (emoji.isNotEmpty) 'emoji': emoji, if (icon != null) 'icon': icon, 'at': createdAt.millisecondsSinceEpoch};
   factory GalleryAlbum.fromJson(Map j) => GalleryAlbum(
     id: '${j['id']}',
     name: '${j['name'] ?? 'Album'}',
     keys: [for (final k in (j['keys'] as List? ?? const [])) '$k'],
     minis: {for (final e in ((j['minis'] as Map?) ?? const {}).entries) '${e.key}': '${e.value}'},
     emoji: '${j['emoji'] ?? ''}',
+    icon: j['icon'] == null ? null : '${j['icon']}',
     createdAt: DateTime.fromMillisecondsSinceEpoch((j['at'] as num?)?.toInt() ?? 0),
   );
 
@@ -182,9 +187,16 @@ class GalleryStore extends Notifier<GalleryState> {
   static const key = 'gallery.v1';
   late Future<void> ready;
 
+  /// Whether the saved settings have been read (until then, no sources
+  /// means "not known yet", not "none").
+  bool isReady = false;
+
   @override
   GalleryState build() {
-    ready = _load();
+    ready = _load().whenComplete(() {
+      isReady = true;
+      state = state.copyWith();
+    });
     return const GalleryState();
   }
 
@@ -263,12 +275,13 @@ class GalleryStore extends Notifier<GalleryState> {
     return _set(state.copyWith(hidden: on ? {...state.hidden, ...k} : ({...state.hidden}..removeAll(k)), minis: minis));
   }
 
-  Future<GalleryAlbum> createAlbum(String name, {String emoji = '', Iterable<GalleryItem> items = const []}) async {
+  Future<GalleryAlbum> createAlbum(String name, {String emoji = '', String? icon, Iterable<GalleryItem> items = const []}) async {
     await ready;
     final a = GalleryAlbum(
       id: const Uuid().v4().substring(0, 8),
       name: name.trim().isEmpty ? 'Album' : name.trim(),
       emoji: emoji,
+      icon: icon,
       keys: [for (final i in items) i.key],
       minis: {for (final i in items) if (i.mini != null) i.key: i.mini!.data},
       createdAt: DateTime.now(),
@@ -340,6 +353,9 @@ class GalleryFeedState {
 }
 
 class GalleryFeed extends Notifier<GalleryFeedState> {
+  static final _memory = FeedMemory('gallery');
+  final _ids = <String, List<int>>{};
+
   @override
   GalleryFeedState build() => const GalleryFeedState();
 
@@ -349,8 +365,14 @@ class GalleryFeed extends Notifier<GalleryFeedState> {
     try {
       final client = ref.read(telegramClientFamily(s.account));
       final title = ref.read(telegramStoreFamily(s.account)).chat(s.chatId)?.title ?? s.title;
+      if (!more) await _recall(s);
       final page = await loadChatPage(client, s.chatId, filter: const td.SearchMessagesFilterPhotoAndVideo(), from: more ? (state.next[s.key] ?? 0) : 0, limit: 100);
       final found = [for (final m in page.messages) ?GalleryItem.fromMessage(m, s.account, title)];
+      final ids = [if (more) ...?_ids[s.key], ...page.messages.map((m) => m.id)];
+      _ids[s.key] = ids;
+      // Only the first page: that's all a fresh load shows before it's
+      // replaced, and each 100 kept costs a request to bring back.
+      unawaited(_memory.remember(s, ids, max: 100));
       final have = more ? (state.bySource[s.key] ?? const <GalleryItem>[]) : const <GalleryItem>[];
       final keys = {for (final i in have) i.key};
       state = GalleryFeedState(
@@ -364,8 +386,48 @@ class GalleryFeed extends Notifier<GalleryFeedState> {
     }
   }
 
-  Future<void> loadAll(Iterable<SourceRef> sources, {bool refresh = false}) =>
-      pooled([for (final s in sources) if (refresh || !state.bySource.containsKey(s.key)) s], 3, (s) => load(s));
+  /// Sources whose kept items were already brought back this run.
+  final _recalled = <String>{};
+
+  /// First time this run: what [s] showed last time, at once.
+  Future<void> _recall(SourceRef s) async {
+    if (!_recalled.add(s.key) || state.bySource.containsKey(s.key)) return;
+    try {
+      final client = ref.read(telegramClientFamily(s.account));
+      final title = ref.read(telegramStoreFamily(s.account)).chat(s.chatId)?.title ?? s.title;
+      final kept = [for (final m in await _memory.recall(client, s)) ?GalleryItem.fromMessage(m, s.account, title)];
+      if (kept.isNotEmpty && !state.bySource.containsKey(s.key)) {
+        state = GalleryFeedState(bySource: {...state.bySource, s.key: kept}, loading: state.loading, next: state.next, errors: state.errors);
+      }
+    } catch (_) {}
+  }
+
+  /// Loads [sources]: every one's kept items first, all at once, so the
+  /// grid fills right away; then each one's newest page, three at a time.
+  Future<void> loadAll(Iterable<SourceRef> sources, {bool refresh = false}) async {
+    final todo = [for (final s in sources) if (refresh || !state.bySource.containsKey(s.key)) s];
+    if (todo.isEmpty) return;
+    state = GalleryFeedState(bySource: state.bySource, loading: {...state.loading, for (final s in todo) s.key}, next: state.next, errors: state.errors);
+    await Future.wait([for (final s in todo) _recall(s)]);
+    state = GalleryFeedState(bySource: state.bySource, loading: {...state.loading}..removeAll(todo.map((s) => s.key)), next: state.next, errors: state.errors);
+    await pooled(todo, 3, (s) => load(s));
+  }
+
+  /// Adds items found another way (a search) to a source's list, newest
+  /// first. Returns how many were new.
+  int merge(String sourceKey, List<GalleryItem> found) {
+    final have = state.bySource[sourceKey] ?? const <GalleryItem>[];
+    final keys = {for (final i in have) i.key};
+    final fresh = [for (final i in found) if (keys.add(i.key)) i];
+    if (fresh.isEmpty) return 0;
+    state = GalleryFeedState(
+      bySource: {...state.bySource, sourceKey: [...have, ...fresh]..sort((a, b) => b.date.compareTo(a.date))},
+      loading: state.loading,
+      next: state.next,
+      errors: state.errors,
+    );
+    return fresh.length;
+  }
 
   GalleryItem? byKey(String key) {
     for (final list in state.bySource.values) {
@@ -396,7 +458,7 @@ class GalleryFeed extends Notifier<GalleryFeedState> {
         final client = ref.read(telegramClientFamily(account));
         final title = ref.read(telegramStoreFamily(account)).chat(chatId)?.title ?? '';
         for (var i = 0; i < e.value.length; i += 100) {
-          final r = await client.send<td.Messages>(td.GetMessages(chatId: chatId, messageIds: e.value.sublist(i, (i + 100).clamp(0, e.value.length))), limited: true);
+          final r = await client.send<td.Messages>(td.GetMessages(chatId: chatId, messageIds: e.value.sublist(i, (i + 100).clamp(0, e.value.length))), limited: true).timeout(const Duration(seconds: 20));
           for (final m in r.messages) {
             final g = GalleryItem.fromMessage(m, account, title);
             if (g != null) out[g.key] = g;
@@ -421,3 +483,53 @@ List<GalleryItem> galleryItems(GalleryState g, GalleryFeedState feed, {String? s
   out.sort((a, b) => b.date.compareTo(a.date));
   return out;
 }
+
+
+// ---- on this day ------------------------------------------------------------
+
+/// Photos and videos posted on today's date in earlier years (newest year
+/// first), from the active account's sources. Each source is asked for the
+/// messages around that date, so it finds them however far back the
+/// loaded feed reaches. Keyed by the day ("2026-11-16") so it refreshes
+/// at midnight.
+final onThisDayProvider = FutureProvider.family<List<({int yearsAgo, List<GalleryItem> items})>, String>((ref, day) async {
+  // Only a change of sources asks again (not a favourite, a hidden photo or
+  // a column count): it's ten requests a source.
+  final account = ref.watch(activeAccountIdProvider);
+  ref.watch(galleryProvider.select((g) => [for (final s in g.sources) if (s.account == account && !s.hidden) s.key].join(',')));
+  final g = ref.read(galleryProvider);
+  final sources = [for (final s in g.sources) if (s.account == account && !s.hidden) s];
+  if (sources.isEmpty) return const [];
+  final now = DateTime.now();
+  final out = <({int yearsAgo, List<GalleryItem> items})>[];
+  for (var back = 1; back <= 5; back++) {
+    final start = DateTime(now.year - back, now.month, now.day);
+    if (start.month != now.month) continue; // 29 February
+    final end = start.add(const Duration(days: 1));
+    final found = <GalleryItem>[];
+    await pooled(sources, 3, (s) async {
+      try {
+        final client = ref.read(telegramClientFamily(s.account));
+        final title = ref.read(telegramStoreFamily(s.account)).chat(s.chatId)?.title ?? s.title;
+        // The last message before the day ends; its media and older ones.
+        final at = await client.send<td.Message>(td.GetChatMessageByDate(chatId: s.chatId, date: end.millisecondsSinceEpoch ~/ 1000), limited: true);
+        if (unixDate(at.date).isBefore(start)) return;
+        final r = await client.send<td.FoundChatMessages>(
+          td.SearchChatMessages(chatId: s.chatId, query: '', fromMessageId: at.id, offset: -1, limit: 60, filter: const td.SearchMessagesFilterPhotoAndVideo(), topicId: null),
+          limited: true,
+        );
+        for (final m in r.messages) {
+          final d = unixDate(m.date);
+          if (d.isBefore(start) || !d.isBefore(end)) continue;
+          final item = GalleryItem.fromMessage(m, s.account, title);
+          if (item != null) found.add(item);
+        }
+      } catch (_) {}
+    });
+    if (found.isNotEmpty) {
+      final seen = <String>{};
+      out.add((yearsAgo: back, items: [for (final i in found..sort((a, b) => b.date.compareTo(a.date))) if (seen.add(i.key)) i]));
+    }
+  }
+  return out;
+});

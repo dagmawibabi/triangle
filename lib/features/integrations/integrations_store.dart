@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 
 import '../settings/data/settings.dart';
+import '../../infrastructure/telegram/accounts.dart';
 import '../telegram/data/telegram_store.dart';
 import 'package:omni_ai/omni_ai.dart' show AiException, ComposioClient, ConnectedApp;
 
@@ -67,7 +68,10 @@ class IntegrationsController extends Notifier<IntegrationsState> {
   Future<String> userId() async {
     final s = ref.read(settingsProvider);
     if (s.composioUserId.isNotEmpty) return s.composioUserId;
-    final me = ref.read(telegramStoreProvider).me;
+    // The first account signed in, not whichever is on screen, so the same
+    // person gets the same id however many accounts they've added.
+    final first = ref.read(accountsProvider).signedIn.firstOrNull;
+    final me = first == null ? ref.read(telegramStoreProvider).me : ref.read(telegramStoreFamily(first.id)).me;
     final id = me != null ? 'teleai-tg-${me.id}' : 'teleai-${const Uuid().v4()}';
     await ref.read(settingsProvider.notifier).setComposioUserId(id);
     return id;

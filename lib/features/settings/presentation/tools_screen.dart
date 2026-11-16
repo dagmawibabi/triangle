@@ -23,9 +23,10 @@ import '../../../infrastructure/telegram/accounts.dart';
 import '../../account/account_switcher.dart';
 import '../../telegram/data/account_tools.dart';
 
-/// The three kinds of tools Settings → Tools switches between.
+/// The kinds of tools Settings → Tools switches between.
 enum ToolGroup {
   telegram('Telegram', Icons.send_rounded),
+  explore('Explore', Icons.explore_outlined),
   apps('Apps & web', Icons.hub_outlined),
   development('Development', Icons.terminal_rounded),
   device('Device', Icons.phone_android_rounded);
@@ -35,10 +36,11 @@ enum ToolGroup {
   final IconData icon;
 
   bool has(TelegramTool t) => switch (this) {
-    ToolGroup.apps => t.category.onAppsScreen && !t.category.isDevelopment,
+    ToolGroup.explore => t.category.isExplore,
+    ToolGroup.apps => t.category.onAppsScreen && !t.category.isDevelopment && !t.category.isExplore,
     ToolGroup.development => t.category.isDevelopment,
     ToolGroup.device => (t.category == ToolCategory.device || t.category == ToolCategory.code),
-    ToolGroup.telegram => !t.category.onAppsScreen && t.category != ToolCategory.device && t.category != ToolCategory.code,
+    ToolGroup.telegram => !t.category.onAppsScreen && !t.category.isExplore && t.category != ToolCategory.device && t.category != ToolCategory.code,
   };
 }
 
@@ -202,19 +204,26 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
                       ],
                     ),
                   ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(Space.l, 0, Space.l, Space.s),
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: SegmentedButton<ToolGroup>(
-                      showSelectedIcon: false,
-                      segments: [
-                        for (final g in ToolGroup.values)
-                          ButtonSegment(value: g, icon: Icon(g.icon, size: 16), label: Text(g.label)),
-                      ],
-                      selected: {_group},
-                      onSelectionChanged: (v) => setState(() => _group = v.first),
-                    ),
+                // Five groups don't fit side by side on a phone: a row
+                // that scrolls.
+                SizedBox(
+                  height: 48,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.fromLTRB(Space.l, 0, Space.l, Space.s),
+                    children: [
+                      for (final g in ToolGroup.values)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: ChoiceChip(
+                            showCheckmark: false,
+                            avatar: Icon(g.icon, size: 16, color: _group == g ? AppColors.accent : AppColors.text2),
+                            label: Text('${g.label} · ${toolsIn(g).length}'),
+                            selected: _group == g,
+                            onSelected: (_) => setState(() => _group = g),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
                 TabBar(
@@ -695,12 +704,13 @@ class _ServiceToolsState extends ConsumerState<ServiceTools> {
   }
 }
 
-/// Apps first, then the web tools; Telegram's in their own order.
+/// Apps first, then the web tools; Telegram's and the Explore pages' in
+/// their own order (Explore's as the side drawer lists them).
 final _categoryOrder = [
   for (final c in ToolCategory.values)
-    if (c.onAppsScreen && !_webCategories.contains(c)) c,
+    if (c.onAppsScreen && !c.isExplore && !_webCategories.contains(c)) c,
   for (final c in ToolCategory.values)
-    if (!c.onAppsScreen || _webCategories.contains(c)) c,
+    if (!c.onAppsScreen || c.isExplore || _webCategories.contains(c)) c,
 ];
 
 const _webCategories = {ToolCategory.web, ToolCategory.developer, ToolCategory.discover};

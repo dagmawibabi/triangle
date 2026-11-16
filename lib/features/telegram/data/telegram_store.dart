@@ -65,6 +65,9 @@ class TelegramStore extends ChangeNotifier {
   final TelegramClient _client;
   late final StreamSubscription<td.TdObject> _sub;
 
+  /// The account this store mirrors.
+  String get accountId => _client.accountId;
+
   final Map<int, ChatInfo> chats = {};
 
   /// Animated effects messages can be sent with, as TDLib announces them.
@@ -241,7 +244,9 @@ class TelegramStore extends ChangeNotifier {
     if (file.local.isDownloadingCompleted && file.local.path.isNotEmpty) {
       return Future.value(_photoPaths[file.id] = file.local.path);
     }
-    return _photoLoads[file.id] ??= _download(file.id).whenComplete(() => _photoLoads.remove(file.id));
+    return _photoLoads[file.id] ??= _download(file.id).whenComplete(() {
+      _photoLoads.remove(file.id);
+    });
   }
 
   String? cachedPhotoPath(td.File? file) {
@@ -271,6 +276,32 @@ class TelegramStore extends ChangeNotifier {
       _activeDownloads--;
       if (_downloadQueue.isNotEmpty) _downloadQueue.removeLast().complete();
     }
+  }
+
+  /// Reads the people and chats behind [senders] that this store hasn't
+  /// heard of (commenters in a discussion group, say), so their names and
+  /// photos show. From TDLib's cache; nothing is asked of the servers.
+  /// Loads the users and chats among [senders] not known yet, all at once
+  /// (they're answered on the device, one round trip each).
+  Future<void> ensureSenders(Iterable<td.MessageSender> senders) async {
+    var any = false;
+    await Future.wait([
+      for (final s in senders.toSet())
+        () async {
+          try {
+            switch (s) {
+              case td.MessageSenderUser(:final userId) when !users.containsKey(userId):
+                _onUpdate(td.UpdateUser(user: await _client.send<td.User>(td.GetUser(userId: userId))));
+                any = true;
+              case td.MessageSenderChat(:final chatId) when (chats[chatId]?.title ?? '').isEmpty:
+                _onUpdate(td.UpdateNewChat(chat: await _client.send<td.Chat>(td.GetChat(chatId: chatId))));
+                any = true;
+              default:
+            }
+          } catch (_) {}
+        }(),
+    ]);
+    if (any) notifyListeners();
   }
 
   String userName(int userId) {

@@ -92,12 +92,14 @@ bool switchToOpen(BuildContext context, ProviderContainer c, String account) {
   return true;
 }
 
-/// Opens [chatId] in the account that has it (see [accountForChat]),
-/// switching to that account first.
-Future<void> openChatInAccount(BuildContext context, int chatId, {String? hint}) async {
+/// Opens [chatId] (at message [openAt]) in the account that has it (see
+/// [accountForChat]), switching to that account first. Explore items pass
+/// their own account as [hint], so a post from another account opens there
+/// rather than in the one on screen.
+Future<void> openChatInAccount(BuildContext context, int chatId, {String? hint, int? openAt}) async {
   final c = ProviderScope.containerOf(context, listen: false);
   final account = accountForChat(c, chatId, hint: hint);
   final nav = Navigator.of(context);
   switchToOpen(context, c, account);
-  await nav.push(MaterialPageRoute<void>(builder: (_) => ChatViewScreen(chatId: chatId)));
+  await nav.push(MaterialPageRoute<void>(builder: (_) => ChatViewScreen(chatId: chatId, openAt: openAt)));
 }

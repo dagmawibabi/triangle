@@ -30,6 +30,8 @@ object MainEngine {
         VoiceLevelChannel.attach(engine)
         NetChannel.attach(context, engine)
         ScreenControl.attach(context, engine)
+        MediaSessionChannel.attach(context, engine)
+        PipChannel.attach(engine)
         engine.dartExecutor.executeDartEntrypoint(DartExecutor.DartEntrypoint.createDefault())
         cache.put(ENGINE_ID, engine)
         return engine

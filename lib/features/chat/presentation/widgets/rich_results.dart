@@ -36,6 +36,7 @@ import 'pokemon_result_cards.dart';
 import 'papers_result_cards.dart';
 import 'screen_time_result_cards.dart';
 import 'safety_result_cards.dart';
+import 'capability_result_cards.dart';
 import 'screen_result_cards.dart';
 import 'image_result_cards.dart';
 import 'reference_result_cards.dart';
@@ -70,7 +71,7 @@ Widget? richResultFor(ToolPart part) {
       if (x is Map) Map<String, dynamic>.from(x),
   ];
   // Screen time, image tools and the free lookups.
-  if (sectionResultFor(part, j) ?? safetyResultFor(part, j) ?? screenResultFor(part, j) ?? screenTimeResultFor(part, j) ?? imageResultFor(part, j) ?? referenceResultFor(part, j) ?? worldResultFor(part, j) ?? foodResultFor(part, j) ?? sportsResultFor(part, j) case final w?) return w;
+  if (sectionResultFor(part, j) ?? safetyResultFor(part, j) ?? capabilityResultFor(part, j) ?? screenResultFor(part, j) ?? screenTimeResultFor(part, j) ?? imageResultFor(part, j) ?? referenceResultFor(part, j) ?? worldResultFor(part, j) ?? foodResultFor(part, j) ?? sportsResultFor(part, j) case final w?) return w;
   return switch (part.name) {
     'search_books' => _Carousel(
       height: 236,

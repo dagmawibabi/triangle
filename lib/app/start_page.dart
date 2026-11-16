@@ -5,6 +5,9 @@ import '../features/brief/brief_screen.dart';
 import '../features/gallery/gallery_screen.dart';
 import '../features/marketplace/market_screen.dart';
 import '../features/movies/movies_screen.dart';
+import '../features/cinema/cinema_screen.dart';
+import '../features/opportunity/opportunity_screen.dart';
+import '../features/podcasts/podcasts_screen.dart';
 import '../features/playlists/playlists_screen.dart';
 import '../features/chat/presentation/generated_files_screen.dart';
 import '../features/search/everywhere_search_screen.dart';
@@ -27,11 +30,15 @@ enum StartPage {
   canvas('Content Canvas', Icons.dashboard_customize_outlined),
   files('Files', Icons.folder_copy_outlined),
   search('Search', Icons.manage_search_rounded),
+  // The Explore pages, in the side drawer's order.
   playlists('Music & playlists', Icons.queue_music_rounded),
-  marketplace('Marketplace', Icons.storefront_rounded, telegram: true),
   movies('Video', Icons.movie_filter_rounded, telegram: true),
-  books('Books', Icons.auto_stories_rounded),
-  gallery('Gallery', Icons.photo_library_rounded, telegram: true);
+  cinema('Cinema', Icons.theaters_rounded, telegram: true),
+  podcasts('Podcasts & radio', Icons.podcasts_rounded),
+  books('Library', Icons.auto_stories_rounded),
+  gallery('Gallery', Icons.photo_library_rounded, telegram: true),
+  opportunity('Events & jobs', Icons.rocket_launch_rounded, telegram: true),
+  marketplace('Marketplace', Icons.storefront_rounded, telegram: true);
 
   const StartPage(this.label, this.icon, {this.section, bool telegram = false}) : _telegram = telegram;
   final String label;
@@ -55,8 +62,11 @@ enum StartPage {
     playlists => const PlaylistsScreen(),
     marketplace => const MarketplaceScreen(),
     movies => const MoviesScreen(),
+    cinema => const CinemaScreen(),
     books => const BooksScreen(),
     gallery => const GalleryScreen(),
+    opportunity => const OpportunityScreen(),
+    podcasts => const PodcastsScreen(),
     _ => ChatListScreen(section: section!),
   };
 }

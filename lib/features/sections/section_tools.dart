@@ -2,19 +2,27 @@ import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:handy_tdlib/api.dart' as td;
+import 'package:uuid/uuid.dart';
 
 import '../../app/start_page.dart';
 import '../../infrastructure/telegram/accounts.dart';
 import '../ai/data/ai.dart';
 import '../books/book_parsers.dart';
 import '../books/books.dart';
+import '../cinema/cinema.dart';
 import '../custom_folders/custom_folders.dart';
+import '../assistant/reminders.dart';
 import '../gallery/gallery.dart';
+import '../gallery/gallery_search.dart';
+import '../opportunity/opportunity.dart';
+import '../podcasts/podcast_store.dart';
+import '../podcasts/podcast_tools.dart';
 import '../marketplace/market.dart';
 import '../movies/movies.dart';
 import '../playlists/playlists.dart';
 import '../settings/data/settings.dart';
 import '../telegram/data/telegram_store.dart';
+import 'activity_stats.dart';
 import 'section_kit.dart';
 
 /// Runs a Marketplace, Movies, Books, Gallery or sections tool for the
@@ -37,6 +45,45 @@ List<String> _strs(Map<String, dynamic> a, String k) => [for (final v in (a[k] a
 List<SourceRef> _refs(Ref ref, String account, List<int> ids) {
   final store = ref.read(telegramStoreFamily(account));
   return [for (final id in ids) SourceRef(account: account, chatId: id, title: store.chat(id)?.title ?? 'Chat $id')];
+}
+
+/// Cinema's catalogue for [account]: its channels (and the person's own
+/// series') videos and poster posts loaded, older ones too with [more].
+Future<List<CinemaTitle>> _cinemaTitles(Ref ref, String account, {bool more = false}) async {
+  await ref.read(cinemaProvider.notifier).ready;
+  final c = ref.read(cinemaProvider);
+  final all = [for (final s in c.allSources) if (s.account == account) s];
+  final mine = [for (final s in c.sources) if (s.account == account) s];
+  final videos = ref.read(videoFeedProvider.notifier);
+  final posters = ref.read(infoFeedProvider.notifier);
+  await videos.loadAll(all);
+  if (c.posterPosts) await posters.loadAll(mine);
+  if (more) {
+    await pooled(all, 3, (s) => videos.load(s, more: true));
+    if (c.posterPosts) await pooled(mine, 3, (s) => posters.load(s, more: true));
+  }
+  return cinemaCatalog(ref.read(cinemaProvider), ref.read(videoFeedProvider), account, ref.read(infoFeedProvider));
+}
+
+/// A Cinema title as the assistant sees it in a list.
+Map<String, dynamic> _describeTitle(CinemaTitle t, Map<String, WatchProgress> progress, List<String> watchlist) {
+  final info = t.info;
+  final watched = t.allVideos.where((v) => progress[v.key]?.finished ?? false).length;
+  return {
+    'title_key': t.key,
+    'title': t.title,
+    'kind': t.isShow ? 'show' : 'movie',
+    'year': ?t.year,
+    if (t.customId != null) 'own_series': true,
+    if (t.isShow) ...{'seasons': t.seasonNumbers, 'episodes': t.episodeCount} else 'versions': t.versions.length,
+    if (!t.hasVideo) 'no_video': 'Only a poster post so far; its links may have it.',
+    if (watched > 0) 'watched_videos': watched,
+    if (watchlist.contains(t.key)) 'in_watchlist': true,
+    if (info != null && info.plot.isNotEmpty) 'plot': info.plot,
+    if (info != null && info.ratings.isNotEmpty) 'ratings': {for (final r in info.ratings) r.$1: r.$2},
+    if (info != null && info.genres.isNotEmpty) 'genres': info.genres,
+    'updated': t.updated.toIso8601String().substring(0, 10),
+  };
 }
 
 /// The common list/add/remove/hide/show/reorder of a section's sources.
@@ -309,6 +356,196 @@ Future<Map<String, dynamic>> _run(Ref ref, String name, Map<String, dynamic> a, 
         ],
         'autoplay': m.autoplay,
         'sort': m.sort.name,
+      };
+
+    case 'video_stats':
+      final stats = ref.read(activityStatsProvider('video').notifier);
+      await stats.ready;
+      final s = ref.read(activityStatsProvider('video'));
+      final now = DateTime.now();
+      final days = (_int(a, 'days') ?? 14).clamp(1, 60);
+      int mins(int seconds) => (seconds / 60).round();
+      return {
+        'today_minutes': mins(s.today),
+        'total_hours': double.parse((s.totalSeconds / 3600).toStringAsFixed(1)),
+        'streak_days': s.streak,
+        'per_day': {
+          for (var i = days - 1; i >= 0; i--)
+            ActivityStatsState.dayKey(now.subtract(Duration(days: i))): mins(s.days[ActivityStatsState.dayKey(now.subtract(Duration(days: i)))] ?? 0),
+        },
+        'most_watched': [
+          for (final i in s.top.where((i) => i.seconds > 0).take(10))
+            {'video_key': i.key, 'title': i.title, if (i.group.isNotEmpty) 'channel': i.group, 'minutes': mins(i.seconds), 'times_started': i.count},
+        ],
+        'top_channels': [for (final g in s.groups.take(8)) {'channel': g.$1, 'chat_id': g.$3, 'minutes': mins(g.$2)}],
+        if (s.since != null) 'since': s.since!.toIso8601String().substring(0, 10),
+      };
+
+    // ---- cinema ----------------------------------------------------------------------
+    case 'cinema_channels':
+      final store = ref.read(cinemaProvider.notifier);
+      await store.ready;
+      final out = await _sources(ref: ref, a: a, account: account, current: ref.read(cinemaProvider).sources, set: store.setSources, describe: (s) => s.describe(), plural: 'channels');
+      if (_bool(a, 'poster_posts') case final v?) await store.setPosterPosts(v);
+      final c = ref.read(cinemaProvider);
+      final feed = ref.read(videoFeedProvider);
+      return {
+        ...out,
+        'channels': [for (final s in c.sources) {...s.describe(), 'videos_loaded': feed.bySource[s.key]?.length ?? 0}],
+        'poster_posts': c.posterPosts,
+        'own_series': c.series.length,
+      };
+
+    case 'find_titles':
+      await ref.read(cinemaProvider.notifier).ready;
+      await ref.read(moviesProvider.notifier).ready;
+      if (ref.read(cinemaProvider).allSources.isEmpty) return {'error': 'Cinema has no channels yet; add some with cinema_channels.'};
+      final all = await _cinemaTitles(ref, account, more: a['more'] == true);
+      final q = titleKey(_str(a, 'query'));
+      final kind = _str(a, 'kind');
+      final wl = ref.read(cinemaProvider).watchlist;
+      final list = [
+        for (final t in all)
+          if ((q.isEmpty || titleKey(t.title).contains(q) || (t.info?.genres.any((g) => titleKey(g) == q) ?? false)) &&
+              (kind.isEmpty || kind == 'any' || (kind == 'show') == t.isShow) &&
+              (a['watchlist'] != true || wl.contains(t.key)) &&
+              (a['with_video'] != true || t.hasVideo))
+            t,
+      ];
+      final limit = (_int(a, 'limit') ?? 25).clamp(1, 80);
+      final progress = ref.read(moviesProvider).progress;
+      return {'titles': [for (final t in list.take(limit)) _describeTitle(t, progress, wl)], 'total': list.length};
+
+    case 'cinema_title':
+      await ref.read(cinemaProvider.notifier).ready;
+      await ref.read(moviesProvider.notifier).ready;
+      final key = _str(a, 'title_key');
+      final all = await _cinemaTitles(ref, account);
+      final t = all.where((x) => x.key == key).firstOrNull ?? all.where((x) => titleKey(x.title) == titleKey(key)).firstOrNull;
+      if (t == null) return {'error': 'No title "$key" in Cinema; find_titles lists them.'};
+      final progress = ref.read(moviesProvider).progress;
+      final wl = ref.read(cinemaProvider).watchlist;
+      TitleMeta? meta;
+      if (a['details'] != false && (t.customId == null || t.posterOnline)) {
+        try {
+          meta = await ref.read(titleMetaProvider((t.kind, t.title, t.year)).future).timeout(const Duration(seconds: 20));
+        } catch (_) {}
+      }
+      WatchProgress? seen(Episode e) => [for (final x in e.versions) ?progress[x.key]].fold<WatchProgress?>(null, (p, q) => p == null || q.at.isAfter(p.at) ? q : p);
+      Map<String, dynamic> ep(Episode e) {
+        final v = e.best, p = seen(e);
+        return {
+          'season': e.season,
+          'episode': e.number,
+          'video_key': v.key,
+          if (v.quality.isNotEmpty) 'quality': v.quality,
+          if (v.seconds > 0) 'length_minutes': (v.seconds / 60).round(),
+          if (e.versions.length > 1) 'copies': e.versions.length,
+          if (p != null) 'watched_percent': (p.fraction * 100).round(),
+        };
+      }
+
+      final season = _int(a, 'season');
+      final episodes = [for (final s in t.seasonNumbers) ...t.episodesOf(s)];
+      Episode? next;
+      if (t.isShow && episodes.isNotEmpty) {
+        final last = episodes.lastIndexWhere((e) => seen(e) != null);
+        next = last < 0 ? episodes.first : ((seen(episodes[last])?.finished ?? false) ? (last + 1 < episodes.length ? episodes[last + 1] : null) : episodes[last]);
+      }
+      final info = t.info;
+      return {
+        ..._describeTitle(t, progress, wl),
+        if (meta != null)
+          'details': {
+            if (meta.overview.isNotEmpty) 'overview': meta.overview,
+            if (meta.genres.isNotEmpty) 'genres': meta.genres,
+            'imdb_rating': ?meta.rating,
+            if (meta.yearText.isNotEmpty) 'years': meta.yearText,
+            'runtime_minutes': ?meta.runtime,
+            'rated': ?meta.rated,
+            if (meta.cast.isNotEmpty) 'cast': meta.cast,
+            if (meta.director.isNotEmpty) 'director': meta.director,
+            'network': ?meta.network,
+            if (meta.status.isNotEmpty) 'status': meta.status,
+            if (meta.awards.isNotEmpty) 'awards': meta.awards,
+            'imdb_id': ?meta.imdbId,
+            if (meta.trailer != null) 'trailer': 'https://youtu.be/${meta.trailer}',
+          },
+        if (info != null && info.links.isNotEmpty) 'links': [for (final l in info.links) {'label': l.$1, 'url': l.$2}],
+        if (t.isShow) 'episodes': [for (final e in episodes) if (season == null || e.season == season) ep(e)].take(150).toList(),
+        if (next != null) 'up_next': ep(next),
+        if (!t.isShow) 'versions': [for (final v in [...t.versions]..sort((x, y) => y.height.compareTo(x.height))) v.describe(progress: progress[v.key])],
+      };
+
+    case 'cinema_watchlist':
+      final store = ref.read(cinemaProvider.notifier);
+      await store.ready;
+      final key = _str(a, 'title_key');
+      final action = _str(a, 'action').isEmpty ? 'list' : _str(a, 'action');
+      if (action == 'add' || action == 'remove') {
+        if (key.isEmpty) return {'error': 'Give the title_key (from find_titles).'};
+        if (ref.read(cinemaProvider).watchlist.contains(key) != (action == 'add')) await store.toggleWatchlist(key);
+      }
+      final wl = ref.read(cinemaProvider).watchlist;
+      final titles = {for (final t in await _cinemaTitles(ref, account)) t.key: t};
+      final progress = ref.read(moviesProvider).progress;
+      return {
+        'watchlist': [for (final k in wl) titles[k] == null ? {'title_key': k, 'note': 'Not in the loaded catalogue.'} : _describeTitle(titles[k]!, progress, wl)],
+        'count': wl.length,
+      };
+
+    case 'cinema_series':
+      final store = ref.read(cinemaProvider.notifier);
+      await store.ready;
+      final action = _str(a, 'action').isEmpty ? 'list' : _str(a, 'action');
+      final pick = _str(a, 'series');
+      final found = ref.read(cinemaProvider).series.where((x) => x.id == pick || x.name.toLowerCase() == pick.toLowerCase()).firstOrNull;
+      if (!{'list', 'create'}.contains(action) && found == null) return {'error': 'No series "$pick"; cinema_series list shows them.'};
+      String? done;
+      switch (action) {
+        case 'create':
+          final name = _str(a, 'name');
+          if (name.isEmpty) return {'error': 'Give the series a name.'};
+          await store.saveSeries(CustomSeries(id: const Uuid().v4(), name: name, year: _int(a, 'year'), sources: _refs(ref, account, _ints(a, 'chat_ids')), createdAt: DateTime.now()));
+          done = 'created $name';
+        case 'update':
+          await store.saveSeries(found!.copyWith(
+            name: _str(a, 'name').isEmpty ? null : _str(a, 'name'),
+            year: _int(a, 'year'),
+            sources: a.containsKey('chat_ids') ? _refs(ref, account, _ints(a, 'chat_ids')) : null,
+          ));
+          done = 'updated';
+        case 'set_season':
+          final n = _int(a, 'season') ?? 1;
+          final had = found!.seasons.where((s) => s.number == n).firstOrNull;
+          final season = CustomSeason(
+            number: n,
+            name: a.containsKey('season_name') ? _str(a, 'season_name') : (had?.name ?? ''),
+            sources: a.containsKey('chat_ids') ? _refs(ref, account, _ints(a, 'chat_ids')) : (had?.sources ?? const []),
+          );
+          await store.saveSeries(found.copyWith(seasons: [for (final s in found.seasons) if (s.number != n) s, season]..sort((x, y) => x.number.compareTo(y.number))));
+          done = 'season $n saved';
+        case 'remove_season':
+          final n = _int(a, 'season');
+          await store.saveSeries(found!.copyWith(seasons: [for (final s in found.seasons) if (s.number != n) s]));
+          done = 'season $n removed';
+        case 'delete':
+          await store.deleteSeries(found!.id);
+          done = 'deleted ${found.name}';
+      }
+      return {
+        'done': ?done,
+        'series': [
+          for (final c in ref.read(cinemaProvider).series)
+            {
+              'series_id': c.id,
+              'title_key': c.key,
+              'name': c.name,
+              'year': ?c.year,
+              'channels': [for (final s in c.sources) s.describe()],
+              'seasons': [for (final s in c.seasons) {'season': s.number, if (s.name.isNotEmpty) 'name': s.name, 'channels': [for (final x in s.sources) x.describe()]}],
+            },
+        ],
       };
 
     // ---- books -------------------------------------------------------------------------
@@ -587,17 +824,362 @@ Future<Map<String, dynamic>> _run(Ref ref, String name, Map<String, dynamic> a, 
       final g = ref.read(galleryProvider);
       return {'changed': keys.length, 'favorites': g.favorites.length, 'hidden': g.hidden.length};
 
+    case 'gallery_search':
+      final store = ref.read(galleryProvider.notifier);
+      await store.ready;
+      final idx = ref.read(galleryIndexProvider.notifier);
+      await idx.ready;
+      final g = ref.read(galleryProvider);
+      final mine = [for (final s in g.sources) if (s.account == account) s];
+      if (mine.isEmpty) return {'error': 'The Gallery has no sources yet; add some with gallery_sources.'};
+      await ref.read(galleryFeedProvider.notifier).loadAll(mine);
+      final q = _str(a, 'query');
+      var deepAdded = 0;
+      if (a['deep'] == true && q.isNotEmpty) deepAdded = await deepSearchGallery(ref.read, mine, q);
+      final chat = _int(a, 'chat_id');
+      final all = galleryItems(g, ref.read(galleryFeedProvider));
+      final notes = ref.read(galleryIndexProvider).notes;
+      final hits = searchGallery(
+        g,
+        all,
+        notes,
+        query: q,
+        videos: _str(a, 'type').isEmpty ? null : _str(a, 'type') == 'video',
+        since: DateTime.tryParse(_str(a, 'since')),
+        until: DateTime.tryParse(_str(a, 'until')),
+        sourceKey: chat == null ? null : '$account:$chat',
+        shape: PhotoShape.values.asNameMap()[_str(a, 'shape')],
+        favorites: a['favorites'] == true,
+      );
+      final limit = (_int(a, 'limit') ?? 30).clamp(1, 100);
+      final photos = all.where((i) => !i.video).length;
+      final indexed = all.where((i) => !i.video && notes.containsKey(i.key)).length;
+      return {
+        'items': [
+          for (final h in hits.take(limit))
+            {
+              ...h.item.describe(),
+              if (h.seen.isNotEmpty) 'matched_in': h.seen,
+              if (notes[h.item.key] case final n?) 'seen': n.description,
+              if (g.isFavorite(h.item.key)) 'favorite': true,
+            },
+        ],
+        'total': hits.length,
+        'indexed': '$indexed of $photos loaded photos',
+        if (deepAdded > 0) 'found_in_older_posts': deepAdded,
+        if (q.isNotEmpty && indexed < photos) 'note': 'Only $indexed of $photos photos are indexed by what they show; gallery_index run indexes more (uses a vision model).',
+      };
+
+    case 'gallery_index':
+      final idx = ref.read(galleryIndexProvider.notifier);
+      await idx.ready;
+      switch (_str(a, 'action')) {
+        case 'run':
+          final g = ref.read(galleryProvider);
+          final mine = [for (final s in g.sources) if (s.account == account) s];
+          await ref.read(galleryFeedProvider.notifier).loadAll(mine);
+          final photos = [for (final i in galleryItems(g, ref.read(galleryFeedProvider))) if (!i.video) i];
+          final n = await idx.run(photos, limit: (_int(a, 'limit') ?? 60).clamp(1, 400));
+          final st = ref.read(galleryIndexProvider);
+          return {'described_now': n, 'indexed': st.notes.length, 'model': st.model, 'error': ?st.error};
+        case 'stop':
+          idx.stop();
+        case 'forget':
+          await idx.forget();
+      }
+      final st = ref.read(galleryIndexProvider);
+      final g = ref.read(galleryProvider);
+      return {
+        'indexed': st.notes.length,
+        'loaded_photos': galleryItems(g, ref.read(galleryFeedProvider)).where((i) => !i.video).length,
+        'running': st.running,
+        if (st.running) ...{'done': st.done, 'total': st.total},
+        'model': st.model.isEmpty ? (visionModel(ref) ?? 'none that can see pictures') : st.model,
+        'error': ?st.error,
+      };
+
+    // ---- events & jobs -------------------------------------------------------------------
+    case 'opportunity_sources':
+      final store = ref.read(opportunityProvider.notifier);
+      await store.ready;
+      final kind = _str(a, 'kind') == 'jobs' ? OppKind.job : OppKind.event;
+      final out = await _sources(ref: ref, a: a, account: account, current: ref.read(opportunityProvider).sourcesOf(kind), set: (v) => store.setSources(kind, v), describe: (s) => s.describe(), plural: 'sources');
+      final feed = ref.read(oppFeedProvider(kind));
+      return {...out, 'kind': kind.label, 'sources': [for (final s in ref.read(opportunityProvider).sourcesOf(kind)) {...s.describe(), 'posts': feed.bySource[s.key]?.length ?? 0}]};
+
+    case 'find_events':
+      final store = ref.read(opportunityProvider.notifier);
+      await store.ready;
+      final o = ref.read(opportunityProvider);
+      if (o.eventSources.isEmpty) return {'error': 'No event channels yet; add some with opportunity_sources (kind events).'};
+      final feed = ref.read(oppFeedProvider(OppKind.event).notifier);
+      final mine = [for (final s in o.eventSources) if (s.account == account) s];
+      await feed.loadAll(mine);
+      if (a['more'] == true) await pooled(mine, 3, (s) => feed.load(s, more: true));
+      final chat = _int(a, 'chat_id');
+      final list = allEvents(
+        ref.read(opportunityProvider),
+        ref.read(oppFeedProvider(OppKind.event)),
+        sourceKey: chat == null ? null : '$account:$chat',
+        query: _str(a, 'query'),
+        when: EventWhen.values.asNameMap()[_str(a, 'when')] ?? EventWhen.upcoming,
+        day: DateTime.tryParse(_str(a, 'date')),
+        online: _bool(a, 'online'),
+        freeOnly: a['free'] == true,
+        category: _str(a, 'category').isEmpty ? null : _str(a, 'category'),
+      );
+      final limit = (_int(a, 'limit') ?? 20).clamp(1, 60);
+      final now = ref.read(opportunityProvider);
+      return {
+        'events': [for (final e in list.take(limit)) e.describe(saved: now.savedEvent(e.key))],
+        'total': list.length,
+        'categories': {for (final e in list) if (e.category.isNotEmpty) e.category}.toList(),
+        if (!now.ai.enabled) 'note': 'AI reading is off, so dates are guessed from the words; opportunity_settings ai_enabled true reads posts properly.',
+      };
+
+    case 'event_plan':
+      final store = ref.read(opportunityProvider.notifier);
+      await store.ready;
+      final key = _str(a, 'event_key');
+      final action = _str(a, 'action').isEmpty ? 'list' : _str(a, 'action');
+      String? done;
+      Future<EventView?> view() async {
+        final p = await ref.read(oppFeedProvider(OppKind.event).notifier).fetch(key);
+        return p == null ? null : EventView(p, ref.read(opportunityProvider).events[p.key]);
+      }
+
+      switch (action) {
+        case 'going' || 'interested' || 'went':
+          final e = await view();
+          if (e == null) return {'error': 'No event $key.'};
+          await store.saveEvent(e, EventStatus.values.byName(action));
+          done = 'marked $action';
+        case 'remove':
+          for (final id in ref.read(opportunityProvider).savedEvent(key)?.reminders ?? const <String>[]) {
+            await ref.read(reminderStoreProvider.notifier).remove(id);
+          }
+          await store.unsaveEvent(key);
+          done = 'removed';
+        case 'note':
+          if (ref.read(opportunityProvider).savedEvent(key) == null) {
+            final e = await view();
+            if (e == null) return {'error': 'No event $key.'};
+            await store.saveEvent(e, EventStatus.interested);
+          }
+          await store.updateSavedEvent(key, (x) => x.copyWith(note: _str(a, 'note')));
+          done = 'note saved';
+        case 'remind':
+          final e = await view();
+          if (e == null) return {'error': 'No event $key.'};
+          final start = e.start;
+          if (start == null) return {'error': 'That event has no date to remind before.'};
+          final at = start.subtract(Duration(minutes: (_int(a, 'minutes_before') ?? 60).clamp(0, 60 * 24 * 14)));
+          final r = await ref.read(reminderStoreProvider.notifier).add(text: '📅 ${e.title} · starts ${start.toIso8601String().substring(11, 16)}${e.place.isEmpty ? '' : ' at ${e.place}'}', at: at);
+          if (ref.read(opportunityProvider).savedEvent(key) == null) await store.saveEvent(e, EventStatus.interested);
+          await store.updateSavedEvent(key, (x) => x.copyWith(reminders: [...x.reminders, r.id]));
+          done = 'reminder set for ${at.toIso8601String().substring(0, 16)}';
+      }
+      return {
+        'done': ?done,
+        'my_events': [for (final e in ref.read(opportunityProvider).savedEvents) e.describe()],
+      };
+
+    case 'find_jobs':
+      final store = ref.read(opportunityProvider.notifier);
+      await store.ready;
+      final o = ref.read(opportunityProvider);
+      if (o.jobSources.isEmpty) return {'error': 'No job channels yet; add some with opportunity_sources (kind jobs).'};
+      final feed = ref.read(oppFeedProvider(OppKind.job).notifier);
+      final mine = [for (final s in o.jobSources) if (s.account == account) s];
+      await feed.loadAll(mine);
+      if (a['more'] == true) await pooled(mine, 3, (s) => feed.load(s, more: true));
+      final chat = _int(a, 'chat_id');
+      final list = allJobs(
+        ref.read(opportunityProvider),
+        ref.read(oppFeedProvider(OppKind.job)),
+        sourceKey: chat == null ? null : '$account:$chat',
+        query: _str(a, 'query'),
+        workplace: _str(a, 'workplace').isEmpty ? null : _str(a, 'workplace'),
+        type: _str(a, 'type').isEmpty ? null : _str(a, 'type'),
+        level: _str(a, 'level').isEmpty ? null : _str(a, 'level'),
+        category: _str(a, 'category').isEmpty ? null : _str(a, 'category'),
+        closingWithinDays: _int(a, 'closing_within_days'),
+        minSalary: (a['min_salary'] as num?)?.toDouble(),
+        hideClosed: a['include_closed'] != true,
+        sort: JobSort.values.asNameMap()[_str(a, 'sort')] ?? JobSort.newest,
+      );
+      final limit = (_int(a, 'limit') ?? 20).clamp(1, 60);
+      final now = ref.read(opportunityProvider);
+      return {
+        'jobs': [for (final j in list.take(limit)) j.describe(tracked: now.trackedJob(j.key))],
+        'total': list.length,
+        if (!now.ai.enabled) 'note': 'AI reading is off, so titles, pay and deadlines are guesses; opportunity_settings ai_enabled true reads posts properly.',
+        if (now.ai.enabled && now.profile.isEmpty) 'tip': 'With a job profile (opportunity_settings profile) each job gets a match score.',
+      };
+
+    case 'job_tracker':
+      final store = ref.read(opportunityProvider.notifier);
+      await store.ready;
+      final key = _str(a, 'job_key');
+      final action = _str(a, 'action').isEmpty ? 'list' : _str(a, 'action');
+      String? done;
+      Future<JobView?> view() async {
+        final p = await ref.read(oppFeedProvider(OppKind.job).notifier).fetch(key);
+        return p == null ? null : JobView(p, ref.read(opportunityProvider).jobs[p.key]);
+      }
+
+      switch (action) {
+        case 'save' || 'applied' || 'interview' || 'offer' || 'rejected':
+          final status = action == 'save' ? JobStatus.saved : JobStatus.values.byName(action);
+          if (ref.read(opportunityProvider).trackedJob(key) != null) {
+            await store.updateTracked(key, (x) => x.copyWith(status: status, appliedAt: status == JobStatus.applied && x.appliedAt == null ? DateTime.now() : null));
+          } else {
+            final j = await view();
+            if (j == null) return {'error': 'No job $key.'};
+            await store.track(j, status);
+          }
+          done = 'moved to ${status.label}';
+        case 'remove':
+          for (final id in ref.read(opportunityProvider).trackedJob(key)?.reminders ?? const <String>[]) {
+            await ref.read(reminderStoreProvider.notifier).remove(id);
+          }
+          await store.untrack(key);
+          done = 'removed';
+        case 'note':
+          if (ref.read(opportunityProvider).trackedJob(key) == null) {
+            final j = await view();
+            if (j == null) return {'error': 'No job $key.'};
+            await store.track(j, JobStatus.saved);
+          }
+          await store.updateTracked(key, (x) => x.copyWith(note: _str(a, 'note')));
+          done = 'note saved';
+        case 'remind':
+          final j = await view();
+          if (j == null) return {'error': 'No job $key.'};
+          final d = j.deadline;
+          if (d == null) return {'error': 'That job has no deadline to remind before.'};
+          var at = DateTime(d.year, d.month, d.day - 1, 9);
+          if (!at.isAfter(DateTime.now())) at = DateTime.now().add(const Duration(hours: 1));
+          final r = await ref.read(reminderStoreProvider.notifier).add(text: '💼 Apply for ${j.title}${j.company.isEmpty ? '' : ' at ${j.company}'} before ${d.toIso8601String().substring(0, 10)}', at: at);
+          if (ref.read(opportunityProvider).trackedJob(key) == null) await store.track(j, JobStatus.saved);
+          await store.updateTracked(key, (x) => x.copyWith(reminders: [...x.reminders, r.id]));
+          done = 'reminder set for ${at.toIso8601String().substring(0, 16)}';
+      }
+      final o = ref.read(opportunityProvider);
+      final only = JobStatus.values.asNameMap()[_str(a, 'status')];
+      return {
+        'done': ?done,
+        'applications': [for (final t in o.tracked) if (only == null || t.status == only) t.describe()],
+        'counts': {for (final s in JobStatus.values) s.name: o.tracked.where((t) => t.status == s).length},
+      };
+
+    case 'opportunity_settings':
+      final store = ref.read(opportunityProvider.notifier);
+      await store.ready;
+      switch (_str(a, 'action')) {
+        case 'pause':
+          store.pauseTidy();
+        case 'resume':
+          store.resumeTidy();
+        case 'stop':
+          store.stopTidy();
+      }
+      if (['status', 'pause', 'resume', 'stop'].contains(_str(a, 'action'))) {
+        final j = store.readJob.value;
+        return {
+          'status': j.status.name,
+          'done': j.done,
+          'total': j.total,
+          'failed': j.failed,
+          'reading_now': j.current,
+          'recent': [for (final l in j.log.take(10)) {'title': l.name, 'kind': l.kind.single, if (l.line.isNotEmpty) 'result': l.line, 'trust_score': ?l.legit, 'error': ?l.error, if (l.skipped) 'hidden': true}],
+        };
+      }
+      final c = ref.read(opportunityProvider).ai;
+      await store.setAi(c.copyWith(
+        enabled: _bool(a, 'ai_enabled'),
+        auto: _bool(a, 'auto'),
+        hideOthers: _bool(a, 'hide_others'),
+        model: _str(a, 'model').isEmpty ? null : _str(a, 'model'),
+        eventSummary: _bool(a, 'event_summary'),
+        eventPlace: _bool(a, 'event_place'),
+        eventPrice: _bool(a, 'event_price'),
+        eventLink: _bool(a, 'event_link'),
+        eventTags: _bool(a, 'event_tags'),
+        jobPay: _bool(a, 'job_pay'),
+        jobApply: _bool(a, 'job_apply'),
+        jobRequirements: _bool(a, 'job_requirements'),
+        jobSummary: _bool(a, 'job_summary'),
+        jobMatch: _bool(a, 'job_match'),
+        jobTrust: _bool(a, 'job_trust'),
+        extra: a.containsKey('extra_instructions') ? _str(a, 'extra_instructions') : null,
+      ));
+      if (a.containsKey('profile')) await store.setProfile(_str(a, 'profile'));
+      if (a.containsKey('city')) await store.setCity(_str(a, 'city'));
+      int? read;
+      if (_str(a, 'read').isNotEmpty) {
+        if (!ref.read(opportunityProvider).ai.enabled) return {'error': 'Turn AI reading on first (ai_enabled true).'};
+        final kind = _str(a, 'read') == 'jobs' ? OppKind.job : OppKind.event;
+        final o = ref.read(opportunityProvider);
+        final mine = [for (final s in o.sourcesOf(kind)) if (s.account == account) s];
+        await ref.read(oppFeedProvider(kind).notifier).loadAll(mine);
+        final feed = ref.read(oppFeedProvider(kind));
+        read = await store.read(kind, [for (final s in mine) ...?feed.bySource[s.key]], force: a['force'] == true);
+      }
+      final o = ref.read(opportunityProvider);
+      return {
+        ...o.ai.toJson(),
+        'ai_enabled': o.ai.enabled,
+        'auto': o.ai.auto,
+        'hide_others': o.ai.hideOthers,
+        'model': o.ai.model,
+        'resolved_model': automationModel(ref.read(aiProvider), ref.read(settingsProvider), o.ai.model),
+        'profile': o.profile.isEmpty ? '(not set)' : o.profile,
+        if (o.city.isNotEmpty) 'city': o.city,
+        'read': ?read,
+        'events_read': o.events.length,
+        'jobs_read': o.jobs.length,
+      };
+
     // ---- sections ------------------------------------------------------------------------
     case 'app_sections':
+      // In the drawer's order.
       final setters = <String, Future<void> Function(bool)>{
+        'explore': ref.read(exploreEnabledProvider.notifier).set,
         'playlists': ref.read(playlistsProvider.notifier).setInDrawer,
-        'marketplace': ref.read(marketProvider.notifier).setInDrawer,
         'movies': ref.read(moviesProvider.notifier).setInDrawer,
+        'cinema': ref.read(cinemaProvider.notifier).setInDrawer,
+        'podcasts': (v) async => ref.read(podcastsProvider).setSettings(drawer: v),
         'books': ref.read(booksProvider.notifier).setInDrawer,
         'gallery': ref.read(galleryProvider.notifier).setInDrawer,
+        'opportunity': ref.read(opportunityProvider.notifier).setInDrawer,
+        'marketplace': ref.read(marketProvider.notifier).setInDrawer,
         'my_folders': ref.read(customFoldersProvider.notifier).setInDrawer,
       };
-      String norm(String s) => s.toLowerCase().replaceAll(RegExp(r'[^a-z_]'), '').replaceAll('library', 'books').replaceAll('music', 'playlists').replaceAll('folders', 'my_folders').replaceAll('market', 'marketplace').replaceAll('marketplaceplace', 'marketplace').replaceAll('my_my_', 'my_');
+      const aliases = {
+        'music': 'playlists', 'playlist': 'playlists', 'musicplaylists': 'playlists',
+        'video': 'movies', 'videos': 'movies', 'movie': 'movies',
+        'films': 'cinema', 'film': 'cinema', 'shows': 'cinema', 'series': 'cinema',
+        'podcast': 'podcasts', 'radio': 'podcasts', 'podcastsradio': 'podcasts',
+        'library': 'books', 'book': 'books', 'photos': 'gallery',
+        'events': 'opportunity', 'jobs': 'opportunity', 'opportunities': 'opportunity', 'eventsjobs': 'opportunity',
+        'market': 'marketplace', 'shop': 'marketplace',
+        'folders': 'my_folders', 'myfolders': 'my_folders',
+        'explorepages': 'explore', 'sections': 'explore',
+      };
+      String norm(String s) {
+        final k = s.toLowerCase().replaceAll(RegExp(r'[^a-z_]'), '');
+        return aliases[k] ?? aliases[k.replaceAll('_', '')] ?? k;
+      }
+
+      await Future.wait([
+        ref.read(cinemaProvider.notifier).ready,
+        ref.read(moviesProvider.notifier).ready,
+        ref.read(booksProvider.notifier).ready,
+        ref.read(galleryProvider.notifier).ready,
+        ref.read(opportunityProvider.notifier).ready,
+        ref.read(marketProvider.notifier).ready,
+      ]);
       final unknown = <String>[];
       for (final (list, on) in [(_strs(a, 'show'), true), (_strs(a, 'hide'), false)]) {
         for (final s in list) {
@@ -613,11 +1195,15 @@ Future<Map<String, dynamic>> _run(Ref ref, String name, Map<String, dynamic> a, 
       }
       return {
         'in_drawer': {
+          'explore': ref.read(exploreEnabledProvider),
           'playlists': ref.read(playlistsProvider).inDrawer,
-          'marketplace': ref.read(marketProvider).inDrawer,
           'movies': ref.read(moviesProvider).inDrawer,
+          'cinema': ref.read(cinemaProvider).inDrawer,
+          'podcasts': ref.read(podcastsProvider).inDrawer,
           'books': ref.read(booksProvider).inDrawer,
           'gallery': ref.read(galleryProvider).inDrawer,
+          'opportunity': ref.read(opportunityProvider).inDrawer,
+          'marketplace': ref.read(marketProvider).inDrawer,
           'my_folders': ref.read(customFoldersProvider).inDrawer,
         },
         'start_page': ref.read(settingsProvider).startPage,
@@ -625,5 +1211,6 @@ Future<Map<String, dynamic>> _run(Ref ref, String name, Map<String, dynamic> a, 
         if (unknown.isNotEmpty) 'unknown': unknown,
       };
   }
+  if (name.startsWith('podcast_') || name == 'radio') return runPodcastTool(ref, name, a, account);
   return {'error': 'Unknown tool $name.'};
 }

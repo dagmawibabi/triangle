@@ -96,7 +96,30 @@ class ChatBackdrop extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final b = background;
-    if (b == null) return child;
+    if (b == null) {
+      // No wallpaper set: a faint wash of the accent from the corners, so
+      // the glass header and composer have something to catch.
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          color: AppColors.bg,
+          gradient: RadialGradient(
+            center: const Alignment(1.1, -1.1),
+            radius: 1.5,
+            colors: [AppColors.tint.withValues(alpha: AppColors.isLight ? 0.06 : 0.07), AppColors.bg.withValues(alpha: 0)],
+          ),
+        ),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: RadialGradient(
+              center: const Alignment(-1.2, 1.1),
+              radius: 1.3,
+              colors: [AppColors.tint.withValues(alpha: AppColors.isLight ? 0.04 : 0.05), AppColors.bg.withValues(alpha: 0)],
+            ),
+          ),
+          child: child,
+        ),
+      );
+    }
     return Stack(
       fit: StackFit.expand,
       children: [

@@ -240,6 +240,13 @@ String redactKeyArguments(String arguments) {
     final a = Map<String, dynamic>.from(jsonDecode(arguments) as Map);
     final service = apiKeyService('${a['service'] ?? ''}');
     if (a['key'] is String && !(service?.address ?? false)) a['key'] = '[hidden ${keyEnding(a['key'] as String)}]';
+    // mcp_setup's headers carry keys too.
+    if (a['headers'] is Map) {
+      a['headers'] = {
+        for (final e in (a['headers'] as Map).entries)
+          '${e.key}': '${e.value ?? ''}'.isEmpty ? '' : '[hidden ${keyEnding('${e.value}')}]',
+      };
+    }
     return jsonEncode(a);
   } catch (_) {
     return arguments;

@@ -72,13 +72,27 @@ class ComponentsScreen extends ConsumerWidget {
               onChanged: store.setShowValues,
             ),
           ]),
-          _label(context, 'Components'),
+          const SizedBox(height: Space.l),
           Text(
-            'Turn off any the assistant shouldn\'t use. Previews show sample data in your colours; tap a chart to read it.',
+            'Turn off any the assistant shouldn\'t use. Open one to see it with sample data in your colours; charts, heatmaps and checklists can be tapped.',
             style: context.text.bodySmall,
           ),
-          const SizedBox(height: Space.m),
-          for (final k in ComponentKind.values) _ComponentTile(kind: k, enabled: prefs.isOn(k), masterOn: on, onChanged: (v) => store.setEnabled(k, v)),
+          for (final g in ComponentGroup.values) ...[
+            Padding(
+              padding: const EdgeInsets.only(top: Space.xl, bottom: Space.s, left: 4),
+              child: Row(
+                children: [
+                  Text(g.label.toUpperCase(), style: context.text.labelSmall?.copyWith(letterSpacing: 0.8)),
+                  const Spacer(),
+                  Text(
+                    '${ComponentKind.values.where((k) => k.group == g && prefs.isOn(k)).length} of ${ComponentKind.values.where((k) => k.group == g).length} on',
+                    style: context.text.labelSmall?.copyWith(color: AppColors.text3),
+                  ),
+                ],
+              ),
+            ),
+            for (final k in ComponentKind.values.where((k) => k.group == g)) _ComponentTile(kind: k, enabled: prefs.isOn(k), masterOn: on, onChanged: (v) => store.setEnabled(k, v)),
+          ],
         ],
       ),
     );

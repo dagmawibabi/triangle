@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'blocked_screen.dart';
 import 'members_screen.dart';
 
@@ -5,6 +6,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import '../../account/accounts_settings.dart' show confirmSignOut;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:handy_tdlib/api.dart' as td;
@@ -13,6 +15,8 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../app/theme.dart';
 import '../../../core/widgets/glass.dart';
+import '../../../core/widgets/glass_tabs.dart';
+import '../../../core/widgets/swipe_back.dart';
 import '../../../infrastructure/telegram/telegram_client.dart';
 import '../../chat/presentation/widgets/post_viewer.dart';
 import '../../media/audio_center.dart';
@@ -67,15 +71,54 @@ enum _Tab {
   };
 }
 
-class _ChatProfileScreenState extends ConsumerState<ChatProfileScreen> {
+class _ChatProfileScreenState extends ConsumerState<ChatProfileScreen> with SingleTickerProviderStateMixin {
   td.UserFullInfo? _user;
   td.SupergroupFullInfo? _supergroup;
   td.BasicGroupFullInfo? _basic;
+
+  /// Links, @mentions and hashtags TDLib finds in a group or channel's
+  /// description (which arrives as plain text).
+  List<td.TextEntity>? _aboutEntities;
+
+  Future<void> _detectEntities(String text) async {
+    if (text.trim().isEmpty) return;
+    try {
+      final found = await ref.read(telegramClientProvider).send<td.TextEntities>(td.GetTextEntities(text: text), limited: true);
+      if (mounted) setState(() => _aboutEntities = found.entities);
+    } catch (_) {}
+  }
   _Tab _tab = _Tab.media;
   final Map<_Tab, List<td.Message>> _shared = {};
   final Map<_Tab, int> _totals = {};
   final Set<_Tab> _loading = {};
   final Set<_Tab> _ended = {};
+
+  /// A group opens on its members, like Telegram; null until picked.
+  bool? _onMembers;
+
+  /// Where the tabs' lozenge sits (a tab index).
+  late final AnimationController _tabPos = AnimationController.unbounded(vsync: this);
+  double _dragDx = 0;
+
+  @override
+  void dispose() {
+    _tabPos.dispose();
+    super.dispose();
+  }
+
+  void _selectTab(int i, bool showMembers) {
+    final offset = showMembers ? 1 : 0;
+    setState(() {
+      if (showMembers && i == 0) {
+        _onMembers = true;
+      } else {
+        _onMembers = false;
+        _tab = _Tab.values[(i - offset).clamp(0, _Tab.values.length - 1)];
+      }
+    });
+    if (!(showMembers && i == 0)) _loadShared(_tab);
+    _tabPos.animateTo(i.toDouble(), duration: const Duration(milliseconds: 280), curve: Curves.easeOutCubic);
+  }
 
   @override
   void initState() {
@@ -117,12 +160,14 @@ class _ChatProfileScreenState extends ConsumerState<ChatProfileScreen> {
             }
           }
           if (mounted) setState(() => _supergroup = full);
+          unawaited(_detectEntities(full.description));
         case td.ChatTypeBasicGroup(:final basicGroupId):
           final full = await client.send<td.BasicGroupFullInfo>(
             td.GetBasicGroupFullInfo(basicGroupId: basicGroupId),
             limited: true,
           );
           if (mounted) setState(() => _basic = full);
+          unawaited(_detectEntities(full.description));
         default:
           break;
       }
@@ -219,7 +264,7 @@ class _ChatProfileScreenState extends ConsumerState<ChatProfileScreen> {
         _user?.bio ??
         (about.isEmpty
             ? null
-            : td.FormattedText(text: about, entities: const []));
+            : td.FormattedText(text: about, entities: _aboutEntities ?? const []));
     final link = username != null
         ? 't.me/$username'
         : _supergroup?.inviteLink?.inviteLink ?? _basic?.inviteLink?.inviteLink;
@@ -240,10 +285,33 @@ class _ChatProfileScreenState extends ConsumerState<ChatProfileScreen> {
     );
 
     final top = MediaQuery.paddingOf(context).top;
+    final showMembers = canSeeMembers && kind == ChatKind.group;
+    final onMembers = showMembers && (_onMembers ?? true);
+    final tabIndex = onMembers ? 0 : (showMembers ? 1 : 0) + _tab.index;
+    final tabCount = _Tab.values.length + (showMembers ? 1 : 0);
+    if (!_tabPos.isAnimating && _tabPos.value != tabIndex) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_tabPos.isAnimating) _tabPos.value = tabIndex.toDouble();
+      });
+    }
     return Scaffold(
       body: Stack(
         children: [
-          ListView(
+          // A sideways swipe moves between the tabs; from the first one a
+          // rightward swipe is left for the page's swipe-back.
+          DirectionalDrag(
+            allow: (dx) => dx > 0 ? tabIndex > 0 : tabIndex < tabCount - 1,
+            onStart: (_) => _dragDx = 0,
+            onUpdate: (d) => _dragDx += d.delta.dx,
+            onEnd: (d) {
+              final v = d.primaryVelocity ?? 0;
+              if (_dragDx < -56 || v < -400) {
+                _selectTab((tabIndex + 1).clamp(0, tabCount - 1), showMembers);
+              } else if (_dragDx > 56 || v > 400) {
+                _selectTab((tabIndex - 1).clamp(0, tabCount - 1), showMembers);
+              }
+            },
+            child: ListView(
             padding: EdgeInsets.fromLTRB(Space.l, top + 64, Space.l, Space.x4),
             children: [
               Center(
@@ -573,48 +641,38 @@ class _ChatProfileScreenState extends ConsumerState<ChatProfileScreen> {
                 ),
               ],
               const SizedBox(height: Space.xl),
-              SizedBox(
-                height: 40,
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  children: [
-                    for (final t in _Tab.values)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 6),
-                        child: ChoiceChip(
-                          avatar: Icon(
-                            t.icon,
-                            size: 16,
-                            color: _tab == t
-                                ? AppColors.accent
-                                : AppColors.text3,
-                          ),
-                          label: Text(
-                            _totals[t] == null
-                                ? t.label
-                                : '${t.label} ${_totals[t]}',
-                          ),
-                          selected: _tab == t,
-                          onSelected: (_) {
-                            setState(() => _tab = t);
-                            _loadShared(t);
-                          },
-                        ),
-                      ),
-                  ],
-                ),
+              GlassTabStrip(
+                position: _tabPos,
+                onTap: (i) => _selectTab(i, showMembers),
+                tabs: [
+                  if (showMembers) GlassTab(kind == ChatKind.channel ? 'Subscribers' : 'Members'),
+                  for (final t in _Tab.values)
+                    GlassTab(t.label, badge: _totals[t] ?? 0, badgeMuted: true),
+                ],
               ),
               const SizedBox(height: Space.m),
-              _SharedSection(
-                tab: _tab,
-                messages: _shared[_tab] ?? const [],
-                loading: _loading.contains(_tab),
-                ended: _ended.contains(_tab),
-                chatTitle: c.title,
-                onMore: () => _loadShared(_tab),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 220),
+                switchInCurve: Curves.easeOutCubic,
+                transitionBuilder: (child, a) => FadeTransition(opacity: a, child: child),
+                child: onMembers
+                    ? MembersCard(key: ValueKey('members:${c.id}'), chatId: c.id)
+                    : KeyedSubtree(
+                        key: ValueKey(_tab),
+                        child: _SharedSection(
+                          tab: _tab,
+                          messages: _shared[_tab] ?? const [],
+                          loading: _loading.contains(_tab),
+                          ended: _ended.contains(_tab),
+                          chatTitle: c.title,
+                          onMore: () => _loadShared(_tab),
+                        ),
+                      ),
               ),
             ],
           ),
+          ),
+          Positioned(top: 0, left: 0, right: 0, child: HeaderScrim(height: top + 72)),
           Positioned(
             top: 0,
             left: 0,
@@ -638,6 +696,17 @@ class _ChatProfileScreenState extends ConsumerState<ChatProfileScreen> {
                           onTap: () => Navigator.of(context).maybePop(),
                         ),
                         const Spacer(),
+                        if (self) ...[
+                          GlassIconButton(
+                            icon: Icons.logout_rounded,
+                            tooltip: 'Log out',
+                            onTap: () async {
+                              final nav = Navigator.of(context);
+                              if (await confirmSignOut(context, ref) && nav.mounted) nav.popUntil((r) => r.isFirst);
+                            },
+                          ),
+                          const SizedBox(width: Space.s),
+                        ],
                         GlassIconButton(
                           icon: Icons.auto_awesome_outlined,
                           tooltip: 'Ask AI',

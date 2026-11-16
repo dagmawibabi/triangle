@@ -25,8 +25,16 @@ import '../../integrations/integrations_store.dart';
 import '../../account/account_switcher.dart';
 import '../../../infrastructure/telegram/accounts.dart';
 
-String watchTrigger(Watch w, TelegramStore store) => switch (w.scope) {
-  WatchScope.chats => w.chatIds.map((id) => store.chat(id)?.title ?? 'chat $id').join(', '),
+/// [find] looks a chat up beyond [store] (other accounts' chats).
+String watchTrigger(Watch w, TelegramStore store, {ChatInfo? Function(int id)? find}) {
+  final chat = find ?? store.chat;
+  return w.scopes.length > 1
+      ? [for (final s in w.scopes) s == WatchScope.chats ? (w.chatIds.length == 1 ? chat(w.chatIds.first)?.title ?? 'a chat' : '${w.chatIds.length} chats') : _scopeShort(s)].join(' + ')
+      : _watchTriggerOne(w, store, chat);
+}
+
+String _watchTriggerOne(Watch w, TelegramStore store, ChatInfo? Function(int id) chat) => switch (w.scope) {
+  WatchScope.chats => w.chatIds.map((id) => chat(id)?.title ?? 'chat $id').join(', '),
   WatchScope.folder => 'Folder ${store.folders.where((f) => f.id == w.folderId).firstOrNull?.title ?? w.folderId}',
   WatchScope.schedule => w.dailyAt != null ? 'Every day at ${w.dailyAt}' : 'Every ${_period(w.everyMinutes ?? 60)}',
   WatchScope.app =>
@@ -627,7 +635,7 @@ class _WatchCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final w = watch;
     final next = watchNextRun(w);
-    final trigger = watchTrigger(w, store);
+    final trigger = watchTrigger(w, store, find: (id) => chatAnywhere(ref, store, id));
     return AnimatedOpacity(
       duration: const Duration(milliseconds: 200),
       opacity: w.enabled ? 1 : 0.6,
@@ -1015,7 +1023,33 @@ class _WatchEditorState extends ConsumerState<WatchEditor> {
 
   late final _name = TextEditingController(text: _init?.name ?? '');
   late final _instructions = TextEditingController(text: _init?.instructions ?? '');
-  late WatchScope _scope = _init?.scope ?? (ref.read(telegramConnectedProvider) ? WatchScope.chats : WatchScope.app);
+  /// What starts it: one or more message triggers, or one schedule, app
+  /// or phone trigger. The first is the watch's main one.
+  late List<WatchScope> _scopes = _init == null
+      ? [ref.read(telegramConnectedProvider) ? WatchScope.chats : WatchScope.app]
+      : _init!.scopes;
+  WatchScope get _scope => _scopes.first;
+  late List<int> _exclude = [...?_init?.excludeChatIds];
+  late bool _includeOwn = _init?.includeOwn ?? false;
+  late Set<RespondIn> _respondIn = {...?_init?.respondIn};
+  late List<int> _respondChats = [...?_init?.respondChatIds];
+  late bool _wakeOnReplies = _init?.wakeOnReplies ?? false;
+
+  /// A message trigger joins the others (or leaves, if it was on); any
+  /// other kind replaces them.
+  void _toggleScope(WatchScope s) => setState(() {
+    if (!s.combinable || !_scope.combinable) {
+      _scopes = [s];
+    } else if (_scopes.contains(s)) {
+      if (_scopes.length > 1) _scopes = [..._scopes]..remove(s);
+    } else {
+      _scopes = [..._scopes, s];
+    }
+  });
+
+  /// Chats from every account the watch covers, not just the one on screen.
+  Future<List<int>?> _pickSomeChats(List<int> current) =>
+      Navigator.of(context).push<List<int>>(MaterialPageRoute(builder: (_) => _ChatPicker(selected: current, accounts: _accounts)));
   late WatchMode _mode = _init?.mode ?? WatchMode.notify;
   late List<int> _chatIds = [...?_init?.chatIds];
   late int? _folderId = _init?.folderId;
@@ -1178,6 +1212,173 @@ class _WatchEditorState extends ConsumerState<WatchEditor> {
             ],
           ),
         ),
+        Divider(height: 1, indent: Space.l, endIndent: Space.l),
+        SwitchListTile(
+          secondary: lead(Icon(_wakeOnReplies ? Icons.reply_all_rounded : Icons.reply_rounded)),
+          title: const Text('Also wake on replies'),
+          subtitle: Text(
+            _wakeOnReplies
+                ? 'When anyone, you included, replies to a message the agent sent (in a chat, a DM or comments), it answers${_keywordMode ? ', no keyword needed' : ''}. Replies to your own messages don’t count.'
+                : 'Replies to the agent’s messages count only if they match the rest',
+            style: context.text.bodySmall,
+          ),
+          value: _wakeOnReplies,
+          onChanged: (v) => setState(() => _wakeOnReplies = v),
+        ),
+      ]),
+    );
+  }
+
+  /// Chats as removable chips with an add button.
+  Widget _chatChips(TelegramStore store, List<int> ids, ValueChanged<List<int>> onChanged, {String add = 'Add', IconData addIcon = Icons.add_rounded}) => Wrap(
+    spacing: 6,
+    runSpacing: 6,
+    children: [
+      for (final id in ids)
+        InputChip(
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          visualDensity: const VisualDensity(horizontal: -1, vertical: -2),
+          avatar: TgAvatar(chatId: id, title: chatAnywhere(ref, store, id)?.title ?? '?', size: 22),
+          label: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 160),
+            child: Text(chatAnywhere(ref, store, id)?.title ?? 'Chat $id', overflow: TextOverflow.ellipsis),
+          ),
+          onDeleted: () => onChanged([...ids]..remove(id)),
+          deleteIcon: const Icon(Icons.close_rounded, size: 16),
+        ),
+      ActionChip(
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: const VisualDensity(horizontal: -1, vertical: -2),
+        avatar: Icon(addIcon, size: 16),
+        label: Text(add),
+        onPressed: () async {
+          final picked = await _pickSomeChats(ids);
+          if (picked != null) onChanged(picked);
+        },
+      ),
+    ],
+  );
+
+  /// Leaving chats out of a broad trigger, and the user's own messages.
+  Widget _refineCard(BuildContext context, TelegramStore store) {
+    final broad = _scopes.any((s) => s.broad);
+    return Padding(
+      padding: const EdgeInsets.only(top: Space.m),
+      child: automationCard(context, [
+        if (broad) ...[
+          ListTile(
+            leading: lead(const Icon(Icons.block_rounded)),
+            title: const Text('Leave out'),
+            subtitle: Text(
+              _exclude.isEmpty ? 'Chats it should never listen to, even when a trigger covers them' : '${_exclude.length} ${_exclude.length == 1 ? 'chat is' : 'chats are'} ignored',
+              style: context.text.bodySmall,
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(Space.l, 0, Space.l, Space.m),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: _chatChips(store, _exclude, (v) => setState(() => _exclude = v), add: _exclude.isEmpty ? 'Choose chats to leave out' : 'Add', addIcon: Icons.remove_circle_outline_rounded),
+            ),
+          ),
+          Divider(height: 1, indent: Space.l, endIndent: Space.l),
+        ],
+        SwitchListTile(
+          secondary: lead(Icon(_includeOwn ? Icons.person_rounded : Icons.person_outline_rounded)),
+          title: const Text('Include my own'),
+          subtitle: Text(
+            _includeOwn
+                ? 'Also watches your Saved Messages and the channels and groups you own or run, your own posts there included'
+                : 'Turn on to also watch your Saved Messages and the channels and groups you own or run, your own posts included',
+            style: context.text.bodySmall,
+          ),
+          value: _includeOwn,
+          onChanged: (v) => setState(() => _includeOwn = v),
+        ),
+      ]),
+    );
+  }
+
+  /// Where an acting watch answers.
+  Widget _respondCard(BuildContext context, TelegramStore store) {
+    IconData icon(RespondIn r) => switch (r) {
+      RespondIn.sameChat => Icons.forum_outlined,
+      RespondIn.dm => Icons.person_outline_rounded,
+      RespondIn.comments => Icons.mode_comment_outlined,
+      RespondIn.chosen => Icons.campaign_outlined,
+      RespondIn.appOnly => Icons.phone_android_rounded,
+    };
+    final options = [
+      for (final r in RespondIn.values)
+        if (r != RespondIn.comments || _scopes.any((s) => s == WatchScope.allChannels || s == WatchScope.chats || s == WatchScope.folder) || _respondIn.contains(r)) r,
+    ];
+    final summary = _respondIn.isEmpty
+        ? 'Not set: it answers wherever your instructions say.'
+        : _respondIn.contains(RespondIn.appOnly)
+        ? RespondIn.appOnly.explanation
+        : 'It answers ${[for (final r in RespondIn.values) if (_respondIn.contains(r)) r.explanation.toLowerCase()].join(', and ')}.';
+    return Padding(
+      padding: const EdgeInsets.only(top: Space.l),
+      child: automationCard(context, [
+        ListTile(
+          leading: lead(const Icon(Icons.near_me_outlined)),
+          title: const Text('Respond in'),
+          subtitle: Text('Pick one or more', style: context.text.bodySmall),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(Space.l, 0, Space.l, Space.m),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              LayoutBuilder(
+                builder: (context, c) {
+                  final cols = c.maxWidth > 480 ? 5 : 3;
+                  final w = (c.maxWidth - Space.s * (cols - 1)) / cols;
+                  return Wrap(
+                    spacing: Space.s,
+                    runSpacing: Space.s,
+                    children: [
+                      for (final r in options)
+                        SizedBox(
+                          width: w,
+                          child: _SelectTile(
+                            icon: icon(r),
+                            label: r.label,
+                            selected: _respondIn.contains(r),
+                            check: true,
+                            onTap: () => setState(() {
+                              final next = {..._respondIn};
+                              if (next.contains(r)) {
+                                next.remove(r);
+                              } else if (r == RespondIn.appOnly) {
+                                // Only in the app rules out the rest.
+                                next
+                                  ..clear()
+                                  ..add(r);
+                              } else {
+                                next
+                                  ..remove(RespondIn.appOnly)
+                                  ..add(r);
+                              }
+                              _respondIn = next;
+                            }),
+                          ),
+                        ),
+                    ],
+                  );
+                },
+              ),
+              if (_respondIn.contains(RespondIn.chosen)) ...[
+                const SizedBox(height: Space.m),
+                Text('CHATS TO RESPOND IN', style: context.text.labelSmall),
+                const SizedBox(height: Space.s),
+                _chatChips(store, _respondChats, (v) => setState(() => _respondChats = v), add: _respondChats.isEmpty ? 'Choose groups or channels' : 'Add'),
+              ],
+              const SizedBox(height: Space.m),
+              Text(summary, style: context.text.bodySmall),
+            ],
+          ),
+        ),
       ]),
     );
   }
@@ -1190,7 +1391,7 @@ class _WatchEditorState extends ConsumerState<WatchEditor> {
   /// A name from what it does, when none is typed.
   String _autoName(TelegramStore store) {
     final what = switch (_scope) {
-      WatchScope.chats when _chatIds.length == 1 => store.chat(_chatIds.first)?.title ?? 'Chat',
+      WatchScope.chats when _chatIds.length == 1 => chatAnywhere(ref, store, _chatIds.first)?.title ?? 'Chat',
       WatchScope.chats => _chatIds.isEmpty ? 'Chats' : '${_chatIds.length} chats',
       WatchScope.schedule when _every == null => 'Daily ${_dailyAt ?? '08:00'}',
       WatchScope.schedule => 'Every ${_period(_every!)}',
@@ -1234,20 +1435,27 @@ class _WatchEditorState extends ConsumerState<WatchEditor> {
       builtIn: base?.builtIn ?? false,
       quietAtNight: base?.quietAtNight ?? widget.draft?.quietAtNight ?? false,
       accountIds: _scope == WatchScope.folder ? null : _accounts,
-      folderAccountId: _scope == WatchScope.folder ? _folderAccount : null,
+      folderAccountId: _scopes.contains(WatchScope.folder) ? _folderAccount : null,
       device: _scope == WatchScope.device ? _device : null,
       tools: _tools,
       model: _model,
       keywords: _scope.needsTelegram && _keywordMode ? _allKeywords : const [],
       keywordFrom: _keywordFrom,
+      extraScopes: _scope.combinable ? _scopes.skip(1).toList() : const [],
+      excludeChatIds: _scope.needsTelegram && _scopes.any((s) => s.broad) ? _exclude : const [],
+      includeOwn: _scope.needsTelegram && _includeOwn,
+      respondIn: _effectiveMode == WatchMode.act ? _respondIn : const {},
+      respondChatIds: _effectiveMode == WatchMode.act && _respondIn.contains(RespondIn.chosen) ? _respondChats : const [],
+      wakeOnReplies: _scope.needsTelegram && _wakeOnReplies,
     );
   }
 
   /// What still has to be filled in before it can be saved.
   String? _missing() {
-    if (_scope == WatchScope.chats && _chatIds.isEmpty) return 'Pick at least one chat';
+    if (_scopes.contains(WatchScope.chats) && _chatIds.isEmpty) return 'Pick at least one chat';
+    if (_effectiveMode == WatchMode.act && _respondIn.contains(RespondIn.chosen) && _respondChats.isEmpty) return 'Pick the chats to respond in';
     if (_scope.needsTelegram && _keywordMode && _allKeywords.isEmpty) return 'Add a trigger keyword';
-    if (_scope == WatchScope.folder && _folderId == null) return 'Pick a folder';
+    if (_scopes.contains(WatchScope.folder) && _folderId == null) return 'Pick a folder';
     if (_scope == WatchScope.device && _device.kind.needsPlace && !_device.hasPlace) {
       return 'Set the place: tap "Use where I am" while you are there';
     }
@@ -1280,7 +1488,7 @@ class _WatchEditorState extends ConsumerState<WatchEditor> {
   }
 
   Future<void> _pickChats() async {
-    final picked = await Navigator.of(context).push<List<int>>(MaterialPageRoute(builder: (_) => _ChatPicker(selected: _chatIds)));
+    final picked = await _pickSomeChats(_chatIds);
     if (picked != null) setState(() => _chatIds = picked);
   }
 
@@ -1379,9 +1587,20 @@ class _WatchEditorState extends ConsumerState<WatchEditor> {
           ),
           const SizedBox(height: Space.s),
           _SummaryCard(
+            whenOverride: _scopes.length > 1
+                ? 'a message arrives in ${[for (final sc in _scopes) switch (sc) {
+                    WatchScope.chats => _chatIds.length == 1 ? (chatAnywhere(ref, store, _chatIds.first)?.title ?? 'a chat') : '${_chatIds.length} chats',
+                    WatchScope.allDms => 'your DMs',
+                    WatchScope.allGroups => 'any group',
+                    WatchScope.allChannels => 'any channel',
+                    WatchScope.mentions => 'a mention',
+                    WatchScope.folder => 'a folder',
+                    _ => sc.label,
+                  }].join(', ')}${_exclude.isNotEmpty && _scopes.any((x) => x.broad) ? ' (except ${_exclude.length} left out)' : ''}'
+                : null,
             trigger: _scope == WatchScope.folder
                 ? 'Folder ${folderStore.folders.where((f) => f.id == _folderId).firstOrNull?.title ?? '…'}'
-                : watchTrigger(_compose('', store), store),
+                : watchTrigger(_compose('', store), store, find: (id) => chatAnywhere(ref, store, id)),
             scope: _scope,
             mode: mode,
             notify: _notify,
@@ -1389,9 +1608,14 @@ class _WatchEditorState extends ConsumerState<WatchEditor> {
 
           // ---- 1. when ----
           const _Step(number: 1, title: 'When', subtitle: 'What starts it'),
-          _TriggerGrid(value: _scope, telegram: telegram, onChanged: (s) => setState(() => _scope = s)),
+          _TriggerGrid(selected: _scopes, telegram: telegram, onChanged: _toggleScope),
           const SizedBox(height: Space.s),
-          Text(_scopeExplain(_scope), style: context.text.bodySmall),
+          Text(
+            _scopes.length > 1
+                ? 'Any of these: ${_scopes.map(_scopeShort).join(', ')}. Tap a trigger again to remove it.'
+                : '${_scopeExplain(_scope)}${_scope.combinable ? ' Tap more message triggers to combine them.' : ''}',
+            style: context.text.bodySmall,
+          ),
           if (!telegram) ...[
             const SizedBox(height: Space.s),
             _Note(
@@ -1404,9 +1628,22 @@ class _WatchEditorState extends ConsumerState<WatchEditor> {
             duration: const Duration(milliseconds: 220),
             curve: Curves.easeOutCubic,
             alignment: Alignment.topCenter,
-            child: _triggerOptions(context, store, accounts, folderStore, connected),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (final (i, sc) in _scopes.indexed) ...[
+                  if (i > 0 && (sc == WatchScope.chats || sc == WatchScope.folder)) const SizedBox(height: Space.m),
+                  if (_scopes.length > 1 && (sc == WatchScope.chats || sc == WatchScope.folder))
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: Space.s),
+                      child: Text(sc == WatchScope.chats ? 'CHATS' : 'FOLDER', style: context.text.labelSmall),
+                    ),
+                  _triggerOptions(context, sc, store, accounts, folderStore, connected),
+                ],
+              ],
+            ),
           ),
-          if (_scope.needsTelegram && ref.watch(telegramConnectedProvider)) _keywordCard(context),
+          if (_scope.needsTelegram && ref.watch(telegramConnectedProvider)) ...[_refineCard(context, store), _keywordCard(context)],
 
           // ---- 2. then ----
           const _Step(number: 2, title: 'Then', subtitle: 'What it does'),
@@ -1484,6 +1721,7 @@ class _WatchEditorState extends ConsumerState<WatchEditor> {
                               ),
                         ],
                       ),
+                      if (mode == WatchMode.act) _respondCard(context, store),
                       if (mode == WatchMode.act) ...[
                         const SizedBox(height: Space.m),
                         _Note(
@@ -1630,6 +1868,7 @@ class _WatchEditorState extends ConsumerState<WatchEditor> {
   /// The settings for the picked trigger.
   Widget _triggerOptions(
     BuildContext context,
+    WatchScope scope,
     TelegramStore store,
     AccountsState accounts,
     TelegramStore folderStore,
@@ -1652,7 +1891,7 @@ class _WatchEditorState extends ConsumerState<WatchEditor> {
       ],
     );
 
-    switch (_scope) {
+    switch (scope) {
       case WatchScope.chats:
         if (_chatIds.isEmpty) {
           return _DashedButton(icon: Icons.add_comment_outlined, label: 'Choose chats to watch', onTap: _pickChats);
@@ -1847,15 +2086,18 @@ class _Step extends StatelessWidget {
 
 /// "When ... → then ..." in one card, updated as the form changes.
 class _SummaryCard extends StatelessWidget {
-  const _SummaryCard({required this.trigger, required this.scope, required this.mode, required this.notify});
+  const _SummaryCard({required this.trigger, required this.scope, required this.mode, required this.notify, this.whenOverride});
   final String trigger;
+
+  /// The "when" words for several triggers at once.
+  final String? whenOverride;
   final WatchScope scope;
   final WatchMode mode;
   final bool notify;
 
   @override
   Widget build(BuildContext context) {
-    final when = switch (scope) {
+    final when = whenOverride ?? switch (scope) {
       WatchScope.chats => trigger.isEmpty ? 'a message arrives in chats you pick' : 'a message arrives in $trigger',
       WatchScope.allDms => 'anyone sends you a DM',
       WatchScope.allGroups => 'a message arrives in any group',
@@ -1923,8 +2165,8 @@ class _SummaryCard extends StatelessWidget {
 
 /// The triggers as a grid of tiles.
 class _TriggerGrid extends StatelessWidget {
-  const _TriggerGrid({required this.value, required this.telegram, required this.onChanged});
-  final WatchScope value;
+  const _TriggerGrid({required this.selected, required this.telegram, required this.onChanged});
+  final List<WatchScope> selected;
   final bool telegram;
   final ValueChanged<WatchScope> onChanged;
 
@@ -1932,7 +2174,7 @@ class _TriggerGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     final scopes = [
       for (final s in WatchScope.values)
-        if (telegram || !s.needsTelegram || value == s) s,
+        if (telegram || !s.needsTelegram || selected.contains(s)) s,
     ];
     return LayoutBuilder(
       builder: (context, c) {
@@ -1945,7 +2187,13 @@ class _TriggerGrid extends StatelessWidget {
             for (final s in scopes)
               SizedBox(
                 width: w,
-                child: _SelectTile(icon: watchScopeIcon(s), label: _scopeShort(s), selected: value == s, onTap: () => onChanged(s)),
+                child: _SelectTile(
+                  icon: watchScopeIcon(s),
+                  label: _scopeShort(s),
+                  selected: selected.contains(s),
+                  check: selected.length > 1 || (s.combinable && selected.first.combinable),
+                  onTap: () => onChanged(s),
+                ),
               ),
           ],
         );
@@ -1969,10 +2217,13 @@ class _ModeCard extends StatelessWidget {
 
 /// A selectable tile: an icon over a label, outlined in the accent when picked.
 class _SelectTile extends StatelessWidget {
-  const _SelectTile({required this.icon, required this.label, required this.selected, this.onTap, this.tall = false});
+  const _SelectTile({required this.icon, required this.label, required this.selected, this.onTap, this.tall = false, this.check = false});
   final IconData icon;
   final String label;
   final bool selected, tall;
+
+  /// Part of a pick-several group: a small tick in the corner when picked.
+  final bool check;
   final VoidCallback? onTap;
 
   @override
@@ -1989,8 +2240,27 @@ class _SelectTile extends StatelessWidget {
           borderRadius: BorderRadius.circular(Radii.m),
           border: Border.all(color: selected ? AppColors.accent : AppColors.line, width: selected ? 1.5 : 1),
         ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+        child: Stack(
+          children: [
+            if (check)
+              Positioned(
+                top: 6,
+                right: 6,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  width: 16,
+                  height: 16,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: selected ? AppColors.accent : Colors.transparent,
+                    border: Border.all(color: selected ? AppColors.accent : AppColors.line, width: 1.5),
+                  ),
+                  child: selected ? Icon(Icons.check_rounded, size: 11, color: AppColors.bg) : null,
+                ),
+              ),
+            Center(
+              child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
             Icon(icon, size: tall ? 24 : 22, color: selected ? AppColors.accent : AppColors.text2),
             const SizedBox(height: 6),
@@ -2005,6 +2275,9 @@ class _SelectTile extends StatelessWidget {
                   fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
                   color: selected ? AppColors.text : AppColors.text2,
                 ),
+              ),
+            ),
+          ],
               ),
             ),
           ],
@@ -2077,12 +2350,26 @@ class _Note extends StatelessWidget {
   }
 }
 
+/// Chat [id] from the account on screen ([store]) or, failing that, any
+/// other signed-in account: a watch can cover chats of several accounts.
+ChatInfo? chatAnywhere(WidgetRef ref, TelegramStore store, int id) {
+  if (store.chat(id) case final c?) return c;
+  for (final a in ref.read(accountsProvider).signedIn) {
+    if (ref.read(telegramStoreFamily(a.id)).chat(id) case final c?) return c;
+  }
+  return null;
+}
+
 class _ChatPicker extends ConsumerStatefulWidget {
-  const _ChatPicker({required this.selected, this.peopleOnly = false});
+  const _ChatPicker({required this.selected, this.peopleOnly = false, this.accounts});
   final List<int> selected;
 
   /// Only one-to-one chats with people (for online alerts).
   final bool peopleOnly;
+
+  /// Whose chats to list: these accounts (null: every signed-in account).
+  /// Online alerts ([peopleOnly]) stay with the account on screen.
+  final List<String>? accounts;
 
   @override
   ConsumerState<_ChatPicker> createState() => _ChatPickerState();
@@ -2092,13 +2379,47 @@ class _ChatPickerState extends ConsumerState<_ChatPicker> {
   late final Set<int> _picked = {...widget.selected};
   String _q = '';
 
+  List<String> _accountIds(AccountsState accounts) {
+    if (widget.peopleOnly) return [accounts.activeId];
+    final signed = [for (final a in accounts.signedIn) a.id];
+    final ids = widget.accounts == null ? signed : [for (final id in widget.accounts!) if (signed.contains(id)) id];
+    // The account on screen first, so its copy of a shared chat is shown.
+    return ids.isEmpty ? [accounts.activeId] : ([...ids]..sort((a, b) => (a == accounts.activeId ? 0 : 1) - (b == accounts.activeId ? 0 : 1)));
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // Other accounts' chat lists may not have been loaded yet.
+    for (final id in _accountIds(ref.read(accountsProvider))) {
+      unawaited(ref.read(telegramStoreFamily(id)).ensureChatsLoaded().catchError((_) {}));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final store = ref.watch(telegramStoreProvider);
+    final accounts = ref.watch(accountsProvider);
+    final ids = _accountIds(accounts);
+    final several = ids.length > 1;
+    // Each chat once (channels and groups read the same from any member),
+    // with the accounts that are in it.
+    final owners = <int, List<String>>{};
+    final byId = <int, ChatInfo>{};
+    final kinds = <int, ChatKind>{};
+    for (final id in ids) {
+      final s = ref.watch(accountStoreProvider(id));
+      for (final c in s.chats.values) {
+        if (!c.isListed || c.title.isEmpty) continue;
+        (owners[c.id] ??= []).add(id);
+        if (byId.containsKey(c.id)) continue;
+        byId[c.id] = c;
+        kinds[c.id] = s.kindOf(c);
+      }
+    }
     final chats =
-        store.chats.values
-            .where((c) => c.isListed && c.title.isNotEmpty && (_q.isEmpty || c.title.toLowerCase().contains(_q)))
-            .where((c) => !widget.peopleOnly || store.kindOf(c) == ChatKind.private)
+        byId.values
+            .where((c) => _q.isEmpty || c.title.toLowerCase().contains(_q))
+            .where((c) => !widget.peopleOnly || kinds[c.id] == ChatKind.private)
             .toList()
           ..sort((a, b) {
             final pa = _picked.contains(a.id), pb = _picked.contains(b.id);
@@ -2129,7 +2450,14 @@ class _ChatPickerState extends ConsumerState<_ChatPicker> {
                   onChanged: (v) => setState(() => v == true ? _picked.add(c.id) : _picked.remove(c.id)),
                   secondary: TgAvatar(chatId: c.id, title: c.title, size: 38),
                   title: Text(c.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  subtitle: Text(store.kindOf(c).name, style: context.text.bodySmall),
+                  subtitle: Text(
+                    several
+                        ? '${kinds[c.id]!.name} · ${[for (final a in owners[c.id]!) accounts.byId(a)?.label ?? a].join(', ')}'
+                        : kinds[c.id]!.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: context.text.bodySmall,
+                  ),
                 );
               },
             ),

@@ -8,6 +8,7 @@ import 'package:xml/xml.dart';
 
 import '../../core/files/download_progress.dart';
 import '../../core/files/generated_files.dart';
+import '../../core/net/http_cache.dart';
 
 /// Free books, audiobooks, radio and podcasts, and a few public reference
 /// sources, all keyless: Project Gutenberg (through Gutendex), Open
@@ -22,7 +23,19 @@ class LibraryApi {
   static final LibraryApi instance = LibraryApi();
   static const _ua = {'user-agent': 'Triangle/1.0 (personal assistant; free media catalogue)'};
 
+  /// Catalogue answers kept on disk: lists and pages open at once when
+  /// visited again (or after a relaunch), and refresh behind the scenes.
+  static final _cache = HttpCache('library', maxEntries: 300, memoryEntries: 20);
+
   Future<Object?> _json(Uri url, {Duration timeout = const Duration(seconds: 25)}) async {
+    // Radio Browser mirrors and NASA's key-bearing calls aren't worth keeping.
+    final keep = !url.host.contains('radio-browser') && url.host != 'api.nasa.gov';
+    if (keep) {
+      try {
+        final c = await _cache.get('$url', ttl: const Duration(hours: 6), timeout: timeout, headers: {..._ua, 'accept': 'application/json'}, staleFirst: true, okOnly: true);
+        if (c != null) return jsonDecode(c.body);
+      } catch (_) {}
+    }
     final r = await _http.get(url, headers: {..._ua, 'accept': 'application/json'}).timeout(timeout);
     if (r.statusCode == 404) throw LibraryException('Not found at ${url.host}.');
     if (r.statusCode == 429) throw LibraryException('${url.host} is busy (rate limited); try again in a bit.');

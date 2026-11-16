@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../account/account_router.dart' show openChatInAccount;
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -15,7 +16,6 @@ import '../playlists/music_stats_screen.dart';
 import '../playlists/playlist_widgets.dart' show showAddToPlaylist;
 import '../playlists/playlists.dart';
 import '../telegram/data/file_loader.dart';
-import '../telegram/presentation/chat_view_screen.dart';
 import 'audio_center.dart';
 import 'audio_tags.dart';
 import 'lyrics.dart';
@@ -169,7 +169,7 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
     });
   }
 
-  PlaylistTrack _asPlaylistTrack(Track t) => PlaylistTrack.fromTrack(t, ref.read(activeAccountIdProvider));
+  PlaylistTrack _asPlaylistTrack(Track t) => PlaylistTrack.fromTrack(t, t.account ?? ref.read(activeAccountIdProvider));
 
   Future<void> _like(Track t) async {
     final on = await ref.read(playlistsProvider.notifier).toggleLike(_asPlaylistTrack(t));
@@ -215,7 +215,7 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
       case 'add':
         await showAddToPlaylist(context, ref, [_asPlaylistTrack(t)]);
       case 'chat':
-        await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ChatViewScreen(chatId: t.chatId, openAt: t.messageId)));
+        await openChatInAccount(context, t.chatId, hint: t.account, openAt: t.messageId);
       case 'sleep':
         await _sleep();
       case 'stats':
@@ -496,7 +496,8 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
                           icon: Icon(Icons.bedtime_outlined, color: a.sleepAt != null || a.sleepAtEnd ? AppColors.accent : fg2),
                           onPressed: _sleep,
                         ),
-                        IconButton(tooltip: 'Lyrics', iconSize: 20, icon: const Icon(Icons.lyrics_outlined, color: fg2), onPressed: _lyrics),
+                        // Talk (podcasts, audiobooks) and radio have no lyrics.
+                        if (!t.spoken && !t.live) IconButton(tooltip: 'Lyrics', iconSize: 20, icon: const Icon(Icons.lyrics_outlined, color: fg2), onPressed: _lyrics),
                       ],
                     ),
                   if (a.sleepAt != null || a.sleepAtEnd)
@@ -624,7 +625,7 @@ class _AudioCoverArtState extends ConsumerState<AudioCoverArt> {
     if (t.artPath != null && File(t.artPath!).existsSync()) {
       found = FileImage(File(t.artPath!));
     } else if (t.artFile != null) {
-      final p = await ref.read(fileLoaderProvider).download(t.artFile!, priority: 8);
+      final p = await fileLoaderFor(ref, t.account).download(t.artFile!, priority: 8);
       if (p != null) found = FileImage(File(p));
     }
     final path = widget.path;

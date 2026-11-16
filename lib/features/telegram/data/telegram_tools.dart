@@ -106,6 +106,7 @@ part 'telegram_tool_metadata.dart';
 part 'telegram_tool_documentation.dart';
 part 'telegram_tool_reference.dart';
 part 'telegram_capability_tools.dart';
+part 'telegram_capability_setup_tools.dart';
 part 'telegram_info_tools.dart';
 part 'telegram_safety_tools.dart';
 part 'telegram_system_tools.dart';
@@ -159,11 +160,16 @@ enum ToolCategory {
   routines('Routines'),
   stories('Stories'),
   folders('Folders'),
-  playlists('Playlists'),
-  marketplace('Marketplace'),
+  // The Explore pages, in the side drawer's order.
+  sections('Explore pages'),
+  playlists('Music & playlists'),
   movies('Video'),
+  cinema('Cinema'),
+  podcasts('Podcasts & radio'),
   books('Books library'),
   gallery('Gallery'),
+  opportunities('Events & jobs'),
+  marketplace('Marketplace'),
   web('Web & browsing'),
   developer('Public GitHub'),
   discover('Video, music & social'),
@@ -255,6 +261,7 @@ enum ToolCategory {
     food ||
     reference ||
     sports ||
+    podcasts ||
     creative ||
     memory ||
     vault ||
@@ -278,6 +285,14 @@ enum ToolCategory {
     vercel || resend || mongodb => true,
     parcels => true,
     decisions || mcp || skills => true,
+    _ => false,
+  };
+
+  /// Listed under Settings → Tools → Explore: the Explore pages (Music,
+  /// Video, Cinema, Podcasts, Books, Gallery, Events & jobs, Marketplace)
+  /// and the switches that arrange them.
+  bool get isExplore => switch (this) {
+    sections || playlists || movies || cinema || podcasts || books || gallery || opportunities || marketplace => true,
     _ => false,
   };
 
@@ -1702,6 +1717,7 @@ final _tools = <TelegramTool>[
   ..._systemTools,
   ..._screenTools,
   ..._capabilityTools,
+  ..._capabilitySetupTools,
 ];
 
 const _customFolderRef = {'type': 'string', 'description': 'The folder: its folder_id or name.'};
@@ -2118,24 +2134,51 @@ const showComponentTool = TelegramTool(
   cost: ToolCost.device,
   description:
       'Shows data as a visual card in the chat, drawn by the app (no AI cost). Use it when a picture says it better '
-      'than text: trends and breakdowns (chart), headline numbers (stats), many rows (table), goals (progress), '
-      'schedules or histories (timeline), choices (comparison), one reading on a scale (gauge). After it, add only '
-      'what the card doesn\'t show. Fields by component:\n'
+      'than text, and pick the component that fits:\n'
+      'Charts: trends and shares (chart), several scores per thing (radar), values over two dimensions like day × hour '
+      '(heatmap), drop-off between stages (funnel), one whole split into parts (breakdown).\n'
+      'Numbers: one headline figure with its trend (metric), several headline figures (stats), one reading on a scale '
+      '(gauge), up to four goals at once (rings), a ranking (leaderboard).\n'
+      'Lists & plans: many rows (table), things to do or pack (checklist), a how-to (steps), dates in order '
+      '(timeline), goals as bars (progress), work by status (board).\n'
+      'Cards: choosing between options (comparison), a tip or warning worth noticing (callout), key facts about one '
+      'thing (facts), a bill or split (receipt), time left until something (countdown).\n'
+      'After it, add only what the card doesn\'t show. Fields by component:\n'
       '- chart: chart_type (line, area, bar, hbar, pie, donut), labels (x values or slice names), series '
       '[{name, values}] (pie/donut use the first series), unit.\n'
+      '- radar: labels (3-10 axes), series [{name, values (one per label)}] (up to 4), max (the outer ring; default the largest value).\n'
+      '- heatmap: columns (labels across), rows (each its label then one number per column, e.g. ["Mon", 3, 5, 0]), unit.\n'
+      '- funnel: items [{label, value}] from the widest stage down, unit.\n'
+      '- breakdown: items [{label, value}], unit. Shares are worked out.\n'
+      '- metric: value (text, e.g. "24.8k"), label, delta (% change), up_is_bad, trend (numbers, oldest first), hint.\n'
       '- stats: items [{label, value (text, e.g. "\$12.4k"), delta (% change), up_is_bad, hint}].\n'
-      '- table: columns, rows (lists of cells; markdown links allowed).\n'
-      '- progress: items [{label, value, max, unit}].\n'
-      '- timeline: items [{time, title, detail, status (done, next or empty)}].\n'
-      '- comparison: options [{name, score (0-10), pros, cons}] (2-4), verdict.\n'
       '- gauge: value, min, max, label, unit.\n'
+      '- rings: items [{label, value, max, unit}] (1-4).\n'
+      '- leaderboard: items [{name, value, subtitle}] (sorted for you), unit.\n'
+      '- table: columns, rows (lists of cells; markdown links allowed).\n'
+      '- checklist: items [{text, done, note}] (the user can tick them).\n'
+      '- steps: items [{title, detail}].\n'
+      '- timeline: items [{time, title, detail, status (done, next or empty)}].\n'
+      '- progress: items [{label, value, max, unit}].\n'
+      '- board: lanes [{name, cards: [text or {title, detail, tags, who, due}]}] (up to 5). A lane named Done shows its '
+      'cards as finished; tags like urgent or bug turn red; a due of "today" or "overdue" is flagged.\n'
+      '- comparison: options [{name, score (0-10), pros, cons}] (2-4), verdict.\n'
+      '- callout: tone (info, tip, success, warning, danger), text; title optional.\n'
+      '- facts: emoji, title, subtitle, items [{label, value}].\n'
+      '- receipt: items [{name, qty, price}], currency, tax and tip (percent), discount (amount), split (people), note. Totals are worked out.\n'
+      '- countdown: target (ISO date and time, local unless it ends in Z), label (e.g. "until the trip").\n'
       'Some components may be turned off by the user; the error then lists those you can use.',
   parameters: {
     'type': 'object',
     'properties': {
       'component': {
         'type': 'string',
-        'enum': ['chart', 'stats', 'table', 'progress', 'timeline', 'comparison', 'gauge'],
+        'enum': [
+          'chart', 'radar', 'heatmap', 'funnel', 'breakdown', //
+          'metric', 'stats', 'gauge', 'rings', 'leaderboard', //
+          'table', 'checklist', 'steps', 'timeline', 'progress', 'board', //
+          'comparison', 'callout', 'facts', 'receipt', 'countdown',
+        ],
         'description': 'Which component to draw.',
       },
       'title': {'type': 'string', 'description': 'A short heading for the card.'},
@@ -2145,22 +2188,41 @@ const showComponentTool = TelegramTool(
         'enum': ['line', 'area', 'bar', 'hbar', 'pie', 'donut'],
         'description': 'chart only; default line.',
       },
-      'labels': {'type': 'array', 'items': {'type': 'string'}, 'description': 'chart only: x-axis labels or slice names.'},
+      'labels': {'type': 'array', 'items': {'type': 'string'}, 'description': 'chart: x-axis labels or slice names. radar: the axes.'},
       'series': {
         'type': 'array',
         'items': {'type': 'object'},
-        'description': 'chart only: [{name, values: [numbers]}], each values list as long as labels.',
+        'description': 'chart or radar: [{name, values: [numbers]}], each values list as long as labels.',
       },
-      'unit': {'type': 'string', 'description': 'chart or gauge: unit shown with values, e.g. "\$", "%", "km".'},
-      'items': {'type': 'array', 'items': {'type': 'object'}, 'description': 'stats, progress or timeline: the entries.'},
-      'columns': {'type': 'array', 'items': {'type': 'string'}, 'description': 'table only: column headings.'},
-      'rows': {'type': 'array', 'items': {'type': 'array'}, 'description': 'table only: rows of cells.'},
+      'unit': {'type': 'string', 'description': 'Unit shown with values, e.g. "\$", "%", "km" (chart, gauge, heatmap, funnel, breakdown, leaderboard).'},
+      'items': {
+        'type': 'array',
+        'items': {'type': 'object'},
+        'description': 'The entries of stats, progress, timeline, funnel, breakdown, rings, leaderboard, checklist, steps, facts or receipt.',
+      },
+      'columns': {'type': 'array', 'items': {'type': 'string'}, 'description': 'table or heatmap: column headings.'},
+      'rows': {'type': 'array', 'items': {'type': 'array'}, 'description': 'table: rows of cells. heatmap: each row its label then one number per column, e.g. ["Mon", 3, 5, 0].'},
       'options': {'type': 'array', 'items': {'type': 'object'}, 'description': 'comparison only: the options.'},
       'verdict': {'type': 'string', 'description': 'comparison only: the recommendation in one line.'},
-      'value': {'type': 'number', 'description': 'gauge only: the reading.'},
+      'value': {'type': 'string', 'description': 'gauge: the reading, a number. metric: the headline figure as shown, e.g. "24.8k".'},
       'min': {'type': 'number', 'description': 'gauge only: lowest value, default 0.'},
-      'max': {'type': 'number', 'description': 'gauge only: highest value, default 100.'},
-      'label': {'type': 'string', 'description': 'gauge only: what the reading means, e.g. "AQI · Moderate".'},
+      'max': {'type': 'number', 'description': 'gauge: highest value, default 100. radar: the outer ring.'},
+      'label': {'type': 'string', 'description': 'gauge: what the reading means, e.g. "AQI · Moderate". metric: what the number is. countdown: e.g. "until the trip".'},
+      'delta': {'type': 'number', 'description': 'metric only: % change.'},
+      'up_is_bad': {'type': 'boolean', 'description': 'metric only: a rise is bad news (costs, errors).'},
+      'trend': {'type': 'array', 'items': {'type': 'number'}, 'description': 'metric only: recent values, oldest first, for the sparkline.'},
+      'hint': {'type': 'string', 'description': 'metric only: one line of context.'},
+      'lanes': {'type': 'array', 'items': {'type': 'object'}, 'description': 'board only: [{name, cards: [text or {title, detail, tags: [text], who, due}]}].'},
+      'tone': {'type': 'string', 'enum': ['info', 'tip', 'success', 'warning', 'danger'], 'description': 'callout only; default info.'},
+      'text': {'type': 'string', 'description': 'callout only: the message.'},
+      'emoji': {'type': 'string', 'description': 'facts only: one emoji for the thing.'},
+      'currency': {'type': 'string', 'description': 'receipt only: e.g. "\$", "€", "ETB"; default \$.'},
+      'tax': {'type': 'number', 'description': 'receipt only: tax in percent.'},
+      'tip': {'type': 'number', 'description': 'receipt only: tip in percent.'},
+      'discount': {'type': 'number', 'description': 'receipt only: amount taken off before tax.'},
+      'split': {'type': 'integer', 'description': 'receipt only: how many people share the total.'},
+      'note': {'type': 'string', 'description': 'receipt only: a line at the bottom.'},
+      'target': {'type': 'string', 'description': 'countdown only: ISO date and time, e.g. 2026-12-31T23:59:00.'},
     },
     'required': ['component'],
   },

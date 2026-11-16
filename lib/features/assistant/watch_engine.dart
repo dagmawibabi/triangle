@@ -9,6 +9,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:handy_tdlib/api.dart' as td;
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
 
 import '../../infrastructure/telegram/accounts.dart';
 import '../../infrastructure/telegram/open_chats.dart';
@@ -140,6 +142,94 @@ class WatchEngine {
     final g = gistOf(m.content);
     return saysKeyword('${g.text} ${g.detail ?? ''}', w.keywords);
   }
+  /// Whether [m], the user's own message, fires [w] as one of their own
+  /// (Saved Messages, their groups and channels): never the assistant's
+  /// replies, which go out as the user too.
+  bool _ownHit(Watch w, td.Message m, TelegramStore store) {
+    if (!w.includeOwn || !m.isOutgoing) return false;
+    // Posting in a channel at all means the user runs it, even before its
+    // admin rights are loaded.
+    final chat = store.chat(m.chatId);
+    final channel = chat != null && store.kindOf(chat) == ChatKind.channel;
+    if (!channel && !_ownPlace(store, m.chatId)) return false;
+    return !_echo(w);
+  }
+
+  /// Whether an outgoing message now is probably [w]'s own reply (its
+  /// assistant sends as the user), not something the user wrote.
+  bool _echo(Watch w) {
+    if (_running.contains(w.id)) return true;
+    final until = _ranUntil[w.id];
+    return until != null && DateTime.now().difference(until) < _ownEcho;
+  }
+
+  /// Saved Messages, a channel the user posts in, or a group they own or
+  /// run: where their own messages count with "include my own". Their DMs
+  /// to others don't.
+  bool _ownPlace(TelegramStore store, int chatId) {
+    final chat = store.chat(chatId);
+    if (chat == null) return false;
+    if (store.kindOf(chat) == ChatKind.saved) return true;
+    final status = switch (chat.type) {
+      td.ChatTypeSupergroup(:final supergroupId) => store.supergroups[supergroupId]?.status,
+      td.ChatTypeBasicGroup(:final basicGroupId) => store.basicGroups[basicGroupId]?.status,
+      _ => null,
+    };
+    return status is td.ChatMemberStatusCreator || status is td.ChatMemberStatusAdministrator;
+  }
+
+  /// Messages each watch's runs sent, by watch id, as "account:chat:message",
+  /// so a reply to one can wake it. Kept on the phone across restarts.
+  final Map<String, LinkedHashSet<String>> _sentBy = {};
+  static const _sentKey = 'watch_sent.v1';
+
+  Future<void> _loadSent() async {
+    try {
+      final raw = (await SharedPreferences.getInstance()).getString(_sentKey);
+      if (raw == null) return;
+      for (final e in (jsonDecode(raw) as Map).entries) {
+        _sentBy['${e.key}'] = LinkedHashSet.of([for (final k in e.value as List) '$k']);
+      }
+    } catch (e) {
+      debugPrint('[Watches] sent: $e');
+    }
+  }
+
+  Timer? _sentSave;
+  /// Every message any watch's run sent, so no watch (that one or any
+  /// other) ever wakes on the agent's own words: two watches on one channel
+  /// can't set each other off.
+  final LinkedHashSet<String> _agentSent = LinkedHashSet();
+
+  void _recordSent(String account, td.Message m) {
+    if (_running.isEmpty) return;
+    _agentSent.add('$account:${m.chatId}:${m.id}');
+    if (_agentSent.length > 1000) _agentSent.remove(_agentSent.first);
+    for (final id in _running) {
+      final w = _active.where((x) => x.id == id).firstOrNull;
+      if (w == null || !w.wakeOnReplies) continue;
+      final set = _sentBy[id] ??= LinkedHashSet();
+      set.add('$account:${m.chatId}:${m.id}');
+      while (set.length > 300) {
+        set.remove(set.first);
+      }
+    }
+    _sentSave?.cancel();
+    _sentSave = Timer(const Duration(seconds: 3), () async {
+      await (await SharedPreferences.getInstance()).setString(_sentKey, jsonEncode({for (final e in _sentBy.entries) e.key: e.value.toList()}));
+    });
+  }
+
+  /// Whether [m] answers a message [w] sent.
+  bool _repliesToWatch(Watch w, String account, td.Message m) {
+    final r = m.replyTo;
+    if (r is! td.MessageReplyToMessage || r.messageId == 0) return false;
+    final sent = _sentBy[w.id];
+    if (sent == null || sent.isEmpty) return false;
+    // A comment's reply can point at the post in the channel itself.
+    return sent.contains('$account:${r.chatId == 0 ? m.chatId : r.chatId}:${r.messageId}') || sent.contains('$account:${m.chatId}:${r.messageId}');
+  }
+
   final LinkedHashSet<String> _seen = LinkedHashSet();
 
   /// Messages each watch has taken, so a group two accounts share fires a
@@ -181,6 +271,7 @@ class WatchEngine {
     _listenToAccounts();
     _ref.listen(accountsProvider, (_, _) => _listenToAccounts());
     _clock = Timer.periodic(const Duration(seconds: 30), (_) => _tick());
+    unawaited(_loadSent());
     _ref.listen(watchStoreProvider, (_, _) => _sync(), fireImmediately: true);
     _ref.listen(reminderStoreProvider, (_, _) => _sync());
     _ref.listen(onlineAlertStoreProvider, (_, _) => _seedOnline(), fireImmediately: true);
@@ -397,7 +488,19 @@ class WatchEngine {
     }
 
     for (final w in _active.where((w) => w.covers(account))) {
-      switch (w.scope) {
+      if (w.includeOwn) {
+        want.addAll(recent((c) => needsOpen(c) && _ownPlace(store, c.id)).map((c) => c.id));
+      }
+      // Where it answered: replies there should reach it.
+      if (w.wakeOnReplies) {
+        final mine = [
+          for (final k in (_sentBy[w.id] ?? const <String>{}).toList().reversed)
+            if (k.startsWith('$account:')) int.tryParse(k.split(':')[1]),
+        ];
+        want.addAll({for (final id in mine) if (id != null && store.chat(id) != null && needsOpen(store.chat(id)!)) id}.take(_openPerScope));
+      }
+      for (final scope in w.scopes)
+      switch (scope) {
         case WatchScope.chats:
           want.addAll(
             w.chatIds.where(
@@ -421,6 +524,7 @@ class WatchEngine {
         default:
           break;
       }
+      want.removeAll(w.excludeChatIds);
     }
     final openChats = _openChats[account] = _ref.read(openChatsFamily(account));
     final opened = _opened[account] ??= {};
@@ -443,9 +547,18 @@ class WatchEngine {
   bool _matches(Watch w, td.Message m, TelegramStore store) {
     final chat = store.chat(m.chatId);
     if (chat == null) return false;
+    if (w.excludeChatIds.contains(m.chatId)) return false;
     if (!w.includeMuted && chat.isMuted) return false;
     final kind = store.kindOf(chat);
-    return switch (w.scope) {
+    // The user's own places (Saved Messages, channels and groups they
+    // created or run) are watched with "include my own", whatever the
+    // triggers say.
+    if (w.includeOwn && (_ownPlace(store, m.chatId) || (m.isOutgoing && kind == ChatKind.channel))) return true;
+    return w.scopes.any((scope) => _scopeMatches(w, scope, m, store, kind));
+  }
+
+  bool _scopeMatches(Watch w, WatchScope scope, td.Message m, TelegramStore store, ChatKind kind) {
+    return switch (scope) {
       WatchScope.chats => w.chatIds.contains(m.chatId),
       WatchScope.allDms => kind == ChatKind.private,
       WatchScope.allGroups => kind == ChatKind.group,
@@ -509,6 +622,10 @@ class WatchEngine {
           unawaited(_mentioned(account, message));
       case td.UpdateChatLastMessage(:final lastMessage?):
         _consider(account, lastMessage);
+      case td.UpdateMessageSendSucceeded(:final message):
+        // What a running watch just sent, so replies to it can wake it.
+        _recordSent(account, message);
+        _consider(account, message);
       case td.UpdateChatUnreadMentionCount(
         :final chatId,
         :final unreadMentionCount,
@@ -581,7 +698,9 @@ class WatchEngine {
     // the assistant's replies included, never trigger a watch, except a
     // keyword watch, where the user says the keyword themself.
     if (m.sendingState != null || m.schedulingState != null) return;
-    if (m.isOutgoing && !_active.any((w) => w.keywordGated && w.keywordFrom != KeywordFrom.others)) return;
+    // The agent's own messages never wake anything.
+    if (m.isOutgoing && _agentSent.contains('$account:${m.chatId}:${m.id}')) return;
+    if (m.isOutgoing && !_active.any((w) => (w.keywordGated && w.keywordFrom != KeywordFrom.others) || w.includeOwn || w.wakeOnReplies)) return;
     if (m.date < _since) return;
     if (gistOf(m.content).kind == 'service') return;
     final key = '$account:${m.chatId}:${m.id}';
@@ -591,10 +710,25 @@ class WatchEngine {
 
     final store = _store(account);
     for (final w in _active) {
-      if (!w.covers(account) || !_matches(w, m, store)) continue;
-      // A keyword watch hears everything but wakes only on its keyword: the
-      // rest is dropped here, before any AI runs.
-      if (w.keywordGated ? !_keywordHit(w, m) : m.isOutgoing) continue;
+      if (!w.covers(account)) continue;
+      // Someone answered what it said: it wakes, wherever that was, with or
+      // without its keyword.
+      // Only replies to messages the agent sent count (never replies to the
+      // user's own), from anyone, the user included, but not the agent's own
+      // follow-ups.
+      final reply = w.wakeOnReplies && !(m.isOutgoing && _echo(w)) && !w.excludeChatIds.contains(m.chatId) && _repliesToWatch(w, account, m);
+      if (!reply) {
+        if (!_matches(w, m, store)) continue;
+        // A keyword watch hears everything but wakes only on its keyword:
+        // the rest is dropped here, before any AI runs. "Include my own"
+        // lets the user say it in their own places, whoever it's set for.
+        final own = _ownHit(w, m, store);
+        if (w.keywordGated
+            ? !(_keywordHit(w, m) || (own && saysKeyword('${gistOf(m.content).text} ${gistOf(m.content).detail ?? ''}', w.keywords)))
+            : (m.isOutgoing && !own)) {
+          continue;
+        }
+      }
       // A supergroup or channel both accounts are in delivers the same
       // message to each (their message ids are shared); it fires once.
       // Elsewhere message ids are each account's own, so nothing is merged.
@@ -671,7 +805,9 @@ class WatchEngine {
         if (w.scope == WatchScope.device && w.device != null && wanted(w.device!)) ('w:${w.id}', w.device!),
       for (final r in _ref.read(routineStoreProvider))
         if (r.enabled && r.trigger.kind == RoutineTriggerKind.device && r.trigger.device != null && wanted(r.trigger.device!))
-          ('r:${r.id}', r.trigger.device!),
+          ('r:${r.id}', r.trigger.device!)
+        else if (r.enabled && r.trigger.kind == RoutineTriggerKind.location && r.trigger.place != null && r.trigger.place!.hasPlace && !opened)
+          ('r:${r.id}', r.trigger.place!),
     ];
   }
 
@@ -933,13 +1069,25 @@ class WatchEngine {
           : account != null
           ? '\n(Heard in the user\'s Telegram account ${_ref.read(accountsProvider).byId(account)?.label ?? account}: act there unless the instructions say otherwise.)'
           : '\n(This run covers ${w.runAccounts == null ? 'all of the user\'s Telegram accounts' : 'these Telegram accounts: ${_ref.read(accountsProvider).within(w.runAccounts).map((a) => a.label).join(', ')}'}; say which account each finding is from.)';
+      final respond = _respondNote(w, messages, store);
+      final senders = {
+        for (final m in messages)
+          if (m.senderId case td.MessageSenderUser(:final userId)) userId,
+      };
+      // Answers in the chats that woke it, and in the places the person
+      // chose, don't need approval after reading what woke it.
+      final allowed = <int>{
+        if (!(scheduled || w.scope == WatchScope.app)) ...chats,
+        if (w.respondIn.contains(RespondIn.chosen)) ...w.respondChatIds,
+        // A private chat's id is the person's user id.
+        if (w.respondIn.contains(RespondIn.dm)) ...senders,
+      };
       final result = await controller.runAutomatic(
         w,
-        '$event$accountsNote',
+        '$event$accountsNote$respond',
         accounts: w.runAccounts,
         account: account,
-        // Replies to these chats don't need approval after reading them.
-        sourceChats: scheduled || w.scope == WatchScope.app ? null : chats,
+        sourceChats: allowed.isEmpty ? null : allowed,
       );
       // The app may have shut down while the run went on.
       if (!_ref.mounted) return;
@@ -977,6 +1125,36 @@ class WatchEngine {
       _running.remove(w.id);
       _ranUntil[w.id] = DateTime.now();
     }
+  }
+
+  /// The person's choice of where the run answers, as words for it.
+  String _respondNote(Watch w, List<td.Message> messages, TelegramStore store) {
+    if (w.respondIn.isEmpty || w.mode != WatchMode.act) return '';
+    if (w.respondIn.contains(RespondIn.appOnly)) {
+      return '\n\nWhere to respond: ONLY here in this assistant chat. Do not send, reply, comment or react anywhere in Telegram.';
+    }
+    final m = messages.firstOrNull;
+    final lines = <String>[
+      if (w.respondIn.contains(RespondIn.sameChat))
+        m == null
+            ? '- In the chat the message came from.'
+            : '- In the chat it came from: reply_to_message with chat_id ${m.chatId} and message_id ${m.id}.',
+      if (w.respondIn.contains(RespondIn.dm))
+        m == null
+            ? '- By private message (DM) to the person concerned.'
+            : switch (m.senderId) {
+                td.MessageSenderUser(:final userId) => '- By private message to the sender: send_message with chat_id $userId (their user id).',
+                _ => '- By private message to the sender, if it was a person (a channel can\'t be messaged).',
+              },
+      if (w.respondIn.contains(RespondIn.comments))
+        m == null
+            ? '- In the comment section of the channel post concerned (comment_on_post).'
+            : '- In the comment section under the post: comment_on_post with the channel post\'s chat_id and message_id (for a message already in a discussion group, reply to it there instead).',
+      if (w.respondIn.contains(RespondIn.chosen) && w.respondChatIds.isNotEmpty)
+        '- In these chats the user picked: ${w.respondChatIds.map((id) => '${store.chat(id)?.title ?? 'chat'} (chat_id $id)').join(', ')}.',
+    ];
+    if (lines.isEmpty) return '';
+    return '\n\nWhere to respond (the user chose this): answer in each of these places, and nowhere else in Telegram:\n${lines.join('\n')}';
   }
 
   static String _clip(String s, int max) {

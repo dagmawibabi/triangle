@@ -168,6 +168,8 @@ const replyTools = {
   'send_gif',
   'send_voice_message',
   'send_rich_message',
+  // In the comment section of a post that woke the watch.
+  'comment_on_post',
 };
 
 /// The chat ids a call acts in (`chat_id`, `to_chat_id`, `to_chat_ids`).

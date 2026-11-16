@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../features/assistant/watch_engine.dart';
+import '../features/settings/data/app_data.dart';
 import '../features/telegram/data/telegram_store.dart';
 import '../infrastructure/telegram/accounts.dart';
 import '../infrastructure/telegram/telegram_client.dart';
@@ -24,6 +27,14 @@ void startRuntime(ProviderContainer container) {
     if (a.id != accounts.activeId) container.read(telegramStoreFamily(a.id));
   }
   container.read(accountsProvider.notifier).cleanUpLeftovers();
+  // A signed-in account removed: what Explore, playlists and My folders
+  // kept under it moves to the accounts still here (see rehomeAccount).
+  container.listen<AccountsState>(accountsProvider, (prev, next) {
+    if (prev == null || next.signedIn.isEmpty) return;
+    for (final a in prev.signedIn) {
+      if (next.byId(a.id) == null) unawaited(container.read(appDataProvider).rehomeAccount(a.id));
+    }
+  });
   // Reminders, scheduled jobs, schedule and app watches, and briefs run
   // without Telegram too; Telegram watches start hearing messages once an
   // account is signed in (the engine listens to TDLib's updates throughout).

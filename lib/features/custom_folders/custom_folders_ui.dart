@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme.dart';
 import '../../core/widgets/app_sheet.dart';
 import '../../infrastructure/telegram/accounts.dart';
+import '../account/account_switcher.dart';
 import '../telegram/data/telegram_store.dart';
 import '../telegram/data/search_history.dart';
 import '../telegram/presentation/chat_list_screen.dart' show ChatTile, RecentChatRow;
@@ -54,9 +55,14 @@ Widget? folderMark(CustomFolder f, {double size = 20, Color? color}) {
 /// Name and mark for a new or existing folder; the folder, or null if
 /// cancelled.
 Future<CustomFolder?> showCustomFolderEditor(BuildContext context, WidgetRef ref, {CustomFolder? folder}) async {
-  final out = await showFormSheet<({String name, String emoji, String? icon})>(
+  final out = await showMarkEditor(
     context,
-    builder: (_) => _FolderEditor(folder: folder),
+    title: folder == null ? 'New folder' : 'Edit folder',
+    action: folder == null ? 'Create' : 'Save',
+    name: folder?.name ?? '',
+    emoji: folder == null ? '📁' : folder.emoji,
+    icon: folder?.icon,
+    isNew: folder == null,
   );
   if (out == null || out.name.isEmpty) return null;
   final store = ref.read(customFoldersProvider.notifier);
@@ -69,35 +75,63 @@ Future<CustomFolder?> showCustomFolderEditor(BuildContext context, WidgetRef ref
 
 enum _Mark { emoji, icon, none }
 
+/// A name and a mark (an emoji of the person's own or from the list, one of
+/// the app's monochrome icons, or none), for folders, albums and the like.
+/// Returns null if cancelled; name '__delete__' when [destructive] was
+/// tapped.
+Future<({String name, String emoji, String? icon})?> showMarkEditor(
+  BuildContext context, {
+  required String title,
+  required String action,
+  String name = '',
+  String emoji = '',
+  String? icon,
+  bool isNew = true,
+  List<String> emojis = _emojis,
+  String hint = '',
+  String? destructive,
+  Widget? preview,
+}) => showFormSheet<({String name, String emoji, String? icon})>(
+  context,
+  builder: (_) => _MarkEditor(title: title, action: action, name: name, emoji: emoji, icon: icon, isNew: isNew, emojis: emojis, hint: hint, destructive: destructive, preview: preview),
+);
+
 /// The editor owns its text controllers, so they're only disposed once the
 /// sheet is gone (disposing them as soon as the sheet's future returned,
 /// while it was still animating closed, crashed the app).
-class _FolderEditor extends StatefulWidget {
-  const _FolderEditor({this.folder});
-  final CustomFolder? folder;
+class _MarkEditor extends StatefulWidget {
+  const _MarkEditor({required this.title, required this.action, required this.name, required this.emoji, required this.icon, required this.isNew, required this.emojis, required this.hint, this.destructive, this.preview});
+  final String title;
+  final String action;
+  final String name;
+  final String emoji;
+  final String? icon;
+  final bool isNew;
+  final List<String> emojis;
+  final String hint;
+  final String? destructive;
+  final Widget? preview;
 
   @override
-  State<_FolderEditor> createState() => _FolderEditorState();
+  State<_MarkEditor> createState() => _MarkEditorState();
 }
 
-class _FolderEditorState extends State<_FolderEditor> {
-  late final _name = TextEditingController(text: widget.folder?.name ?? '');
+class _MarkEditorState extends State<_MarkEditor> {
+  late final _name = TextEditingController(text: widget.name);
   late final _custom = TextEditingController();
-  late _Mark _mark = widget.folder == null
-      ? _Mark.emoji
-      : folderIcons.containsKey(widget.folder!.icon)
+  late _Mark _mark = folderIcons.containsKey(widget.icon)
       ? _Mark.icon
-      : widget.folder!.emoji.isEmpty
-      ? _Mark.none
+      : widget.emoji.isEmpty
+      ? (widget.isNew ? _Mark.emoji : _Mark.none)
       : _Mark.emoji;
-  late String _emoji = widget.folder?.emoji.isNotEmpty == true ? widget.folder!.emoji : '📁';
-  late String _icon = folderIcons.containsKey(widget.folder?.icon) ? widget.folder!.icon! : 'folder';
+  late String _emoji = widget.emoji.isNotEmpty ? widget.emoji : widget.emojis.first;
+  late String _icon = folderIcons.containsKey(widget.icon) ? widget.icon! : 'folder';
 
   @override
   void initState() {
     super.initState();
     // A custom emoji from before shows in the box to edit.
-    if (!_emojis.contains(_emoji)) _custom.text = _emoji;
+    if (!widget.emojis.contains(_emoji)) _custom.text = _emoji;
     _name.addListener(() => setState(() {}));
   }
 
@@ -136,7 +170,6 @@ class _FolderEditorState extends State<_FolderEditor> {
 
   @override
   Widget build(BuildContext context) {
-    final folder = widget.folder;
     final preview = switch (_mark) {
       _Mark.emoji => Text(_emoji, style: const TextStyle(fontSize: 20)),
       _Mark.icon => Icon(folderIcons[_icon], size: 22, color: AppColors.text2),
@@ -145,16 +178,18 @@ class _FolderEditorState extends State<_FolderEditor> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(folder == null ? 'New folder' : 'Edit folder', style: context.text.titleMedium),
+        Text(widget.title, style: context.text.titleMedium),
+        if (widget.preview != null) ...[const SizedBox(height: Space.m), widget.preview!],
         const SizedBox(height: Space.m),
         TextField(
           controller: _name,
-          autofocus: folder == null,
+          autofocus: widget.isNew,
           textCapitalization: TextCapitalization.sentences,
           textInputAction: TextInputAction.done,
           onSubmitted: (_) => _done(),
           decoration: InputDecoration(
             labelText: 'Name',
+            hintText: widget.hint.isEmpty ? null : widget.hint,
             prefixIcon: preview == null ? null : SizedBox(width: 44, child: Center(child: preview)),
           ),
         ),
@@ -191,7 +226,7 @@ class _FolderEditorState extends State<_FolderEditor> {
             spacing: 6,
             runSpacing: 6,
             children: [
-              for (final e in _emojis)
+              for (final e in widget.emojis)
                 _cell(
                   selected: e == _emoji,
                   onTap: () => setState(() {
@@ -220,8 +255,16 @@ class _FolderEditorState extends State<_FolderEditor> {
         const SizedBox(height: Space.l),
         FilledButton(
           onPressed: _name.text.trim().isEmpty ? null : _done,
-          child: Text(folder == null ? 'Create' : 'Save'),
+          child: Text(widget.action),
         ),
+        if (widget.destructive != null) ...[
+          const SizedBox(height: Space.s),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: AppColors.danger),
+            onPressed: () => Navigator.pop(context, (name: '__delete__', emoji: '', icon: null)),
+            child: Text(widget.destructive!),
+          ),
+        ],
       ],
     );
   }
@@ -279,7 +322,9 @@ class _ChatPickerState extends ConsumerState<_ChatPicker> {
 
   @override
   Widget build(BuildContext context) {
-    final store = ref.watch(telegramStoreProvider);
+    // The account whose members are being edited, even if another is
+    // switched to while the sheet is open.
+    final store = ref.watch(accountStoreProvider(_account));
     final q = _q.toLowerCase();
     final all = [for (final c in store.chats.values) if (c.title.isNotEmpty) c];
     final count = all.where((c) => _in(c.id, store.kindOf(c))).length;
@@ -492,6 +537,9 @@ class _CustomFolderScreenState extends ConsumerState<CustomFolderScreen> {
           ],
         ),
         actions: [
+          // Switching here refreshes this folder in place with the other
+          // account's chats.
+          const AccountSwitcherButton(),
           IconButton(tooltip: 'Add or remove chats', icon: const Icon(Icons.playlist_add_rounded), onPressed: () => showFolderChatPicker(context, folder)),
           PopupMenuButton<String>(
             onSelected: (v) async {

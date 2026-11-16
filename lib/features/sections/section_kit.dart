@@ -6,10 +6,12 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:handy_tdlib/api.dart' as td;
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../app/theme.dart';
 import '../../core/widgets/app_sheet.dart';
+import '../../infrastructure/telegram/accounts.dart';
 import '../../infrastructure/telegram/telegram_client.dart';
 import '../media/audio_player_ui.dart';
 import '../telegram/data/file_loader.dart';
@@ -60,6 +62,73 @@ String postKey(String account, int chatId, int messageId) => '$account:$chatId:$
   final m = int.tryParse(parts.last), c = int.tryParse(parts[parts.length - 2]);
   if (m == null || c == null) return null;
   return (account: parts.sublist(0, parts.length - 2).join(':'), chatId: c, messageId: m);
+}
+
+/// The posts each source of a feed showed last, by message id, kept in the
+/// cache folder. On a relaunch a feed reads them back from TDLib's local
+/// database (fast, no network) and shows them at once, then asks Telegram
+/// for what's new behind them.
+class FeedMemory {
+  FeedMemory(this.name);
+  final String name;
+  Map<String, List<int>>? _ids;
+  Future<Map<String, List<int>>>? _reading;
+  Timer? _pending;
+
+  Future<File> _file() async => File('${(await getApplicationCacheDirectory()).path}/feeds/$name.json');
+
+  Future<Map<String, List<int>>> _all() async => _ids ?? await (_reading ??= () async {
+    final out = <String, List<int>>{};
+    try {
+      final f = await _file();
+      if (await f.exists()) {
+        final j = jsonDecode(await f.readAsString());
+        if (j is Map) {
+          for (final e in j.entries) {
+            if (e.value is List) out['${e.key}'] = [for (final x in e.value as List) if (x is num) x.toInt()];
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[FeedMemory:$name] read: $e');
+    }
+    return _ids = out;
+  }());
+
+  /// What [s] showed last time, newest first; empty when nothing is kept
+  /// or TDLib no longer has it.
+  Future<List<td.Message>> recall(TelegramClient client, SourceRef s) async {
+    final ids = (await _all())[s.key];
+    if (ids == null || ids.isEmpty) return const [];
+    final out = <td.Message>[];
+    try {
+      for (var i = 0; i < ids.length; i += 100) {
+        final r = await client
+            .send<td.Messages>(td.GetMessages(chatId: s.chatId, messageIds: ids.sublist(i, (i + 100).clamp(0, ids.length))), limited: true)
+            .timeout(const Duration(seconds: 8));
+        out.addAll(r.messages);
+      }
+    } catch (e) {
+      debugPrint('[FeedMemory:$name] recall ${s.key}: $e');
+    }
+    return out;
+  }
+
+  /// Keeps [ids] (newest first, the first [max]) as what [s] shows.
+  Future<void> remember(SourceRef s, Iterable<int> ids, {int max = 240}) async {
+    final all = await _all();
+    all[s.key] = ids.take(max).toList();
+    _pending?.cancel();
+    _pending = Timer(const Duration(seconds: 2), () async {
+      try {
+        final f = await _file();
+        await f.parent.create(recursive: true);
+        await f.writeAsString(jsonEncode(all));
+      } catch (e) {
+        debugPrint('[FeedMemory:$name] write: $e');
+      }
+    });
+  }
 }
 
 /// One page of a chat's messages: all of them (history) or only those
@@ -141,8 +210,12 @@ td.File? _previewPhoto(td.LinkPreview? p) {
 /// A picture from Telegram: the phone's copy when there is one, else the
 /// blurry preview while it downloads in the background.
 class TgPicture extends ConsumerStatefulWidget {
-  const TgPicture({super.key, this.file, this.mini, this.fit = BoxFit.cover, this.width, this.height, this.cacheWidth = 600, this.placeholder, this.autoload = true});
+  const TgPicture({super.key, this.file, this.mini, this.fit = BoxFit.cover, this.width, this.height, this.cacheWidth = 600, this.placeholder, this.autoload = true, this.account});
   final td.File? file;
+
+  /// The account [file] came from (its id means nothing in another); null:
+  /// the one on screen.
+  final String? account;
   final td.Minithumbnail? mini;
   final BoxFit fit;
   final double? width;
@@ -170,8 +243,9 @@ class _TgPictureState extends ConsumerState<TgPicture> {
   @override
   void didUpdateWidget(TgPicture old) {
     super.didUpdateWidget(old);
-    if (old.file?.id != widget.file?.id || (widget.autoload && !old.autoload)) {
-      if (old.file?.id != widget.file?.id) _path = null;
+    final changed = old.file?.id != widget.file?.id || old.account != widget.account;
+    if (changed || (widget.autoload && !old.autoload)) {
+      if (changed) _path = null;
       _load();
     }
   }
@@ -179,7 +253,7 @@ class _TgPictureState extends ConsumerState<TgPicture> {
   Future<void> _load() async {
     final f = widget.file;
     if (f == null) return;
-    final loader = ref.read(fileLoaderProvider);
+    final loader = fileLoaderFor(ref, widget.account);
     final have = loader.cachedPath(f);
     if (have != null) {
       _path = have;
@@ -254,7 +328,12 @@ class _SourcePickerState extends ConsumerState<_SourcePicker> {
 
   @override
   Widget build(BuildContext context) {
-    final store = ref.watch(telegramStoreProvider);
+    // The chats of the account the sources are for (the one on screen when
+    // the sheet opened), even if another account is switched to meanwhile.
+    final store = ref.watch(accountStoreProvider(widget.account));
+    store.ensureChatsLoaded();
+    final accounts = ref.watch(accountsProvider);
+    final owner = accounts.hasSeveral ? accounts.byId(widget.account) : null;
     final q = _q.toLowerCase();
     final all = inTelegramOrder(store.chats.values.where((c) => c.title.isNotEmpty && c.isListed), 'main');
     final list = [
@@ -265,6 +344,14 @@ class _SourcePickerState extends ConsumerState<_SourcePicker> {
     return Column(
       children: [
         Text(widget.title, style: context.text.titleLarge),
+        if (owner != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              "From ${owner.label}'s chats${others.isEmpty ? '' : ' · ${others.length} more in other accounts'}",
+              style: context.text.labelMedium?.copyWith(color: AppColors.text3),
+            ),
+          ),
         if (widget.hint != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(Space.xl, 4, Space.xl, 0),
@@ -293,6 +380,36 @@ class _SourcePickerState extends ConsumerState<_SourcePicker> {
             ],
           ),
         ),
+        Builder(
+          builder: (context) {
+            final shown = list.take(400).toList();
+            final allPicked = shown.isNotEmpty && shown.every((c) => _picked.containsKey(c.id));
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(Space.l, Space.xs, Space.s, 0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${shown.length} shown · ${_picked.length} picked',
+                      style: context.text.labelMedium?.copyWith(color: AppColors.text3),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: shown.isEmpty
+                        ? null
+                        : () => setState(() {
+                            for (final c in shown) {
+                              allPicked ? _picked.remove(c.id) : _picked[c.id] = SourceRef(account: widget.account, chatId: c.id, title: c.title);
+                            }
+                          }),
+                    icon: Icon(allPicked ? Icons.deselect_rounded : Icons.select_all_rounded, size: 18),
+                    label: Text(allPicked ? 'Unselect all' : 'Select all'),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
         Expanded(
           child: ListView(
             controller: widget.scroll,
@@ -301,7 +418,7 @@ class _SourcePickerState extends ConsumerState<_SourcePicker> {
               for (final c in list.take(400))
                 CheckboxListTile(
                   value: _picked.containsKey(c.id),
-                  secondary: TgAvatar(chatId: c.id, title: c.title, size: 40),
+                  secondary: TgAvatar(chatId: c.id, title: c.title, size: 40, accountId: widget.account),
                   title: Text(c.title, maxLines: 1, overflow: TextOverflow.ellipsis),
                   subtitle: Text(switch (store.kindOf(c)) {
                     ChatKind.channel => 'Channel',
@@ -336,12 +453,57 @@ class _SourcePickerState extends ConsumerState<_SourcePicker> {
                 final have = {for (final s in kept) s.key};
                 Navigator.pop(context, [...kept, for (final s in _picked.values) if (!have.contains(s.key)) s]);
               },
-              child: Text('Use ${_picked.length + others.length} ${_picked.length + others.length == 1 ? 'source' : 'sources'}'),
+              child: Text('Use ${_picked.length} ${_picked.length == 1 ? 'source' : 'sources'}'),
             ),
           ),
         ),
       ],
     );
+  }
+}
+
+/// The title for the tab in view: follows swipes, rebuilding only when the
+/// tab under the finger changes.
+class _TabTitle extends StatefulWidget {
+  const _TabTitle({required this.titles, required this.fallback, required this.builder});
+  final List<String?> titles;
+  final String fallback;
+  final Widget Function(String title) builder;
+
+  @override
+  State<_TabTitle> createState() => _TabTitleState();
+}
+
+class _TabTitleState extends State<_TabTitle> {
+  Animation<double>? _anim;
+  int _index = 0;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final c = DefaultTabController.maybeOf(context);
+    final anim = c?.animation;
+    if (anim == _anim) return;
+    _anim?.removeListener(_tick);
+    _anim = anim?..addListener(_tick);
+    _index = c?.index ?? 0;
+  }
+
+  void _tick() {
+    final i = _anim!.value.round();
+    if (i != _index) setState(() => _index = i);
+  }
+
+  @override
+  void dispose() {
+    _anim?.removeListener(_tick);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = _index < widget.titles.length ? widget.titles[_index] : null;
+    return widget.builder(t ?? widget.fallback);
   }
 }
 
@@ -363,9 +525,14 @@ class SectionScaffold extends StatelessWidget {
     this.expandedHeight = 220,
     this.bottomBar,
     this.initialTab = 0,
+    this.tabTitles,
   });
   final int initialTab;
   final String title;
+
+  /// With [tabs]: a title for each tab (null keeps [title]), shown while
+  /// that tab is open.
+  final List<String?>? tabTitles;
   final IconData icon;
   final Color color;
   final Widget hero;
@@ -386,7 +553,30 @@ class SectionScaffold extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bg = Color.lerp(color, Colors.black, 0.86)!;
-    final appBar = SliverAppBar(
+    final minimal = AppLook.minimalExplore;
+    final minimalHeight = (expandedHeight - 30).clamp(176.0, 400.0) + (tabs == null ? 0 : 46);
+    Widget titled(Widget Function(String title) build) => tabs == null || tabTitles == null ? build(title) : _TabTitle(titles: tabTitles!, fallback: title, builder: build);
+    final appBar = minimal
+        ? SliverAppBar(
+            pinned: true,
+            expandedHeight: minimalHeight,
+            backgroundColor: AppColors.bg,
+            surfaceTintColor: Colors.transparent,
+            foregroundColor: AppColors.text,
+            scrolledUnderElevation: 0,
+            actions: [...actions, const SizedBox(width: Space.xs)],
+            flexibleSpace: titled(
+              (t) => MinimalFlexibleHeader(
+                title: t,
+                hero: hero,
+                expandedHeight: minimalHeight,
+                bottomHeight: tabs == null ? 0 : 46,
+                leadingGap: ModalRoute.of(context)?.canPop ?? false,
+              ),
+            ),
+            bottom: tabs == null ? null : minimalTabBar(tabs!),
+          )
+        : SliverAppBar(
       pinned: true,
       stretch: true,
       expandedHeight: expandedHeight + (tabs == null ? 0 : 46),
@@ -406,7 +596,7 @@ class SectionScaffold extends StatelessWidget {
             child: Icon(icon, size: 18, color: Colors.white),
           ),
           const SizedBox(width: Space.s),
-          Flexible(child: Text(title, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700))),
+          Flexible(child: titled((t) => Text(t, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)))),
         ],
       ),
       actions: [...actions, const SizedBox(width: Space.xs)],
@@ -449,8 +639,15 @@ class SectionScaffold extends StatelessWidget {
               tabAlignment: TabAlignment.start,
               labelColor: Colors.white,
               unselectedLabelColor: Colors.white60,
-              indicatorColor: color,
+              labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5),
+              unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5),
+              indicatorSize: TabBarIndicatorSize.label,
+              indicator: UnderlineTabIndicator(
+                borderSide: BorderSide(color: Color.lerp(color, Colors.white, 0.15)!, width: 3),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(3)),
+              ),
               dividerColor: Colors.white12,
+              overlayColor: WidgetStatePropertyAll(color.withValues(alpha: 0.12)),
               tabs: tabs!,
             ),
     );
@@ -516,14 +713,18 @@ class SectionStat extends StatelessWidget {
     child: Container(
       padding: const EdgeInsets.symmetric(vertical: Space.s, horizontal: Space.m),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.06),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Colors.white.withValues(alpha: 0.09), Colors.white.withValues(alpha: 0.03)],
+        ),
         borderRadius: BorderRadius.circular(Radii.m),
         border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800, fontFeatures: tabularFigures)),
+          Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.white, fontSize: 19, height: 1.15, fontWeight: FontWeight.w800, letterSpacing: -0.3, fontFeatures: tabularFigures)),
           Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white60, fontSize: 11.5)),
         ],
       ),
@@ -538,7 +739,17 @@ class SectionHero extends StatelessWidget {
   final List<(String, String)> stats;
 
   @override
-  Widget build(BuildContext context) => Column(
+  Widget build(BuildContext context) => AppLook.minimalExplore
+      ? Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: AppColors.text2, fontSize: 13)),
+            const SizedBox(height: Space.m),
+            _MinimalStats(stats),
+          ],
+        )
+      : Column(
     mainAxisSize: MainAxisSize.min,
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
@@ -573,18 +784,30 @@ class SectionEmpty extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 76,
-          height: 76,
-          decoration: BoxDecoration(shape: BoxShape.circle, color: AppColors.surface2, border: Border.all(color: AppColors.line)),
-          child: Icon(icon, size: 34, color: AppColors.text2),
+          width: 88,
+          height: 88,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [AppColors.surface3, AppColors.surface]),
+            border: Border.all(color: AppColors.line),
+          ),
+          child: Icon(icon, size: 38, color: AppColors.text2),
         ),
-        const SizedBox(height: Space.l),
-        Text(title, style: context.text.titleMedium?.copyWith(fontWeight: FontWeight.w700), textAlign: TextAlign.center),
-        const SizedBox(height: Space.xs),
-        Text(body, style: context.text.bodySmall, textAlign: TextAlign.center),
+        const SizedBox(height: Space.xl),
+        Text(title, style: context.text.titleMedium?.copyWith(fontWeight: FontWeight.w800), textAlign: TextAlign.center),
+        const SizedBox(height: Space.s),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 320),
+          child: Text(body, style: context.text.bodySmall?.copyWith(color: AppColors.text2, height: 1.45), textAlign: TextAlign.center),
+        ),
         if (action != null) ...[
-          const SizedBox(height: Space.l),
-          FilledButton.icon(onPressed: onAction, icon: const Icon(Icons.add_rounded), label: Text(action!)),
+          const SizedBox(height: Space.xl),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(minimumSize: const Size(0, 46), padding: const EdgeInsets.symmetric(horizontal: Space.xl), shape: const StadiumBorder()),
+            onPressed: onAction,
+            icon: const Icon(Icons.add_rounded),
+            label: Text(action!, style: const TextStyle(fontWeight: FontWeight.w700)),
+          ),
         ],
       ],
     ),
@@ -616,7 +839,7 @@ class SourceChip extends StatelessWidget {
     child: GestureDetector(
       onLongPress: onLongPress,
       child: ChoiceChip(
-        avatar: TgAvatar(chatId: source.chatId, title: source.title, size: 22),
+        avatar: TgAvatar(chatId: source.chatId, title: source.title, size: 22, accountId: source.account),
         label: Text(source.title, maxLines: 1, overflow: TextOverflow.ellipsis),
         selected: selected,
         onSelected: (_) => onTap(),
@@ -868,6 +1091,135 @@ Future<Map<String, String>?> showFieldsSheet(
           ),
         ),
       ),
+    ),
+  );
+}
+
+// ---- the minimal look ------------------------------------------------------------
+
+/// The header of an Explore page in the minimal look: the page colour, a
+/// large title over the summary that folds into a small one in the toolbar.
+/// Goes in a [SliverAppBar]'s `flexibleSpace`.
+class MinimalFlexibleHeader extends StatelessWidget {
+  const MinimalFlexibleHeader({super.key, required this.title, required this.hero, required this.expandedHeight, this.bottomHeight = 0, this.leadingGap = true});
+  final String title;
+  final Widget hero;
+
+  /// What was given to the app bar as `expandedHeight` (bottom included).
+  final double expandedHeight;
+  final double bottomHeight;
+
+  /// Room for the back button before the small title.
+  final bool leadingGap;
+
+  @override
+  Widget build(BuildContext context) {
+    final top = MediaQuery.paddingOf(context).top;
+    return LayoutBuilder(
+      builder: (context, c) {
+        final min = top + kToolbarHeight + bottomHeight;
+        final max = top + expandedHeight;
+        final t = max <= min ? 0.0 : ((c.maxHeight - min) / (max - min)).clamp(0.0, 1.0);
+        return ColoredBox(
+          color: AppColors.bg,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // The small title, once the header has folded.
+              Positioned(
+                left: leadingGap ? 56 : Space.l,
+                right: 120,
+                top: top,
+                height: kToolbarHeight,
+                child: IgnorePointer(
+                  child: Opacity(
+                    opacity: ((0.35 - t) / 0.35).clamp(0.0, 1.0),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: context.text.titleMedium?.copyWith(fontWeight: FontWeight.w700, color: AppColors.text)),
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: Space.l,
+                right: Space.l,
+                bottom: bottomHeight + Space.m,
+                child: IgnorePointer(
+                  ignoring: t < 0.5,
+                  child: Opacity(
+                    opacity: ((t - 0.25) / 0.75).clamp(0.0, 1.0),
+                    child: Transform.translate(
+                      offset: Offset(0, (1 - t) * 12),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: AppColors.text, fontSize: 32, height: 1.1, fontWeight: FontWeight.w800, letterSpacing: -0.8),
+                          ),
+                          const SizedBox(height: Space.s),
+                          hero,
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              if (bottomHeight > 0)
+                Positioned(left: 0, right: 0, bottom: 0, child: Divider(height: 1, thickness: 1, color: AppColors.line)),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Tabs in the minimal look: quiet labels, the picked one in a soft pill.
+TabBar minimalTabBar(List<Tab> tabs) => TabBar(
+  isScrollable: true,
+  tabAlignment: TabAlignment.start,
+  padding: const EdgeInsets.symmetric(horizontal: Space.s),
+  labelPadding: const EdgeInsets.symmetric(horizontal: 14),
+  labelColor: AppColors.text,
+  unselectedLabelColor: AppColors.text3,
+  labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5),
+  unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5),
+  indicatorSize: TabBarIndicatorSize.tab,
+  indicatorPadding: const EdgeInsets.symmetric(vertical: 7),
+  indicator: BoxDecoration(color: AppColors.surface2, borderRadius: BorderRadius.circular(99), border: Border.all(color: AppColors.line)),
+  dividerColor: Colors.transparent,
+  splashBorderRadius: BorderRadius.circular(99),
+  overlayColor: WidgetStatePropertyAll(AppColors.text.withValues(alpha: 0.05)),
+  tabs: tabs,
+);
+
+/// The summary line of the minimal look: numbers and words in a row.
+class _MinimalStats extends StatelessWidget {
+  const _MinimalStats(this.stats);
+  final List<(String, String)> stats;
+
+  @override
+  Widget build(BuildContext context) => SingleChildScrollView(
+    scrollDirection: Axis.horizontal,
+    physics: const NeverScrollableScrollPhysics(),
+    child: Row(
+      children: [
+        for (final (i, s) in stats.indexed) ...[
+          if (i > 0) Container(width: 1, height: 22, margin: const EdgeInsets.symmetric(horizontal: Space.m), color: AppColors.line),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(s.$1, style: TextStyle(color: AppColors.text, fontSize: 16, height: 1.15, fontWeight: FontWeight.w800, letterSpacing: -0.2, fontFeatures: tabularFigures)),
+              Text(s.$2, style: TextStyle(color: AppColors.text3, fontSize: 11)),
+            ],
+          ),
+        ],
+      ],
     ),
   );
 }

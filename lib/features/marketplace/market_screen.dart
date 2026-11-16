@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../account/account_router.dart' show openChatInAccount, switchToOpen;
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -12,15 +13,17 @@ import '../../core/widgets/fullscreen_image.dart';
 import '../../infrastructure/telegram/accounts.dart';
 import '../assistant/presentation/automation_widgets.dart' show AutomationModelTile;
 import '../playlists/add_tracks_screen.dart' show pickTelegramChat;
+import '../sections/ai_run.dart';
 import '../sections/section_kit.dart';
 import '../telegram/data/file_loader.dart';
 import '../telegram/data/telegram_tools.dart' show toolRunnerFamily;
 import '../telegram/presentation/chat_view_screen.dart';
-import '../../infrastructure/telegram/telegram_client.dart' show telegramClientProvider;
 import '../telegram/presentation/tg_avatar.dart';
 import 'market.dart';
 
-const marketColor = Color(0xFFFF7A1A);
+import '../sections/skeletons.dart';
+/// The section's colour; the app's monochrome one in the minimal look.
+Color get marketColor => AppLook.brand(const Color(0xFFFF7A1A));
 
 /// The marketplace: products from the channels and groups picked as
 /// stores, a cart and a wishlist, tidied by a model when that's on.
@@ -143,7 +146,7 @@ class _ShopTabState extends ConsumerState<_ShopTab> with AutomaticKeepAliveClien
     final todo = [for (final (p, l) in shown.take(40)) if (l == null) p];
     if (todo.isEmpty || ref.read(marketProvider.notifier).busy) return;
     _debounce(const Duration(milliseconds: 800), () {
-      ref.read(marketProvider.notifier).enrich(todo).catchError((Object e) {
+      ref.read(marketProvider.notifier).enrich(todo, auto: true).catchError((Object e) {
         if (mounted) showSnack(context, 'AI tidy-up failed: $e', icon: Icons.error_outline_rounded);
         return 0;
       });
@@ -277,7 +280,14 @@ class _ShopTabState extends ConsumerState<_ShopTab> with AutomaticKeepAliveClien
               ),
             ),
             if (list.isEmpty && feed.anyLoading)
-              const SliverFillRemaining(hasScrollBody: false, child: Center(child: CircularProgressIndicator(strokeWidth: 2)))
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(Space.l, Space.m, Space.l, Space.x4),
+                sliver: SliverGrid.builder(
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: cols.clamp(2, 6), mainAxisSpacing: Space.l, crossAxisSpacing: Space.m, childAspectRatio: 0.66),
+                  itemCount: 6,
+                  itemBuilder: (_, _) => const _CardSkeleton(),
+                ),
+              )
             else if (list.isEmpty)
               SliverFillRemaining(
                 hasScrollBody: false,
@@ -374,67 +384,125 @@ class ProductCard extends ConsumerWidget {
     final price = priceText(l?.price ?? p.guessPrice.amount, (l?.currency.isNotEmpty ?? false) ? l!.currency : p.guessPrice.currency);
     final pic = p.pictures.firstOrNull;
     final wished = m.wished(p.key);
-    return GestureDetector(
-      onTap: () => openProduct(context, p),
-      onLongPress: () => _productMenu(context, ref, p, l),
-      child: Container(
-        decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(Radii.l), border: Border.all(color: AppColors.line)),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  if (pic != null)
-                    TgPicture(file: pic.file, mini: pic.mini, cacheWidth: 500)
-                  else
-                    Container(
-                      color: AppColors.surface2,
-                      padding: const EdgeInsets.all(Space.m),
-                      child: Center(child: Text(p.guessTitle, maxLines: 4, textAlign: TextAlign.center, style: context.text.bodySmall)),
-                    ),
-                  if (p.pictures.length > 1)
-                    Positioned(
-                      left: 6,
-                      bottom: 6,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(99)),
-                        child: Text('1/${p.pictures.length}', style: const TextStyle(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.w700)),
+    final inCart = m.inCart(p.key);
+    return Material(
+      color: AppColors.surface,
+      borderRadius: BorderRadius.circular(Radii.l),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => openProduct(context, p),
+        onLongPress: () => _productMenu(context, ref, p, l),
+        child: Ink(
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(Radii.l), border: Border.all(color: AppColors.line)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (pic != null)
+                      TgPicture(file: pic.file, mini: pic.mini, cacheWidth: 500, account: p.account)
+                    else
+                      Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [marketColor.withValues(alpha: 0.16), AppColors.surface2]),
+                        ),
+                        padding: const EdgeInsets.all(Space.m),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.sell_outlined, color: marketColor.withValues(alpha: 0.8)),
+                            const SizedBox(height: Space.s),
+                            Text(p.guessTitle, maxLines: 3, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center, style: context.text.bodySmall?.copyWith(color: AppColors.text2)),
+                          ],
+                        ),
+                      ),
+                    // A soft shade so the badges read on bright photos.
+                    const DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0x33000000), Color(0x00000000), Color(0x00000000), Color(0x40000000)], stops: [0, 0.3, 0.7, 1]),
                       ),
                     ),
-                  if (l?.legit != null) Positioned(left: 6, top: 6, child: LegitBadge(score: l!.legit!)),
-                  Positioned(
-                    right: 2,
-                    top: 2,
-                    child: IconButton(
-                      visualDensity: VisualDensity.compact,
-                      style: IconButton.styleFrom(backgroundColor: Colors.black38),
-                      icon: Icon(wished ? Icons.favorite_rounded : Icons.favorite_border_rounded, size: 18, color: wished ? const Color(0xFFFF4D6D) : Colors.white),
-                      onPressed: () => ref.read(marketProvider.notifier).toggleWish(MarketStore.snapshot(p, l)),
+                    if (p.pictures.length > 1)
+                      Positioned(
+                        left: 6,
+                        bottom: 6,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(99)),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.photo_library_outlined, size: 11, color: Colors.white),
+                              const SizedBox(width: 3),
+                              Text('${p.pictures.length}', style: const TextStyle(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.w700)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    if (inCart)
+                      Positioned(
+                        right: 6,
+                        bottom: 6,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(color: AppLook.minimalExplore ? Colors.black54 : marketColor, borderRadius: BorderRadius.circular(99)),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.shopping_cart_rounded, size: 11, color: Colors.white),
+                              SizedBox(width: 3),
+                              Text('In cart', style: TextStyle(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.w800)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    if (l?.legit != null) Positioned(left: 6, top: 6, child: LegitBadge(score: l!.legit!)),
+                    Positioned(
+                      right: 4,
+                      top: 4,
+                      child: Material(
+                        color: Colors.black38,
+                        shape: const CircleBorder(),
+                        child: InkWell(
+                          customBorder: const CircleBorder(),
+                          onTap: () => ref.read(marketProvider.notifier).toggleWish(MarketStore.snapshot(p, l)),
+                          child: Padding(
+                            padding: const EdgeInsets.all(6),
+                            child: Icon(wished ? Icons.favorite_rounded : Icons.favorite_border_rounded, size: 17, color: wished ? const Color(0xFFFF4D6D) : Colors.white),
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(Space.s + 2, Space.s, Space.s + 2, Space.s),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(l?.name ?? p.guessTitle, maxLines: 2, overflow: TextOverflow.ellipsis, style: context.text.bodyMedium?.copyWith(fontWeight: FontWeight.w600, height: 1.2)),
-                  const SizedBox(height: 3),
-                  if (price.isNotEmpty)
-                    Text(price, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: marketColor)),
-                  if (l?.rating != null) Padding(padding: const EdgeInsets.only(top: 2), child: Stars(rating: l!.rating!, size: 11)),
-                  const SizedBox(height: 2),
-                  Text('${p.store} · ${agoText(p.date)}', maxLines: 1, overflow: TextOverflow.ellipsis, style: context.text.labelSmall),
-                ],
+              Padding(
+                padding: const EdgeInsets.fromLTRB(Space.s + 2, Space.s, Space.s + 2, Space.s + 2),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (price.isNotEmpty)
+                      Text(price, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16, color: marketColor, letterSpacing: -0.2))
+                    else
+                      Text('Ask for price', style: context.text.labelMedium?.copyWith(color: AppColors.text3, fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 2),
+                    Text(l?.name ?? p.guessTitle, maxLines: 2, overflow: TextOverflow.ellipsis, style: context.text.bodyMedium?.copyWith(fontWeight: FontWeight.w600, height: 1.2)),
+                    if (l?.rating != null) Padding(padding: const EdgeInsets.only(top: 3), child: Stars(rating: l!.rating!, size: 11)),
+                    const SizedBox(height: 5),
+                    Row(
+                      children: [
+                        TgAvatar(chatId: p.chatId, title: p.store, size: 16, accountId: p.account),
+                        const SizedBox(width: 5),
+                        Expanded(child: Text('${p.store} · ${agoText(p.date)}', maxLines: 1, overflow: TextOverflow.ellipsis, style: context.text.labelSmall?.copyWith(color: AppColors.text3))),
+                      ],
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -460,7 +528,7 @@ class ProductRow extends ConsumerWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SizedBox(width: 110, height: 110, child: pic == null ? Container(color: AppColors.surface2, child: Icon(Icons.sell_outlined, color: AppColors.text3)) : TgPicture(file: pic.file, mini: pic.mini, cacheWidth: 300)),
+            SizedBox(width: 110, height: 110, child: pic == null ? Container(color: AppColors.surface2, child: Icon(Icons.sell_outlined, color: AppColors.text3)) : TgPicture(file: pic.file, mini: pic.mini, cacheWidth: 300, account: p.account)),
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.all(Space.m),
@@ -532,14 +600,16 @@ Future<void> _productMenu(BuildContext context, WidgetRef ref, Product p, Listin
 /// Opens the comments under a store's post; a group, or a channel without
 /// comments, opens at the post instead.
 Future<void> openProductComments(BuildContext context, WidgetRef ref, Product p) async {
+  // Comments and the chat open in the account the store was added from.
+  switchToOpen(context, ProviderScope.containerOf(context, listen: false), p.account);
   try {
-    final m = await ref.read(telegramClientProvider).send<td.Message>(td.GetMessage(chatId: p.chatId, messageId: p.messageId), limited: true);
+    final m = await ref.read(telegramClientFamily(p.account)).send<td.Message>(td.GetMessage(chatId: p.chatId, messageId: p.messageId), limited: true);
     if (m.interactionInfo?.replyInfo != null && context.mounted) {
       await openComments(context, ref, m);
       return;
     }
   } catch (_) {}
-  if (context.mounted) await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ChatViewScreen(chatId: p.chatId, openAt: p.messageId)));
+  if (context.mounted) await openChatInAccount(context, p.chatId, hint: p.account, openAt: p.messageId);
 }
 
 Future<void> shareProduct(BuildContext context, WidgetRef ref, Product p) async {
@@ -586,7 +656,7 @@ class _ProductScreenState extends ConsumerState<ProductScreen> {
   Future<void> _viewPicture(ProductPicture pic) async {
     final f = pic.file;
     if (f == null) return;
-    final path = await ref.read(fileLoaderProvider).download(f, priority: 20);
+    final path = await fileLoaderFor(ref, _p?.account).download(f, priority: 20);
     if (path != null && mounted) await openFullscreenFile(context, path, title: _p?.store);
   }
 
@@ -639,7 +709,7 @@ class _ProductScreenState extends ConsumerState<ProductScreen> {
               const SizedBox(width: Space.s),
               Expanded(
                 child: FilledButton.icon(
-                  style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(50), backgroundColor: marketColor, foregroundColor: Colors.white),
+                  style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(50), backgroundColor: marketColor, foregroundColor: AppLook.onBrand(marketColor)),
                   icon: const Icon(Icons.add_shopping_cart_rounded),
                   label: Text(inCart == null ? 'Add to cart' : 'In cart · ${inCart.qty} — add one'),
                   onPressed: () async {
@@ -684,7 +754,7 @@ class _ProductScreenState extends ConsumerState<ProductScreen> {
                           onPageChanged: (i) => setState(() => _page = i),
                           itemBuilder: (_, i) => GestureDetector(
                             onTap: () => _viewPicture(p.pictures[i]),
-                            child: TgPicture(file: p.pictures[i].file, mini: p.pictures[i].mini, cacheWidth: 1100),
+                            child: TgPicture(file: p.pictures[i].file, mini: p.pictures[i].mini, cacheWidth: 1100, account: p.account),
                           ),
                         ),
                         if (p.pictures.length > 1)
@@ -773,13 +843,14 @@ class _ProductScreenState extends ConsumerState<ProductScreen> {
                 const SizedBox(height: Space.l),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
-                  leading: TgAvatar(chatId: p.chatId, title: p.store, size: 44),
+                  leading: TgAvatar(chatId: p.chatId, title: p.store, size: 44, accountId: p.account),
                   title: Text(p.store, style: const TextStyle(fontWeight: FontWeight.w700)),
                   subtitle: Text('Visit the store', style: context.text.bodySmall),
                   trailing: const Icon(Icons.chevron_right_rounded),
                   onTap: () {
                     final s = m.sources.where((s) => s.chatId == p.chatId).firstOrNull;
-                    if (s != null) Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => StoreScreen(source: s)));
+                    // Not one of the picked stores (a shared link): its chat instead.
+                    s != null ? Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => StoreScreen(source: s))) : openChatInAccount(context, p.chatId, hint: p.account, openAt: p.messageId);
                   },
                 ),
                 if (!m.ai.enabled)
@@ -863,7 +934,7 @@ class _StoresTab extends ConsumerWidget {
                 children: [
                   Row(
                     children: [
-                      TgAvatar(chatId: s.chatId, title: s.title, size: 44),
+                      TgAvatar(chatId: s.chatId, title: s.title, size: 44, accountId: s.account),
                       const SizedBox(width: Space.m),
                       Expanded(
                         child: Column(
@@ -885,7 +956,7 @@ class _StoresTab extends ConsumerWidget {
                         onSelected: (v) async {
                           if (v == 'hide') await store.setSourceHidden(s.key, !s.hidden);
                           if (v == 'remove') await store.removeSource(s.key);
-                          if (v == 'open' && context.mounted) await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ChatViewScreen(chatId: s.chatId)));
+                          if (v == 'open' && context.mounted) await openChatInAccount(context, s.chatId, hint: s.account);
                         },
                         itemBuilder: (_) => [
                           const PopupMenuItem(value: 'open', child: Text('Open the chat')),
@@ -906,7 +977,7 @@ class _StoresTab extends ConsumerWidget {
                         separatorBuilder: (_, _) => const SizedBox(width: 6),
                         itemBuilder: (_, j) => ClipRRect(
                           borderRadius: BorderRadius.circular(Radii.s),
-                          child: SizedBox.square(dimension: 64, child: TgPicture(file: pics[j].file, mini: pics[j].mini, cacheWidth: 200)),
+                          child: SizedBox.square(dimension: 64, child: TgPicture(file: pics[j].file, mini: pics[j].mini, cacheWidth: 200, account: s.account)),
                         ),
                       ),
                     ),
@@ -953,10 +1024,10 @@ class _StoreScreenState extends ConsumerState<StoreScreen> {
       icon: Icons.storefront_rounded,
       color: marketColor,
       expandedHeight: 210,
-      actions: [IconButton(tooltip: 'Open the chat', icon: const Icon(Icons.forum_outlined), onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ChatViewScreen(chatId: s.chatId))))],
+      actions: [IconButton(tooltip: 'Open the chat', icon: const Icon(Icons.forum_outlined), onPressed: () => openChatInAccount(context, s.chatId, hint: s.account))],
       hero: Row(
         children: [
-          TgAvatar(chatId: s.chatId, title: s.title, size: 64),
+          TgAvatar(chatId: s.chatId, title: s.title, size: 64, accountId: s.account),
           const SizedBox(width: Space.l),
           Expanded(
             child: SectionHero(
@@ -980,7 +1051,7 @@ class _StoreScreenState extends ConsumerState<StoreScreen> {
           ),
         ),
         if (list.isEmpty && feed.loading.contains(s.key))
-          const SliverFillRemaining(hasScrollBody: false, child: Center(child: CircularProgressIndicator(strokeWidth: 2)))
+          const SliverToBoxAdapter(child: SkeletonGrid(count: 6, maxExtent: 240, childAspectRatio: 0.66))
         else
           SliverPadding(
             padding: const EdgeInsets.all(Space.l),
@@ -1042,7 +1113,7 @@ class _SavedThumbState extends ConsumerState<SavedThumb> {
       borderRadius: BorderRadius.circular(Radii.s),
       child: SizedBox.square(
         dimension: widget.size,
-        child: pic == null ? blur : TgPicture(file: pic.file, mini: pic.mini, cacheWidth: (widget.size * 3).round(), placeholder: blur),
+        child: pic == null ? blur : TgPicture(file: pic.file, mini: pic.mini, cacheWidth: (widget.size * 3).round(), placeholder: blur, account: _p?.account),
       ),
     );
   }
@@ -1056,30 +1127,94 @@ class _WishlistTab extends ConsumerWidget {
     final m = ref.watch(marketProvider);
     final store = ref.read(marketProvider.notifier);
     if (m.wishlist.isEmpty) {
-      return const SingleChildScrollView(child: SectionEmpty(icon: Icons.favorite_border_rounded, title: 'Your wishlist is empty', body: 'Tap the heart on any product to keep it here.'));
+      return const SingleChildScrollView(
+        child: SectionEmpty(icon: Icons.favorite_border_rounded, title: 'Your wishlist is empty', body: 'Tap the heart on any product to keep it here, then move it to your cart when you’re ready.'),
+      );
     }
     return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(Space.m, Space.m, Space.m, Space.x4),
-      itemCount: m.wishlist.length,
+      padding: const EdgeInsets.fromLTRB(Space.m, Space.m, Space.m, Space.x4 + 80),
+      itemCount: m.wishlist.length + 1,
       itemBuilder: (_, i) {
-        final w = m.wishlist[i];
+        if (i == 0) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(Space.xs, 0, Space.xs, Space.s),
+            child: Text('${m.wishlist.length} saved · swipe left to remove', style: context.text.labelSmall?.copyWith(color: AppColors.text3)),
+          );
+        }
+        final w = m.wishlist[i - 1];
+        final inCart = m.inCart(w.key);
         return Dismissible(
           key: ValueKey(w.key),
           direction: DismissDirection.endToStart,
-          onDismissed: (_) => store.removeWish(w.key),
-          background: Container(alignment: Alignment.centerRight, padding: const EdgeInsets.only(right: Space.xl), color: AppColors.danger, child: const Icon(Icons.delete_outline_rounded, color: Colors.white)),
-          child: ListTile(
-            leading: SavedThumb(item: w, size: 56),
-            title: Text(w.title, maxLines: 2, overflow: TextOverflow.ellipsis),
-            subtitle: Text([if (w.price != null) priceText(w.price, w.currency), w.store].join(' · '), style: context.text.bodySmall),
-            onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ProductScreen(productKey: w.key))),
-            trailing: IconButton(
-              tooltip: 'Move to cart',
-              icon: Icon(m.inCart(w.key) ? Icons.shopping_cart_rounded : Icons.add_shopping_cart_rounded, color: marketColor),
-              onPressed: () async {
-                await store.addToCart(w);
-                if (context.mounted) showSnack(context, 'Added to cart', icon: Icons.shopping_cart_outlined);
-              },
+          onDismissed: (_) {
+            store.removeWish(w.key);
+            ScaffoldMessenger.of(context)
+              ..hideCurrentSnackBar()
+              ..showSnackBar(SnackBar(
+                behavior: SnackBarBehavior.floating,
+                content: Text('Removed “${w.title}”', maxLines: 1, overflow: TextOverflow.ellipsis),
+                action: SnackBarAction(label: 'Undo', onPressed: () => store.toggleWish(w)),
+              ));
+          },
+          background: Container(
+            alignment: Alignment.centerRight,
+            padding: const EdgeInsets.only(right: Space.xl),
+            margin: const EdgeInsets.only(bottom: Space.s),
+            decoration: BoxDecoration(color: AppColors.danger, borderRadius: BorderRadius.circular(Radii.l)),
+            child: const Icon(Icons.delete_outline_rounded, color: Colors.white),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: Space.s),
+            child: Material(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(Radii.l),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ProductScreen(productKey: w.key))),
+                child: Ink(
+                  decoration: BoxDecoration(borderRadius: BorderRadius.circular(Radii.l), border: Border.all(color: AppColors.line)),
+                  padding: const EdgeInsets.all(Space.s),
+                  child: Row(
+                    children: [
+                      SavedThumb(item: w, size: 76),
+                      const SizedBox(width: Space.m),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(w.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600, height: 1.2)),
+                            const SizedBox(height: 3),
+                            Text(w.price != null ? priceText(w.price, w.currency) : 'Ask for price', style: TextStyle(fontWeight: FontWeight.w900, color: w.price != null ? marketColor : AppColors.text3)),
+                            const SizedBox(height: 2),
+                            Text(w.store, maxLines: 1, overflow: TextOverflow.ellipsis, style: context.text.labelSmall?.copyWith(color: AppColors.text3)),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: Space.s),
+                      FilledButton.tonal(
+                        style: FilledButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          shape: const StadiumBorder(),
+                          backgroundColor: inCart ? marketColor.withValues(alpha: 0.15) : marketColor,
+                          foregroundColor: inCart ? marketColor : AppLook.onBrand(marketColor),
+                        ),
+                        onPressed: () async {
+                          await store.addToCart(w);
+                          if (context.mounted) showSnack(context, inCart ? 'Added another to your cart' : 'Added to cart', icon: Icons.shopping_cart_outlined);
+                        },
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(inCart ? Icons.shopping_cart_rounded : Icons.add_shopping_cart_rounded, size: 16),
+                            const SizedBox(width: 4),
+                            Text(inCart ? 'In cart' : 'Add'),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
           ),
         );
@@ -1096,7 +1231,15 @@ class _CartTab extends ConsumerWidget {
     final m = ref.watch(marketProvider);
     final store = ref.read(marketProvider.notifier);
     if (m.cart.isEmpty) {
-      return const SingleChildScrollView(child: SectionEmpty(icon: Icons.shopping_cart_outlined, title: 'Your cart is empty', body: 'Add products to keep track of what you plan to buy and what it comes to.'));
+      return SingleChildScrollView(
+        child: SectionEmpty(
+          icon: Icons.shopping_cart_outlined,
+          title: 'Your cart is empty',
+          body: 'Add products to keep track of what you plan to buy and what it comes to.',
+          action: 'Browse the shop',
+          onAction: () => DefaultTabController.maybeOf(context)?.animateTo(0),
+        ),
+      );
     }
     final byStore = <String, List<SavedProduct>>{};
     for (final c in m.cart) {
@@ -1104,20 +1247,20 @@ class _CartTab extends ConsumerWidget {
     }
     final totals = m.cartTotals;
     return ListView(
-      padding: const EdgeInsets.fromLTRB(Space.m, Space.m, Space.m, Space.x4),
+      padding: const EdgeInsets.fromLTRB(Space.m, Space.m, Space.m, Space.x4 + 80),
       children: [
         for (final e in byStore.entries) ...[
           Padding(
             padding: const EdgeInsets.fromLTRB(Space.s, Space.m, Space.s, Space.xs),
             child: Row(
               children: [
-                TgAvatar(chatId: e.value.first.chatId, title: e.key, size: 26),
+                TgAvatar(chatId: e.value.first.chatId, title: e.key, size: 26, accountId: e.value.first.account),
                 const SizedBox(width: Space.s),
                 Expanded(child: Text(e.key, style: context.text.titleSmall?.copyWith(fontWeight: FontWeight.w700))),
                 TextButton.icon(
                   icon: const Icon(Icons.chat_bubble_outline_rounded, size: 16),
                   label: const Text('Contact'),
-                  onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ChatViewScreen(chatId: e.value.first.chatId, openAt: e.value.first.messageId))),
+                  onPressed: () => openChatInAccount(context, e.value.first.chatId, hint: e.value.first.account, openAt: e.value.first.messageId),
                 ),
               ],
             ),
@@ -1193,16 +1336,40 @@ class _CartTab extends ConsumerWidget {
         const SizedBox(height: Space.m),
         Container(
           padding: const EdgeInsets.all(Space.l),
-          decoration: BoxDecoration(color: marketColor.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(Radii.l), border: Border.all(color: marketColor.withValues(alpha: 0.4))),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [marketColor.withValues(alpha: 0.18), marketColor.withValues(alpha: 0.05)]),
+            borderRadius: BorderRadius.circular(Radii.xl),
+            border: Border.all(color: marketColor.withValues(alpha: 0.35)),
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('${m.cartCount} ${m.cartCount == 1 ? 'item' : 'items'} from ${byStore.length} ${byStore.length == 1 ? 'store' : 'stores'}', style: context.text.bodySmall),
-              const SizedBox(height: Space.xs),
-              if (totals.isEmpty) Text('No prices known', style: context.text.titleMedium),
-              for (final t in totals.entries) Text(priceText(t.value, t.key), style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: marketColor)),
-              if (m.cart.any((c) => c.price == null)) Text('Some items have no price', style: context.text.labelSmall),
+              Row(
+                children: [
+                  Icon(Icons.receipt_long_rounded, size: 18, color: marketColor),
+                  const SizedBox(width: Space.s),
+                  Text('Summary', style: context.text.titleSmall?.copyWith(fontWeight: FontWeight.w800)),
+                  const Spacer(),
+                  Text('${m.cartCount} ${m.cartCount == 1 ? 'item' : 'items'} · ${byStore.length} ${byStore.length == 1 ? 'store' : 'stores'}', style: context.text.bodySmall?.copyWith(color: AppColors.text2)),
+                ],
+              ),
               const SizedBox(height: Space.m),
+              Text('ESTIMATED TOTAL', style: context.text.labelSmall?.copyWith(color: AppColors.text3, letterSpacing: 1.1, fontWeight: FontWeight.w800)),
+              if (totals.isEmpty) Text('No prices known', style: context.text.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+              for (final t in totals.entries) Text(priceText(t.value, t.key), style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: marketColor, letterSpacing: -0.4)),
+              if (m.cart.any((c) => c.price == null)) Text('Some items have no price — ask the seller', style: context.text.labelSmall?.copyWith(color: AppColors.text3)),
+              const SizedBox(height: Space.s),
+              Text('Payment and delivery are arranged with each store in its chat.', style: context.text.bodySmall?.copyWith(color: AppColors.text2)),
+              const SizedBox(height: Space.m),
+              if (byStore.length == 1) ...[
+                FilledButton.icon(
+                  style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48), backgroundColor: marketColor, foregroundColor: AppLook.onBrand(marketColor)),
+                  icon: const Icon(Icons.chat_bubble_outline_rounded),
+                  label: Text('Contact ${byStore.keys.first}', maxLines: 1, overflow: TextOverflow.ellipsis),
+                  onPressed: () => openChatInAccount(context, m.cart.first.chatId, hint: m.cart.first.account, openAt: m.cart.first.messageId),
+                ),
+                const SizedBox(height: Space.s),
+              ],
               OutlinedButton.icon(
                 icon: const Icon(Icons.remove_shopping_cart_outlined),
                 label: const Text('Empty the cart'),
@@ -1220,14 +1387,80 @@ class _CartTab extends ConsumerWidget {
 
 // ---- AI settings ---------------------------------------------------------------
 
-class MarketAiSettingsScreen extends ConsumerWidget {
+AiRunStatus aiRunStatusOf(TidyStatus s) => switch (s) {
+  TidyStatus.idle => AiRunStatus.idle,
+  TidyStatus.running => AiRunStatus.running,
+  TidyStatus.paused => AiRunStatus.paused,
+  TidyStatus.stopping => AiRunStatus.stopping,
+  TidyStatus.stopped => AiRunStatus.stopped,
+  TidyStatus.done => AiRunStatus.done,
+};
+
+/// The Marketplace's AI tidy-up: the shared run page (progress, what the
+/// model is reading and thinking now, results) with its settings.
+class MarketAiSettingsScreen extends ConsumerStatefulWidget {
   const MarketAiSettingsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<MarketAiSettingsScreen> createState() => _MarketAiSettingsScreenState();
+}
+
+class _MarketAiSettingsScreenState extends ConsumerState<MarketAiSettingsScreen> {
+  late final MarketStore _store = ref.read(marketProvider.notifier);
+  late final _view = MappedListenable<TidyJob, AiRunView>(_store.job, (j) {
+    final m = ref.read(marketProvider);
+    final untidied = shopProducts(m, ref.read(marketFeedProvider)).where((x) => m.listings[x.$1.key] == null).length;
+    return AiRunView(
+      status: aiRunStatusOf(j.status),
+      model: j.model,
+      total: j.total,
+      done: j.done,
+      failed: j.failed,
+      current: j.current,
+      startedAt: j.startedAt,
+      endedAt: j.endedAt,
+      lastError: j.log.where((l) => l.error != null).firstOrNull?.error,
+      summary: m.ai.enabled ? '${m.listings.length} products tidied · $untidied loaded ones not yet' : 'Turn it on under Settings to tidy posts into clean listings.',
+      entries: [
+        for (final l in j.log)
+          AiRunEntry(
+            title: l.name,
+            subtitle: [l.store, if (l.listing?.price != null) priceText(l.listing!.price, l.listing!.currency), if (l.listing?.category.isNotEmpty ?? false) l.listing!.category, if (l.listing?.isProduct == false) 'not a product'].join(' · '),
+            error: l.error,
+            skipped: l.listing?.isProduct == false,
+            badge: l.listing?.legit == null ? null : LegitBadge(score: l.listing!.legit!),
+            at: l.at,
+            onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => TidyTraceScreen(log: l))),
+          ),
+      ],
+    );
+  });
+
+  @override
+  void dispose() {
+    _view.dispose();
+    super.dispose();
+  }
+
+  void _run() {
+    final m = ref.read(marketProvider);
+    if (!m.ai.enabled) {
+      showSnack(context, 'Turn on “Tidy posts with AI” under Settings first', icon: Icons.auto_awesome_rounded);
+      return;
+    }
+    final todo = [for (final x in shopProducts(m, ref.read(marketFeedProvider))) if (m.listings[x.$1.key] == null) x.$1].take(48).toList();
+    if (todo.isEmpty) {
+      showSnack(context, 'Every loaded product is already tidied', icon: Icons.check_rounded);
+      return;
+    }
+    unawaited(_store.enrich(todo));
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final m = ref.watch(marketProvider);
     final ai = m.ai;
-    final store = ref.read(marketProvider.notifier);
+    final store = _store;
     Future<void> set(MarketAi v) => store.setAi(v);
     Widget sw(IconData icon, String title, String sub, bool v, MarketAi Function(bool) f) => SwitchListTile(
       secondary: lead(Icon(icon)),
@@ -1236,36 +1469,19 @@ class MarketAiSettingsScreen extends ConsumerWidget {
       value: v,
       onChanged: ai.enabled ? (x) => set(f(x)) : null,
     );
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('AI tidy-up'),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: Space.s),
-            child: ValueListenableBuilder<TidyJob>(
-              valueListenable: store.job,
-              builder: (context, job, _) => FilledButton.tonalIcon(
-              icon: job.active ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.play_arrow_rounded),
-              label: Text(job.active ? 'Running' : 'Run now'),
-              onPressed: !ai.enabled || job.active
-                  ? null
-                  : () async {
-                      final todo = [for (final x in shopProducts(m, ref.read(marketFeedProvider))) if (m.listings[x.$1.key] == null) x.$1].take(48).toList();
-                      if (todo.isEmpty) {
-                        showSnack(context, 'Every loaded product is already tidied', icon: Icons.check_rounded);
-                        return;
-                      }
-                      unawaited(store.enrich(todo));
-                    },
-              ),
-            ),
-          ),
-        ],
-      ),
-      body: ListView(
-        padding: const EdgeInsets.only(bottom: Space.x4),
-        children: [
-          TidyMonitor(store: store),
+    return AiRunPage(
+      title: 'AI tidy-up',
+      icon: Icons.auto_awesome_rounded,
+      color: marketColor,
+      view: _view,
+      live: store.live,
+      about: 'Reads each post into a clean listing: name, price, details and a trust check.',
+      onRun: _run,
+      onPause: store.pauseTidy,
+      onResume: store.resumeTidy,
+      onStop: store.stopTidy,
+      onClear: store.clearTidyLog,
+      settings: [
           SwitchListTile(
             secondary: lead(const Icon(Icons.auto_awesome_rounded)),
             title: const Text('Tidy posts with AI', style: TextStyle(fontWeight: FontWeight.w700)),
@@ -1274,7 +1490,7 @@ class MarketAiSettingsScreen extends ConsumerWidget {
             onChanged: (v) => set(ai.copyWith(enabled: v)),
           ),
           const Divider(),
-          sw(Icons.bolt_rounded, 'Automatically', 'Tidy products as they show. Off: only when you ask.', ai.auto, (v) => ai.copyWith(auto: v)),
+          sw(Icons.bolt_rounded, 'Automatically', 'Tidy products as they show. Off: only when you ask. Pressing Stop pauses this until you run it again.', ai.auto, (v) => ai.copyWith(auto: v)),
           sw(Icons.title_rounded, 'Product names', 'A short clean name instead of the first line', ai.name, (v) => ai.copyWith(name: v)),
           sw(Icons.notes_rounded, 'Descriptions', 'What it is, its specs, what\'s included', ai.description, (v) => ai.copyWith(description: v)),
           sw(Icons.sell_outlined, 'Prices', 'The price and currency, however they\'re written', ai.price, (v) => ai.copyWith(price: v)),
@@ -1286,6 +1502,10 @@ class MarketAiSettingsScreen extends ConsumerWidget {
             child: Text('MODEL', style: context.text.labelSmall),
           ),
           AutomationModelTile(value: ai.model, onChanged: (v) => set(ai.copyWith(model: v))),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(Space.l, Space.xs, Space.l, 0),
+            child: Text('If this model fails, the run switches to your chat model for the rest.', style: context.text.bodySmall),
+          ),
           Padding(
             padding: const EdgeInsets.all(Space.l),
             child: TextFormField(
@@ -1307,8 +1527,7 @@ class MarketAiSettingsScreen extends ConsumerWidget {
               }
             },
           ),
-        ],
-      ),
+      ],
     );
   }
 }
@@ -1649,6 +1868,33 @@ class _CodeBlockState extends State<_CodeBlock> {
                 },
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A grey product card while the shop's first pages load.
+class _CardSkeleton extends StatelessWidget {
+  const _CardSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    Widget bar(double w, double h) => Container(width: w, height: h, decoration: BoxDecoration(color: AppColors.surface3, borderRadius: BorderRadius.circular(6)));
+    return Container(
+      decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(Radii.l), border: Border.all(color: AppColors.line)),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: Container(color: AppColors.surface2)),
+          Padding(
+            padding: const EdgeInsets.all(Space.s + 2),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [bar(60, 14), const SizedBox(height: 6), bar(double.infinity, 11), const SizedBox(height: 4), bar(90, 11), const SizedBox(height: 8), bar(70, 9)],
+            ),
           ),
         ],
       ),

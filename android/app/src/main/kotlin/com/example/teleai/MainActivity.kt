@@ -2,6 +2,7 @@ package com.example.teleai
 
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Bundle
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -20,6 +21,7 @@ class MainActivity : FlutterFragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         DeviceChannel.activity = this
+        PipChannel.activity = this
         BriefWidget.handle(intent)
         ShareChannel.handle(this, intent)
         AssistChannel.handle(intent)
@@ -33,10 +35,23 @@ class MainActivity : FlutterFragmentActivity() {
     override fun onResume() {
         super.onResume()
         DeviceChannel.activity = this
+        PipChannel.activity = this
+    }
+
+    /// Home or recents while a video plays: picture-in-picture.
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        PipChannel.onUserLeaveHint()
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        PipChannel.changed(isInPictureInPictureMode)
     }
 
     override fun onDestroy() {
         if (DeviceChannel.activity === this) DeviceChannel.activity = null
+        if (PipChannel.activity === this) PipChannel.activity = null
         super.onDestroy()
     }
 

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme.dart';
 import '../../infrastructure/telegram/accounts.dart';
 import '../auth/presentation/telegram_sign_in_screen.dart';
+import 'accounts_settings.dart' show confirmSignOut;
 import '../telegram/data/telegram_store.dart';
 import '../telegram/presentation/tg_avatar.dart';
 
@@ -74,6 +75,23 @@ Future<void> showAccountsSheet(BuildContext context, WidgetRef ref) {
                   TelegramSignInScreen.addAccount(context, ref);
                 },
               ),
+              if (accounts.signedIn.isNotEmpty) ...[
+                const Divider(height: Space.l),
+                ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: Space.l),
+                  leading: CircleAvatar(
+                    radius: 17,
+                    backgroundColor: AppColors.danger.withValues(alpha: 0.12),
+                    child: Icon(Icons.logout_rounded, size: 18, color: AppColors.danger),
+                  ),
+                  title: Text('Log out', style: TextStyle(color: AppColors.danger, fontWeight: FontWeight.w600)),
+                  subtitle: Text(accounts.active.label, style: context.text.bodySmall),
+                  onTap: () {
+                    Navigator.of(sheet).pop();
+                    confirmSignOut(context, ref);
+                  },
+                ),
+              ],
               const SizedBox(height: Space.s),
             ],
           ),

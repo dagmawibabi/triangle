@@ -17,6 +17,7 @@ import 'playlist_sources.dart';
 import 'playlist_widgets.dart';
 import 'playlists.dart';
 
+import '../sections/skeletons.dart';
 /// Opens the picker that finds audio in Telegram and in Files. With
 /// [playlistId] the picks go straight into that playlist; without, the
 /// person chooses one at the end. [chatId] starts inside one chat.
@@ -617,7 +618,7 @@ class _FilesSourceState extends ConsumerState<_FilesSource> with AutomaticKeepAl
   Widget build(BuildContext context) {
     super.build(context);
     final all = _all;
-    if (all == null) return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+    if (all == null) return const SingleChildScrollView(child: SkeletonRows(count: 9, art: 44, artRadius: 10));
     final q = _q.toLowerCase();
     final kinds = {for (final t in all) t.kind};
     final list = [

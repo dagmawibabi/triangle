@@ -12,6 +12,8 @@ import '../settings/data/settings.dart';
 import '../telegram/data/telegram_store.dart';
 import '../usage/usage.dart';
 import '../sections/section_kit.dart';
+import '../sections/ai_run.dart';
+import 'package:omni_ai/omni_ai.dart' show CancelToken;
 
 // The marketplace: channels and groups that sell things, read as shops.
 // Posts become products (pictures, a name, a price), optionally tidied by
@@ -254,6 +256,9 @@ class SavedProduct {
 
   int get chatId => parsePostKey(key)?.chatId ?? 0;
   int get messageId => parsePostKey(key)?.messageId ?? 0;
+
+  /// The account it was saved from.
+  String? get account => parsePostKey(key)?.account;
 
   SavedProduct copyWith({int? qty, String? note}) =>
       SavedProduct(key: key, title: title, price: price, currency: currency, store: store, mini: mini, qty: qty ?? this.qty, note: note ?? this.note, addedAt: addedAt);
@@ -645,22 +650,37 @@ class MarketStore extends Notifier<MarketState> {
   // 8 at a time, and the person can watch it, pause, continue or stop it.
 
   final job = ValueNotifier<TidyJob>(const TidyJob());
+
+  /// The call in flight: its thinking and answer as they stream.
+  final live = AiLiveNotifier();
   final _pending = <Product>[];
   final _queued = <String>{};
   Completer<int>? _run;
   Completer<void>? _resume;
   bool _stop = false;
+  CancelToken? _cancel;
+
+  /// Products already sent this session (tidied or not), so the automatic
+  /// pass doesn't send the same failing ones again and again.
+  final _tried = <String>{};
+
+  /// Stopped by the person: the automatic pass waits until they run it.
+  bool _held = false;
 
   bool get busy => _run != null;
 
   /// Queues [products] that have no listing yet (or all of them with
   /// [force]) for the model. Completes when the queue is done, with how
-  /// many were tidied.
-  Future<int> enrich(List<Product> products, {bool force = false}) {
+  /// many were tidied. [auto] passes (as products load) skip what was
+  /// tried this session and stay off after the person pressed Stop.
+  Future<int> enrich(List<Product> products, {bool force = false, bool auto = false}) {
+    if (auto && _held) return _run?.future ?? Future.value(0);
+    if (!auto) _held = false;
     final todo = [
       for (final p in products)
-        if ((force || !state.listings.containsKey(p.key)) && !_queued.contains(p.key)) p,
+        if ((force || !state.listings.containsKey(p.key)) && !_queued.contains(p.key) && !(auto && _tried.contains(p.key))) p,
     ];
+    _tried.addAll(todo.map((p) => p.key));
     if (todo.isEmpty) return _run?.future ?? Future.value(0);
     _pending.addAll(todo);
     _queued.addAll(todo.map((p) => p.key));
@@ -688,9 +708,11 @@ class MarketStore extends Notifier<MarketState> {
       while (_pending.isNotEmpty && !_stop) {
         if (_resume != null) await _resume!.future;
         if (_stop) break;
-        final batch = _pending.take(8).toList();
+        final batch = _pending.take(2).toList();
         _pending.removeRange(0, batch.length);
         job.value = job.value.copyWith(current: [for (final p in batch) p.guessTitle]);
+        live.begin(items: [for (final p in batch) p.guessTitle]);
+        _cancel = CancelToken();
         try {
           final got = await _ask(batch);
           done += got.length;
@@ -715,6 +737,10 @@ class MarketStore extends Notifier<MarketState> {
               ...job.value.log,
             ].take(80).toList(),
           );
+        } on AiCancelled {
+          // Stopped mid-call: these weren't tidied, nor did they fail.
+          _tried.removeAll(batch.map((p) => p.key));
+          break;
         } catch (e) {
           job.value = job.value.copyWith(
             done: job.value.done + batch.length,
@@ -727,6 +753,7 @@ class MarketStore extends Notifier<MarketState> {
           );
         } finally {
           _queued.removeAll(batch.map((p) => p.key));
+          _cancel = null;
         }
       }
     } finally {
@@ -735,6 +762,7 @@ class MarketStore extends Notifier<MarketState> {
         _queued.remove(p.key);
       }
       _pending.clear();
+      live.idle();
       job.value = job.value.copyWith(status: stopped ? TidyStatus.stopped : TidyStatus.done, current: const [], endedAt: DateTime.now());
       final r = _run;
       _run = null;
@@ -757,10 +785,13 @@ class MarketStore extends Notifier<MarketState> {
     r?.complete();
   }
 
-  /// Stops after the batch being asked; the rest of the queue is dropped.
+  /// Stops now: the call in flight is dropped, and so is the rest of the
+  /// queue. The automatic pass stays off until the person runs it again.
   void stopTidy() {
+    _held = true;
     if (_run == null) return;
     _stop = true;
+    _cancel?.cancel();
     resumeTidy();
     job.value = job.value.copyWith(status: TidyStatus.stopping);
   }
@@ -806,37 +837,49 @@ class MarketStore extends Notifier<MarketState> {
         'You turn messy Telegram sale posts into clean product listings for a shopping app. Posts are in any '
         'language (Amharic, English, Arabic…); write fields in the post\'s main language unless it is mixed, then '
         'English. Never invent specs or prices that aren\'t in the post. Answer with only a JSON array, one object '
-        'per post, each with "i" and these fields: ${want.join('; ')}.'
+        'per post, each with "i" and these fields: ${want.join('; ')}. Only "i" and "name" are required: leave '
+        'out any field the post does not make clear rather than guessing. Be quick; do not deliberate.'
         '${cfg.extra.trim().isEmpty ? '' : '\nThe user adds: ${cfg.extra.trim()}'}';
     final prompt = const JsonEncoder.withIndent('  ').convert(posts);
     final started = DateTime.now();
-    final result = await ai.generateText(model: model, system: system, prompt: prompt, maxOutputTokens: 400 * batch.length + 400).catchError((Object e) {
+    final main = canonicalModelId(settings.model);
+    final List<Map<String, dynamic>> list;
+    final AiCallResult result;
+    try {
+      // Room for thinking models to think and still answer.
+      (list, result) = await aiJsonCall(
+        ai: ai,
+        model: model,
+        fallbackModel: main == model ? null : main,
+        system: system,
+        prompt: prompt,
+        maxOutputTokens: 700 * batch.length + 1600,
+        cancel: _cancel ?? CancelToken(),
+        live: live,
+      );
+    } on AiCancelled {
+      rethrow;
+    } catch (e) {
       _trace = TidyTrace(model: model, system: system, prompt: prompt, error: aiErrorText(e), ms: DateTime.now().difference(started).inMilliseconds, at: started, batch: batch.length);
-      throw e;
-    });
+      rethrow;
+    }
     _trace = TidyTrace(
-      model: model,
+      model: result.model,
       system: system,
       prompt: prompt,
       response: result.text,
-      inputTokens: result.usage.inputTokens,
-      outputTokens: result.usage.outputTokens,
-      cost: result.usage.cost,
-      ms: DateTime.now().difference(started).inMilliseconds,
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
+      cost: result.cost,
+      ms: result.ms,
       at: started,
       batch: batch.length,
     );
     try {
-      ref.read(usageProvider.notifier).recordChat(model: model, usage: result.usage, info: ref.read(modelCatalogProvider).byId(model));
+      ref.read(usageProvider.notifier).recordChat(model: result.model, usage: result.usage, info: ref.read(modelCatalogProvider).byId(result.model));
     } catch (_) {}
     final out = <String, Listing>{};
-    final text = result.text.trim();
-    final start = text.indexOf('['), end = text.lastIndexOf(']');
-    if (start < 0 || end <= start) return out;
-    final list = jsonDecode(text.substring(start, end + 1));
-    if (list is! List) return out;
     for (final o in list) {
-      if (o is! Map) continue;
       final i = (o['i'] as num?)?.toInt();
       if (i == null || i < 0 || i >= batch.length) continue;
       final p = batch[i];
@@ -882,6 +925,11 @@ class MarketFeedState {
 
 /// Products read from the marketplace's sources, kept for the session.
 class MarketFeed extends Notifier<MarketFeedState> {
+  static final _memory = FeedMemory('market');
+
+  /// The posts read from each source this run, newest first, for [_memory].
+  final _ids = <String, List<int>>{};
+
   @override
   MarketFeedState build() => const MarketFeedState();
 
@@ -893,11 +941,20 @@ class MarketFeed extends Notifier<MarketFeedState> {
     try {
       final client = ref.read(telegramClientFamily(s.account));
       final title = ref.read(telegramStoreFamily(s.account)).chat(s.chatId)?.title ?? s.title;
+      // First time this run: what it showed last time, at once.
+      if (!more && !state.bySource.containsKey(s.key)) {
+        final kept = [for (final g in groupAlbums(await _memory.recall(client, s))) ?Product.fromMessages(g, s.account, title)];
+        if (kept.isNotEmpty && !state.bySource.containsKey(s.key)) {
+          state = MarketFeedState(bySource: {...state.bySource, s.key: kept}, loading: state.loading, next: state.next, errors: state.errors);
+        }
+      }
       var from = more ? (state.next[s.key] ?? 0) : 0;
       final found = <Product>[];
+      final ids = more ? [...?_ids[s.key]] : <int>[];
       var next = 0;
       for (var round = 0; round < 5 && found.length < want; round++) {
         final page = await loadChatPage(client, s.chatId, from: from, limit: 60);
+        ids.addAll(page.messages.map((m) => m.id));
         for (final g in groupAlbums(page.messages)) {
           final p = Product.fromMessages(g, s.account, title);
           if (p != null) found.add(p);
@@ -917,6 +974,8 @@ class MarketFeed extends Notifier<MarketFeedState> {
         next: {...state.next, s.key: next},
         errors: state.errors,
       );
+      _ids[s.key] = ids;
+      unawaited(_memory.remember(s, ids, max: 300));
     } catch (e) {
       state = MarketFeedState(
         bySource: state.bySource,

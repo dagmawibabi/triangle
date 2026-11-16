@@ -26,6 +26,7 @@ enum DeviceTriggerKind {
   wifiDisconnected('Wi-Fi disconnects', 'When the phone leaves Wi-Fi (any, or one network)'),
   arrive('Arrive somewhere', 'When you get to a place'),
   leave('Leave somewhere', 'When you leave a place'),
+  stay('Stay somewhere', 'When you have been at a place for a while'),
   missedCall('Missed call', 'When you miss a call (from anyone, or matching a name or number)'),
   newSms('New text message', 'When an SMS arrives (any, or matching a sender or words)'),
   appOpened('I open Triangle', 'When you open the app'),
@@ -43,7 +44,7 @@ enum DeviceTriggerKind {
   final String label;
   final String explanation;
 
-  bool get needsPlace => this == arrive || this == leave;
+  bool get needsPlace => this == arrive || this == leave || this == stay;
   bool get usesSsid => this == wifiConnected || this == wifiDisconnected;
   bool get usesQuery => this == missedCall || this == newSms || this == notification || this == moneyIn || this == moneyOut || this == pageChanged || this == youtubeUpload;
   bool get usesAmount => this == moneyIn || this == moneyOut || this == mobileData || this == storageLow;
@@ -70,7 +71,11 @@ class DeviceCondition {
     this.amount = 0,
     this.url = '',
     this.app = '',
+    this.dwellMinutes = 15,
   });
+
+  /// For [DeviceTriggerKind.stay]: how long at the place before it fires.
+  final int dwellMinutes;
 
   /// Money for money in/out, megabytes for mobile data, gigabytes free for
   /// storage.
@@ -117,6 +122,7 @@ class DeviceCondition {
     double? amount,
     String? url,
     String? app,
+    int? dwellMinutes,
   }) => DeviceCondition(
     kind: kind ?? this.kind,
     threshold: threshold ?? this.threshold,
@@ -130,6 +136,7 @@ class DeviceCondition {
     amount: amount ?? this.amount,
     url: url ?? this.url,
     app: app ?? this.app,
+    dwellMinutes: dwellMinutes ?? this.dwellMinutes,
   );
 
   Map<String, dynamic> toJson() => {
@@ -145,6 +152,7 @@ class DeviceCondition {
     if (kind.usesAmount && amount > 0) 'amount': amount,
     if (url.isNotEmpty) 'url': url,
     if (app.isNotEmpty) 'app': app,
+    if (kind == DeviceTriggerKind.stay) 'dwell_minutes': dwellMinutes,
   };
 
   static DeviceCondition? fromJson(Object? j) {
@@ -164,6 +172,7 @@ class DeviceCondition {
       amount: (j['amount'] as num?)?.toDouble() ?? 0,
       url: '${j['url'] ?? ''}',
       app: '${j['app'] ?? ''}',
+      dwellMinutes: (j['dwell_minutes'] as num?)?.toInt().clamp(1, 24 * 60) ?? 15,
     );
   }
 
@@ -176,6 +185,7 @@ class DeviceCondition {
     DeviceTriggerKind.wifiDisconnected => ssid.isEmpty ? 'Leaves Wi-Fi' : 'Leaves Wi-Fi "$ssid"',
     DeviceTriggerKind.arrive => 'Arrive at ${placeName.isEmpty ? 'a place' : placeName}',
     DeviceTriggerKind.leave => 'Leave ${placeName.isEmpty ? 'a place' : placeName}',
+    DeviceTriggerKind.stay => 'At ${placeName.isEmpty ? 'a place' : placeName} for $dwellMinutes min',
     DeviceTriggerKind.missedCall => query.isEmpty ? 'Missed call' : 'Missed call from "$query"',
     DeviceTriggerKind.newSms => query.isEmpty ? 'New text message' : 'Text matching "$query"',
     DeviceTriggerKind.appOpened => cooldownMinutes > 0 ? 'I open Triangle (at most every $cooldownMinutes min)' : 'I open Triangle',
@@ -224,6 +234,12 @@ class DeviceEventMonitor {
 
   DateTime? _lastPosition;
   Position? _position;
+
+  /// When the phone was first seen inside each "stay" owner's place.
+  final Map<String, DateTime> _insideSince = {};
+
+  /// The last position read, for the place picker's "you are here".
+  Position? get lastPosition => _position;
   int? _callsSince;
   int? _smsSince;
 
@@ -257,6 +273,7 @@ class DeviceEventMonitor {
   /// Forgets owners that are gone, so one made again starts fresh.
   void keepOnly(Set<String> owners) {
     _held.removeWhere((k, _) => !owners.contains(k));
+    _insideSince.removeWhere((k, _) => !owners.contains(k));
   }
 
   Future<List<DeviceFiring>> poll(List<(String, DeviceCondition)> owners) async {
@@ -307,7 +324,7 @@ class DeviceEventMonitor {
 
     final out = <DeviceFiring>[];
     for (final (id, c) in owners) {
-      final held = _holds(c, now);
+      final held = c.kind == DeviceTriggerKind.stay ? _stayed(id, c, now) : _holds(c, now);
       if (held == null) continue;
       final before = _held[id];
       _held[id] = held;
@@ -354,6 +371,7 @@ class DeviceEventMonitor {
         return c.kind == DeviceTriggerKind.wifiConnected ? on : !on;
       case DeviceTriggerKind.arrive:
       case DeviceTriggerKind.leave:
+      case DeviceTriggerKind.stay:
         final p = s.position;
         if (p == null || !c.hasPlace) return null;
         final d = Geolocator.distanceBetween(p.latitude, p.longitude, c.lat!, c.lng!);
@@ -361,7 +379,7 @@ class DeviceEventMonitor {
         final inside = d <= c.radius + math.min(p.accuracy, 100);
         final outside = d > c.radius * 1.2 + 50;
         if (!inside && !outside) return null;
-        return c.kind == DeviceTriggerKind.arrive ? inside : outside;
+        return c.kind == DeviceTriggerKind.leave ? outside : inside;
       case DeviceTriggerKind.offline:
         return s.online == null ? null : !s.online!;
       case DeviceTriggerKind.online:
@@ -384,6 +402,21 @@ class DeviceEventMonitor {
     }
   }
 
+  /// Whether the phone has been inside [c]'s place for its dwell time: true
+  /// once, the poll after it passes; false when outside.
+  bool? _stayed(String id, DeviceCondition c, _Snapshot s) {
+    final inside = _holds(c, s);
+    if (inside == null) return null;
+    if (!inside) {
+      _insideSince.remove(id);
+      return false;
+    }
+    final since = _insideSince[id] ??= DateTime.now();
+    // The first look already inside counts from now, so a trigger made while
+    // there still waits its full time.
+    return DateTime.now().difference(since).inMinutes >= c.dwellMinutes;
+  }
+
   String _event(DeviceCondition c, _Snapshot s) => switch (c.kind) {
     DeviceTriggerKind.batteryLow => 'The phone\'s battery is at ${s.battery}% and not charging.',
     DeviceTriggerKind.charging => 'The phone was plugged in to charge (battery ${s.battery ?? '?'}%).',
@@ -392,6 +425,7 @@ class DeviceEventMonitor {
     DeviceTriggerKind.wifiDisconnected => 'The phone left Wi-Fi${c.ssid.isEmpty ? '' : ' "${c.ssid}"'}.',
     DeviceTriggerKind.arrive => 'The user arrived at ${c.placeName.isEmpty ? 'the place' : c.placeName}.',
     DeviceTriggerKind.leave => 'The user left ${c.placeName.isEmpty ? 'the place' : c.placeName}.',
+    DeviceTriggerKind.stay => 'The user has been at ${c.placeName.isEmpty ? 'the place' : c.placeName} for ${c.dwellMinutes} minutes.',
     DeviceTriggerKind.offline => 'The phone lost its internet connection.',
     DeviceTriggerKind.online => "The phone's internet works again.",
     DeviceTriggerKind.mobileData => 'Mobile data used today passed ${c.amount.round()} MB (now ${((s.mobileToday ?? 0) / 1048576).round()} MB).',
@@ -619,6 +653,7 @@ final deviceEventsProvider = Provider<DeviceEventMonitor>(
     'wifi_disconnected' => DeviceTriggerKind.wifiDisconnected,
     'arrive' => DeviceTriggerKind.arrive,
     'leave' => DeviceTriggerKind.leave,
+    'stay' => DeviceTriggerKind.stay,
     'missed_call' => DeviceTriggerKind.missedCall,
     'new_sms' => DeviceTriggerKind.newSms,
     'app_opened' => DeviceTriggerKind.appOpened,
@@ -637,7 +672,7 @@ final deviceEventsProvider = Provider<DeviceEventMonitor>(
   final lat = (a['place_latitude'] as num?)?.toDouble();
   final lng = (a['place_longitude'] as num?)?.toDouble();
   if (kind.needsPlace && (lat == null || lng == null)) {
-    return (condition: null, error: 'arrive and leave need place_latitude and place_longitude.');
+    return (condition: null, error: 'arrive, leave and stay need place_latitude and place_longitude.');
   }
   final url = '${a['url'] ?? ''}'.trim();
   if (kind == DeviceTriggerKind.pageChanged && url.isEmpty) return (condition: null, error: 'page_changed needs url.');
@@ -661,6 +696,7 @@ final deviceEventsProvider = Provider<DeviceEventMonitor>(
       amount: amount,
       url: url,
       app: '${a['app'] ?? ''}'.trim(),
+      dwellMinutes: ((a['stay_minutes'] as num?)?.toInt() ?? 15).clamp(1, 24 * 60),
       cooldownMinutes: ((a['check_every_minutes'] as num?)?.toInt() ?? (kind.interval ? 60 : 30)).clamp(kind.interval ? 5 : 0, 24 * 60),
     ),
     error: null,

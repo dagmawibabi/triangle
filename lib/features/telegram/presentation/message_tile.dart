@@ -9,6 +9,7 @@ import 'package:intl/intl.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../core/widgets/swipe_back.dart';
 import '../../../app/theme.dart';
 import '../../../core/widgets/app_sheet.dart';
 import '../../../infrastructure/telegram/telegram_client.dart';
@@ -557,20 +558,18 @@ class MessageTile extends ConsumerWidget {
         maxWidth: MediaQuery.sizeOf(context).width * 0.8,
       ),
       child: Material(
-        color: out ? AppColors.accentDim : AppColors.surface2,
-        borderRadius: BorderRadius.only(
-          topLeft: const Radius.circular(Radii.xl),
-          topRight: const Radius.circular(Radii.xl),
-          bottomLeft: Radius.circular(out ? Radii.xl : 6),
-          bottomRight: Radius.circular(out ? 6 : Radii.xl),
-        ),
+        color: Colors.transparent,
+        borderRadius: bubbleRadius(out: out, grouped: grouped),
         clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: open,
-          onLongPress: actions,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 9, 12, 7),
-            child: content,
+        child: Ink(
+          decoration: bubbleDecoration(out: out),
+          child: InkWell(
+            onTap: open,
+            onLongPress: actions,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+              child: content,
+            ),
           ),
         ),
       ),
@@ -622,6 +621,45 @@ class MessageTile extends ConsumerWidget {
   ];
   static Color nameColor(String name) =>
       _names[name.hashCode.abs() % _names.length];
+}
+
+/// A bubble's corners: round all over, with the small "tail" corner on the
+/// sender's side; a message following another from the same sender keeps
+/// that side a little rounder so the run reads as one stack.
+BorderRadius bubbleRadius({required bool out, bool grouped = false}) {
+  const big = Radius.circular(18);
+  final tail = Radius.circular(grouped ? 10 : 5);
+  return BorderRadius.only(
+    topLeft: out ? big : (grouped ? const Radius.circular(10) : big),
+    topRight: out ? (grouped ? const Radius.circular(10) : big) : big,
+    bottomLeft: out ? big : tail,
+    bottomRight: out ? tail : big,
+  );
+}
+
+/// Your bubbles in a gradient of the accent drifting toward its neighbour
+/// hue, like Telegram's bubble themes; theirs in a quiet glassy surface.
+BoxDecoration bubbleDecoration({required bool out}) {
+  if (!out) {
+    return BoxDecoration(
+      color: AppColors.surface2.withValues(alpha: AppColors.isLight ? 0.96 : 0.94),
+    );
+  }
+  final a = AppColors.tint;
+  final bright = a.computeLuminance() > 0.6;
+  final hsl = HSLColor.fromColor(a);
+  final b = hsl.withHue((hsl.hue - 38) % 360).withLightness((hsl.lightness * 0.92).clamp(0, 1)).toColor();
+  final alpha = AppColors.isLight ? (bright ? 0.12 : 0.2) : (bright ? 0.15 : 0.34);
+  return BoxDecoration(
+    gradient: LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [
+        Color.alphaBlend(b.withValues(alpha: alpha), AppColors.surface2),
+        Color.alphaBlend(a.withValues(alpha: alpha), AppColors.surface2),
+      ],
+    ),
+  );
 }
 
 /// How often a repeating scheduled message goes out, in Telegram's words.
@@ -792,9 +830,11 @@ class _SwipeToReplyState extends State<SwipeToReply> with SingleTickerProviderSt
   Widget build(BuildContext context) {
     if (widget.onReply == null) return widget.child;
     final progress = (-_dx / _trigger).clamp(0.0, 1.0);
-    return GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onHorizontalDragUpdate: (d) {
+    // Only a leftward drag is a reply; a rightward one is left to the
+    // page's swipe-back.
+    return DirectionalDrag(
+      allow: (dx) => dx < 0,
+      onUpdate: (d) {
         final next = (_dx + d.delta.dx).clamp(-_trigger * 1.4, 0.0);
         final armed = -next >= _trigger;
         if (armed && !_armed) HapticFeedback.selectionClick();
@@ -803,8 +843,8 @@ class _SwipeToReplyState extends State<SwipeToReply> with SingleTickerProviderSt
           _armed = armed;
         });
       },
-      onHorizontalDragEnd: (_) => _end(),
-      onHorizontalDragCancel: _end,
+      onEnd: (_) => _end(),
+      onCancel: _end,
       child: Stack(
         alignment: Alignment.centerRight,
         children: [

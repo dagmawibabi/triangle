@@ -237,12 +237,20 @@ final _localPhoneTools = <TelegramTool>[
         'Kinds: ask (prompt: an instruction for the assistant), tool (tool + args: one tool with fixed inputs, no AI; '
         'not for tools that delete or spend), notify (title, body), wait (seconds), condition (test: contains, '
         'not_contains, is_empty, not_empty, succeeded or failed; value; otherwise: stop or skip_next). Triggers: '
-        'manual, daily (at "HH:MM", days 1 Monday … 7 Sunday), interval (every_minutes, 15 or more) or phone '
-        '(phone_event and its details).',
+        'manual, daily (at "HH:MM", days 1 Monday … 7 Sunday), interval (every_minutes, 15 or more), phone '
+        '(phone_event and its details) or location (location_event arrive, leave or stay; the place as saved_place or '
+        'place_latitude + place_longitude; optional place_radius_m, stay_minutes, days, active_from/active_until and '
+        'once_per_day).',
     parameters: _obj({
       'name': {'type': 'string', 'description': 'Short name, e.g. "Good morning".'},
       'description': {'type': 'string', 'description': 'What it is for, in a sentence.'},
-      'trigger': {'type': 'string', 'enum': ['manual', 'daily', 'interval', 'phone'], 'description': 'What starts it.'},
+      'trigger': {'type': 'string', 'enum': ['manual', 'daily', 'interval', 'phone', 'location'], 'description': 'What starts it.'},
+      'location_event': {'type': 'string', 'enum': ['arrive', 'leave', 'stay'], 'description': 'For location: arriving at the place, leaving it, or staying there stay_minutes.'},
+      'saved_place': {'type': 'string', 'description': 'For location: a place saved with saved_places (e.g. "Home"), instead of coordinates.'},
+      'stay_minutes': {'type': 'integer', 'description': 'For location with stay: minutes at the place before it runs (default 15).'},
+      'active_from': {'type': 'string', 'description': 'For location: only from this local time "HH:MM" (give active_until too).'},
+      'active_until': {'type': 'string', 'description': 'For location: only until this local time "HH:MM"; earlier than active_from spans midnight.'},
+      'once_per_day': {'type': 'boolean', 'description': 'For location: run at most once a day.'},
       'at': {'type': 'string', 'description': 'For daily: local time "HH:MM".'},
       'days': {'type': 'array', 'items': {'type': 'integer', 'description': 'A weekday, 1 Monday … 7 Sunday.'}, 'description': 'For daily: weekdays, 1 Monday … 7 Sunday. Default every day.'},
       'every_minutes': {'type': 'integer', 'description': 'For interval: how often, 15 or more.'},
@@ -275,6 +283,26 @@ final _localPhoneTools = <TelegramTool>[
     }, ['name', 'trigger', 'steps']),
   ),
   TelegramTool(
+    name: 'saved_places',
+    label: 'Managing saved places',
+    category: ToolCategory.routines,
+    cost: ToolCost.device,
+    description:
+        'The user\'s saved places (Home, Work, Gym…) that location routines use. list (default), save (place_name, '
+        'place_latitude, place_longitude, optional place_radius_m, emoji, address), remove (place_name), or search '
+        '(query: an address or landmark, from OpenStreetMap, returns coordinates).',
+    parameters: _obj({
+      'action': {'type': 'string', 'enum': ['list', 'save', 'remove', 'search'], 'description': 'What to do.'},
+      'place_name': {'type': 'string', 'description': 'The place\'s name.'},
+      'place_latitude': {'type': 'number', 'description': 'Latitude.'},
+      'place_longitude': {'type': 'number', 'description': 'Longitude.'},
+      'place_radius_m': {'type': 'integer', 'description': 'How near counts as there, in metres (default 150).'},
+      'emoji': {'type': 'string', 'description': 'An emoji for it.'},
+      'address': {'type': 'string', 'description': 'Its address, to show.'},
+      'query': {'type': 'string', 'description': 'For search: what to look for.'},
+    }, const []),
+  ),
+  TelegramTool(
     name: 'update_routine',
     label: 'Changing a routine',
     category: ToolCategory.routines,
@@ -304,11 +332,11 @@ const phoneTriggerParams = <String, dynamic>{
   'phone_event': {
     'type': 'string',
     'enum': [
-      'battery_low', 'charging', 'unplugged', 'wifi_connected', 'wifi_disconnected', 'arrive', 'leave', 'missed_call', 'new_sms', 'app_opened', //
+      'battery_low', 'charging', 'unplugged', 'wifi_connected', 'wifi_disconnected', 'arrive', 'leave', 'stay', 'missed_call', 'new_sms', 'app_opened', //
       'notification', 'money_in', 'money_out', 'page_changed', 'offline', 'online', 'mobile_data', 'storage_low', 'youtube_upload',
     ],
     'description':
-        'For a phone trigger: what happens on the phone (Android). arrive/leave need place_latitude and place_longitude. notification: '
+        'For a phone trigger: what happens on the phone (Android). arrive/leave/stay need place_latitude and place_longitude (stay also stay_minutes). notification: '
         'another app’s notification (app, match); money_in / money_out: a bank or wallet SMS (amount = minimum, match = who); '
         'page_changed: a web page changes, or match words appear on it (url, check_every_minutes); offline / online: the internet '
         'drops or returns; mobile_data: today’s mobile data passes amount MB; storage_low: free space under amount GB; '

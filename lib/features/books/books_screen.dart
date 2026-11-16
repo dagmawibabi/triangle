@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../account/account_router.dart' show openChatInAccount;
 import 'dart:convert';
 import 'dart:io';
 
@@ -15,13 +16,15 @@ import '../../infrastructure/telegram/accounts.dart';
 import '../playlists/add_tracks_screen.dart' show pickTelegramChat;
 import '../sections/section_kit.dart';
 import '../telegram/data/telegram_tools.dart' show toolRunnerFamily;
-import '../telegram/presentation/chat_view_screen.dart';
 import '../telegram/presentation/tg_avatar.dart';
 import 'book_parsers.dart';
 import 'book_reader.dart';
 import 'books.dart';
+import 'reading_stats_screen.dart';
 
-const booksColor = Color(0xFF8B5CF6);
+import '../sections/skeletons.dart';
+/// The section's colour; the app's monochrome one in the minimal look.
+Color get booksColor => AppLook.brand(const Color(0xFF8B5CF6));
 
 class BooksScreen extends ConsumerStatefulWidget {
   const BooksScreen({super.key});
@@ -86,6 +89,7 @@ class _BooksScreenState extends ConsumerState<BooksScreen> {
         Tab(height: 46, child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.insights_rounded, size: 16), SizedBox(width: 6), Text('Stats')])),
       ],
       actions: [
+        IconButton(tooltip: 'Reading stats', icon: const Icon(Icons.insights_rounded), onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ReadingStatsScreen()))),
         IconButton(tooltip: 'Add from your phone', icon: const Icon(Icons.upload_file_rounded), onPressed: _importFile),
         IconButton(tooltip: 'Book sources', icon: const Icon(Icons.add_link_rounded), onPressed: _sources),
       ],
@@ -155,6 +159,9 @@ class BookCover extends StatelessWidget {
   }
 }
 
+/// Book covers waiting to load.
+const _coverSkeleton = Align(alignment: Alignment.topCenter, child: SkeletonGrid(count: 9, maxExtent: 140, childAspectRatio: 0.55, radius: 8));
+
 void openBookDetail(BuildContext context, Book b) => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => BookDetailScreen(bookId: b.id)));
 
 // ---- library -------------------------------------------------------------------
@@ -180,6 +187,7 @@ class _LibraryTabState extends ConsumerState<_LibraryTab> with AutomaticKeepAliv
     super.build(context);
     final s = ref.watch(booksProvider);
     final store = ref.read(booksProvider.notifier);
+    if (s.books.isEmpty && !store.isReady) return const SkeletonPage(child: _coverSkeleton);
     if (s.books.isEmpty) {
       return SingleChildScrollView(
         child: Column(
@@ -429,7 +437,7 @@ class _DiscoverTabState extends ConsumerState<_DiscoverTab> with AutomaticKeepAl
   }
 
   Widget _thumb(BookPost p) => p.thumb != null || p.mini != null
-      ? TgPicture(file: p.thumb, mini: p.mini, cacheWidth: 300)
+      ? TgPicture(file: p.thumb, mini: p.mini, cacheWidth: 300, account: p.account)
       : Container(
           decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [booksColor.withValues(alpha: 0.35), booksColor.withValues(alpha: 0.12)])),
           padding: const EdgeInsets.all(Space.s),
@@ -447,6 +455,10 @@ class _DiscoverTabState extends ConsumerState<_DiscoverTab> with AutomaticKeepAl
     super.build(context);
     final s = ref.watch(booksProvider);
     final feed = ref.watch(bookFeedProvider);
+    final account = ref.watch(activeAccountIdProvider);
+    if (s.sources.isEmpty && !ref.read(booksProvider.notifier).isReady) return const SkeletonPage(child: _coverSkeleton);
+    // Still coming: a source of this account not loaded (or failed) yet.
+    final pending = s.sources.any((x) => x.account == account && !feed.bySource.containsKey(x.key) && !feed.errors.containsKey(x.key));
     if (s.sources.isEmpty) {
       return SingleChildScrollView(
         child: SectionEmpty(icon: Icons.explore_outlined, title: 'No book sources', body: 'Pick channels and groups that share books. Their EPUBs, PDFs and documents show up here.', action: 'Add sources', onAction: widget.onSources),
@@ -498,7 +510,10 @@ class _DiscoverTabState extends ConsumerState<_DiscoverTab> with AutomaticKeepAl
             ),
           ),
           if (list.isEmpty)
-            SliverFillRemaining(hasScrollBody: false, child: Center(child: feed.anyLoading ? const CircularProgressIndicator(strokeWidth: 2) : Text('No books found', style: context.text.bodySmall)))
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: (feed.anyLoading || pending) && all.isEmpty ? _coverSkeleton : Center(child: Text('No books found', style: context.text.bodySmall)),
+            )
           else if (_grid)
             SliverPadding(
               padding: const EdgeInsets.all(Space.l),
@@ -552,7 +567,7 @@ class _DiscoverTabState extends ConsumerState<_DiscoverTab> with AutomaticKeepAl
                       width: 42,
                       height: 60,
                       child: p.thumb != null || p.mini != null
-                          ? TgPicture(file: p.thumb, mini: p.mini, cacheWidth: 150)
+                          ? TgPicture(file: p.thumb, mini: p.mini, cacheWidth: 150, account: p.account)
                           : Container(color: booksColor.withValues(alpha: 0.15), alignment: Alignment.center, child: Text(p.format.toUpperCase(), style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: booksColor))),
                     ),
                   ),
@@ -959,6 +974,14 @@ class _StatsTab extends ConsumerWidget {
     return ListView(
       padding: const EdgeInsets.all(Space.l),
       children: [
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ReadingStatsScreen())),
+            icon: const Icon(Icons.insights_rounded, size: 18),
+            label: const Text('Full reading stats'),
+          ),
+        ),
         Row(
           children: [
             SizedBox.square(
@@ -1070,7 +1093,7 @@ class BookDetailScreen extends ConsumerWidget {
                   final a = await _askName(context, title: 'Author', initial: b.author);
                   if (a != null) await store.update(b.id, (x) => x.copyWith(author: a));
                 case 'post':
-                  await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ChatViewScreen(chatId: b.chatId!, openAt: b.messageId)));
+                  await openChatInAccount(context, b.chatId!, hint: b.account, openAt: b.messageId);
                 case 'share':
                   final chat = await pickTelegramChat(context, title: 'Share to…');
                   if (chat != null) await ref.read(toolRunnerFamily(b.account!)).forwardTo(chat, b.chatId!, [b.messageId!]);
@@ -1143,7 +1166,7 @@ class BookDetailScreen extends ConsumerWidget {
             )
           else
             FilledButton.icon(
-              style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(50), backgroundColor: booksColor, foregroundColor: Colors.white),
+              style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(50), backgroundColor: booksColor, foregroundColor: AppLook.onBrand(booksColor)),
               icon: Icon(b.downloaded ? Icons.menu_book_rounded : Icons.download_rounded),
               label: Text(b.progress > 0 && b.status != ReadStatus.finished ? 'Continue · ${(b.progress * 100).round()}%' : (b.downloaded ? 'Read' : (store.paused.value.contains(b.id) ? 'Resume download' : 'Download and read'))),
               onPressed: () => openBook(context, ref, b),
@@ -1204,7 +1227,7 @@ class BookDetailScreen extends ConsumerWidget {
           if (b.chatId != null)
             ListTile(
               contentPadding: EdgeInsets.zero,
-              leading: TgAvatar(chatId: b.chatId, title: b.source, size: 32),
+              leading: TgAvatar(chatId: b.chatId, title: b.source, size: 32, accountId: b.account),
               title: Text(b.source),
               subtitle: Text('Where it was posted', style: context.text.bodySmall),
             ),

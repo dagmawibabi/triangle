@@ -157,7 +157,7 @@ td.FormattedText _linkify(td.FormattedText formatted) {
   final text = formatted.text;
   final entities = [...formatted.entities];
   final matches = RegExp(
-    r'(?:(?:https?://|www\.)[^\s<>()]+|(?<![\w@])@[A-Za-z][A-Za-z0-9_]{4,31}|(?<![\w])#[\p{L}\p{N}_]{2,}|(?<![\w])\$[A-Za-z]{1,8}(?![\w]))',
+    r'(?:(?:https?://|www\.)[^\s<>()]+|(?<![\w@/.])(?:[a-z0-9-]+\.)+(?:com|org|net|io|me|app|dev|co|ai|tv|gg|xyz|info|ly|to|so|link|us|uk|et|site|store|shop|news|live|pro|biz)(?:/[^\s<>()]*)?(?![\w.])|(?<![\w@])@[A-Za-z][A-Za-z0-9_]{4,31}|(?<![\w])#[\p{L}\p{N}_]{2,}|(?<![\w])\$[A-Za-z]{1,8}(?![\w]))',
     caseSensitive: false,
     unicode: true,
   ).allMatches(text);

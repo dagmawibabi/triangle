@@ -1,3 +1,5 @@
+import '../../cinema/cinema.dart';
+import '../../cinema/cinema_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -42,6 +44,10 @@ import '../../books/books.dart';
 import '../../books/books_screen.dart';
 import '../../gallery/gallery.dart';
 import '../../gallery/gallery_screen.dart';
+import '../../opportunity/opportunity.dart';
+import '../../opportunity/opportunity_screen.dart';
+import '../../podcasts/podcast_store.dart';
+import '../../podcasts/podcasts_screen.dart';
 import '../../sections/section_kit.dart' show sectionsDrawerOpenProvider, exploreEnabledProvider;
 
 /// Past conversations, grouped by when they were last used.
@@ -185,10 +191,19 @@ class _HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                       open: settings.drawerChatsOpen,
                       onOpen: prefs.setDrawerChatsOpen,
                       children: [
+                        if (settings.drawerShows('chats.all'))
+                          _BrowseTile(
+                            icon: Icons.forum_outlined,
+                            title: 'All',
+                            count: allChats(store).length,
+                            unread: allChats(store).where((c) => c.hasUnread && !c.isMuted).length,
+                            onTap: () => go((_) => const ChatListScreen(all: true)),
+                          ),
                         for (final section in BrowseSection.values)
                           if (settings.drawerShows('chats.${section.name}'))
                           _BrowseTile(
-                            section: section,
+                            icon: section.icon,
+                            title: section.title,
                             count: section == BrowseSection.contacts
                                 ? null
                                 : chatsIn(store, section).length,
@@ -274,8 +289,9 @@ class _HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                   // groups read as a shop, a streaming service, a library
                   // and a photo gallery.
                   if (ref.watch(exploreEnabledProvider) &&
-                      ((telegram && (ref.watch(marketProvider).inDrawer || ref.watch(moviesProvider).inDrawer || ref.watch(galleryProvider).inDrawer)) ||
+                      ((telegram && (ref.watch(marketProvider).inDrawer || ref.watch(moviesProvider).inDrawer || ref.watch(cinemaProvider).inDrawer || ref.watch(galleryProvider).inDrawer || ref.watch(opportunityProvider).inDrawer)) ||
                           ref.watch(booksProvider).inDrawer ||
+                          ref.watch(podcastsProvider.select((p) => p.inDrawer)) ||
                           ref.watch(playlistsProvider).inDrawer))
                     _DrawerSection(
                       title: 'Explore',
@@ -287,7 +303,7 @@ class _HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                             mark: Icon(Icons.queue_music_rounded, size: 19, color: AppColors.text2),
                             title: 'Music',
                             count: ref.watch(playlistsProvider).playlists.isEmpty ? null : ref.watch(playlistsProvider).playlists.length,
-                            playing: ref.watch(audioCenterProvider.select((a) => a.playing && a.queueTag != null)),
+                            playing: _playingKind(ref) == 'music',
                             onTap: () => go((_) => const PlaylistsScreen()),
                           ),
                         if (telegram && ref.watch(moviesProvider).inDrawer)
@@ -297,10 +313,25 @@ class _HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                             count: ref.watch(moviesProvider).continueWatching.isEmpty ? null : ref.watch(moviesProvider).continueWatching.length,
                             onTap: () => go((_) => const MoviesScreen()),
                           ),
+                        if (telegram && ref.watch(cinemaProvider).inDrawer)
+                          _CustomFolderTile(
+                            mark: Icon(Icons.theaters_outlined, size: 19, color: AppColors.text2),
+                            title: 'Cinema',
+                            count: ref.watch(cinemaProvider).watchlist.isEmpty ? null : ref.watch(cinemaProvider).watchlist.length,
+                            onTap: () => go((_) => const CinemaScreen()),
+                          ),
+                        if (ref.watch(podcastsProvider.select((p) => p.inDrawer)))
+                          _CustomFolderTile(
+                            mark: Icon(Icons.podcasts_rounded, size: 19, color: AppColors.text2),
+                            title: 'Podcasts',
+                            count: _goingCount(ref.watch(podcastsProvider.select((p) => p.latest.length))),
+                            playing: _playingKind(ref) == 'podcasts',
+                            onTap: () => go((_) => const PodcastsScreen()),
+                          ),
                         if (ref.watch(booksProvider).inDrawer)
                           _CustomFolderTile(
                             mark: Icon(Icons.auto_stories_outlined, size: 19, color: AppColors.text2),
-                            title: 'Books',
+                            title: 'Library',
                             count: ref.watch(booksProvider).books.isEmpty ? null : ref.watch(booksProvider).books.length,
                             onTap: () => go((_) => const BooksScreen()),
                           ),
@@ -310,6 +341,13 @@ class _HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                             title: 'Gallery',
                             count: null,
                             onTap: () => go((_) => const GalleryScreen()),
+                          ),
+                        if (telegram && ref.watch(opportunityProvider).inDrawer)
+                          _CustomFolderTile(
+                            mark: Icon(Icons.rocket_launch_outlined, size: 19, color: AppColors.text2),
+                            title: 'Opportunity',
+                            count: _goingCount(ref.watch(opportunityProvider.select((o) => o.savedEvents.where((e) => e.status == EventStatus.going && (e.start?.isAfter(DateTime.now()) ?? false)).length))),
+                            onTap: () => go((_) => const OpportunityScreen()),
                           ),
                         if (telegram && ref.watch(marketProvider).inDrawer)
                           _CustomFolderTile(
@@ -747,12 +785,14 @@ class _HistoryTile extends StatelessWidget {
 
 class _BrowseTile extends StatelessWidget {
   const _BrowseTile({
-    required this.section,
+    required this.icon,
+    required this.title,
     required this.count,
     required this.unread,
     required this.onTap,
   });
-  final BrowseSection section;
+  final IconData icon;
+  final String title;
   final int? count;
   final int unread;
   final VoidCallback onTap;
@@ -766,9 +806,9 @@ class _BrowseTile extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: Space.m, vertical: 11),
         child: Row(
           children: [
-            ...leadRow(Icon(section.icon, size: 20, color: AppColors.text2), Space.m + 2),
+            ...leadRow(Icon(icon, size: 20, color: AppColors.text2), Space.m + 2),
             Expanded(
-              child: Text(section.title, style: context.text.bodyMedium),
+              child: Text(title, style: context.text.bodyMedium),
             ),
             if (unread > 0)
               Container(
@@ -870,4 +910,17 @@ class _CustomFolderTile extends StatelessWidget {
       ),
     ),
   );
+}
+
+int? _goingCount(int n) => n == 0 ? null : n;
+
+/// What the player is playing now, for the drawer's animations: 'music'
+/// (a music playlist), 'podcasts' (an episode, radio or a podcast
+/// playlist), or null.
+String? _playingKind(WidgetRef ref) {
+  final (playing, tag) = ref.watch(audioCenterProvider.select((a) => (a.playing, a.queueTag)));
+  if (!playing || tag == null) return null;
+  if (tag == 'podcasts' || tag == 'radio') return 'podcasts';
+  final podcastList = ref.watch(playlistsProvider.select((s) => s.playlists.any((p) => p.id == tag && p.isPodcast)));
+  return podcastList ? 'podcasts' : 'music';
 }

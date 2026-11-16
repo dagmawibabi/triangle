@@ -395,7 +395,7 @@ class _ProductsCard extends ConsumerWidget {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    pic == null ? Container(color: AppColors.surface2, child: Icon(Icons.sell_outlined, color: AppColors.text3)) : TgPicture(file: pic.file, mini: pic.mini, cacheWidth: 400),
+                    pic == null ? Container(color: AppColors.surface2, child: Icon(Icons.sell_outlined, color: AppColors.text3)) : TgPicture(file: pic.file, mini: pic.mini, cacheWidth: 400, account: prod?.account),
                     if (legit != null) Positioned(left: 6, top: 6, child: LegitBadge(score: legit)),
                   ],
                 ),
@@ -746,7 +746,7 @@ class _GalleryCard extends ConsumerWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            TgPicture(file: list[i].thumb, mini: list[i].mini, cacheWidth: 300),
+            TgPicture(file: list[i].thumb, mini: list[i].mini, cacheWidth: 300, account: list[i].account),
             if (list[i].video) const Positioned(right: 4, bottom: 4, child: Icon(Icons.play_circle_fill_rounded, size: 16, color: Colors.white)),
           ],
         ),

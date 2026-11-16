@@ -15,7 +15,8 @@ enum RoutineTriggerKind {
   manual('Only when I run it', Icons.touch_app_outlined),
   daily('At a time of day', Icons.schedule_rounded),
   interval('Every so often', Icons.repeat_rounded),
-  device('On the phone', Icons.phone_android_rounded);
+  device('On the phone', Icons.phone_android_rounded),
+  location('At a place', Icons.place_outlined);
 
   const RoutineTriggerKind(this.label, this.icon);
   final String label;
@@ -31,9 +32,25 @@ class RoutineTrigger {
     this.everyMinutes = 60,
     this.device,
     this.quietAtNight = false,
+    this.place,
+    this.from = '',
+    this.until = '',
+    this.oncePerDay = false,
   });
 
   final RoutineTriggerKind kind;
+
+  /// For location: where and what (arrive, leave or stay), as a phone
+  /// condition the device monitor watches.
+  final DeviceCondition? place;
+
+  /// For location: only between these local times ("HH:MM"; empty for any
+  /// time). [until] before [from] spans midnight.
+  final String from;
+  final String until;
+
+  /// For location: at most one run a day.
+  final bool oncePerDay;
 
   /// For daily: "HH:MM" local time, on [days] (1 Monday … 7 Sunday).
   final String at;
@@ -55,6 +72,10 @@ class RoutineTrigger {
     int? everyMinutes,
     DeviceCondition? device,
     bool? quietAtNight,
+    DeviceCondition? place,
+    String? from,
+    String? until,
+    bool? oncePerDay,
   }) => RoutineTrigger(
     kind: kind ?? this.kind,
     at: at ?? this.at,
@@ -62,15 +83,23 @@ class RoutineTrigger {
     everyMinutes: everyMinutes ?? this.everyMinutes,
     device: device ?? this.device,
     quietAtNight: quietAtNight ?? this.quietAtNight,
+    place: place ?? this.place,
+    from: from ?? this.from,
+    until: until ?? this.until,
+    oncePerDay: oncePerDay ?? this.oncePerDay,
   );
 
   Map<String, dynamic> toJson() => {
     'kind': kind.name,
     if (kind == RoutineTriggerKind.daily) 'at': at,
-    if (kind == RoutineTriggerKind.daily) 'days': (days.toList()..sort()),
+    if (kind == RoutineTriggerKind.daily || kind == RoutineTriggerKind.location) 'days': (days.toList()..sort()),
     if (kind == RoutineTriggerKind.interval) 'every_minutes': everyMinutes,
     if (device != null) 'device': device!.toJson(),
     if (quietAtNight) 'quiet_at_night': true,
+    if (place != null) 'place': place!.toJson(),
+    if (from.isNotEmpty) 'from': from,
+    if (until.isNotEmpty) 'until': until,
+    if (oncePerDay) 'once_per_day': true,
   };
 
   factory RoutineTrigger.fromJson(Object? j) {
@@ -83,7 +112,33 @@ class RoutineTrigger {
       everyMinutes: (j['every_minutes'] as num?)?.toInt().clamp(15, 7 * 24 * 60) ?? 60,
       device: DeviceCondition.fromJson(j['device']),
       quietAtNight: j['quiet_at_night'] == true,
+      place: DeviceCondition.fromJson(j['place']),
+      from: _hhmm('${j['from'] ?? ''}') ?? '',
+      until: _hhmm('${j['until'] ?? ''}') ?? '',
+      oncePerDay: j['once_per_day'] == true,
     );
+  }
+
+  /// "weekdays", "Mon, Wed", or empty for every day.
+  String get _daysText {
+    if (days.length == 7) return '';
+    if (days.length == 5 && !days.contains(6) && !days.contains(7)) return 'weekdays';
+    if (days.length == 2 && days.containsAll({6, 7})) return 'weekends';
+    return (days.toList()..sort()).map((d) => _dayNames[d - 1]).join(', ');
+  }
+
+  /// Whether a location trigger may run at [now], given its days, hours and
+  /// once-a-day limit ([lastRun] is the routine's last run).
+  bool allows(DateTime now, DateTime? lastRun) {
+    if (!days.contains(now.weekday)) return false;
+    if (from.isNotEmpty && until.isNotEmpty) {
+      int mins(String hhmm) => int.parse(hhmm.substring(0, 2)) * 60 + int.parse(hhmm.substring(3));
+      final t = now.hour * 60 + now.minute, a = mins(from), b = mins(until);
+      final inside = a <= b ? t >= a && t <= b : t >= a || t <= b;
+      if (!inside) return false;
+    }
+    if (oncePerDay && lastRun != null && lastRun.year == now.year && lastRun.month == now.month && lastRun.day == now.day) return false;
+    return true;
   }
 
   static const _dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -101,6 +156,12 @@ class RoutineTrigger {
     RoutineTriggerKind.interval =>
       'Every ${everyMinutes < 60 ? '$everyMinutes min' : everyMinutes % 60 == 0 ? '${everyMinutes ~/ 60} h' : '$everyMinutes min'}${quietAtNight ? ', not at night' : ''}',
     RoutineTriggerKind.device => device?.describe() ?? 'A phone event',
+    RoutineTriggerKind.location => [
+      place?.describe() ?? 'At a place',
+      if (_daysText.isNotEmpty) _daysText,
+      if (from.isNotEmpty && until.isNotEmpty) '$from–$until',
+      if (oncePerDay) 'once a day',
+    ].join(' · '),
   };
 }
 
@@ -574,6 +635,24 @@ List<Routine> routineTemplates() {
         step(RoutineStepKind.tool, tool: 'ringer_mode', args: {'mode': 'vibrate'}),
         step(RoutineStepKind.ask, prompt: 'Summarise what came in on Slack and email since yesterday evening, in 5 bullets.'),
         step(RoutineStepKind.notify, title: 'At work', body: '{{last}}'),
+      ],
+    ),
+    Routine(
+      id: '',
+      name: 'Home from work',
+      description: 'Catch up on the day when you get home on a weekday evening',
+      createdAt: now,
+      trigger: const RoutineTrigger(
+        kind: RoutineTriggerKind.location,
+        place: DeviceCondition(kind: DeviceTriggerKind.arrive, placeName: 'Home'),
+        days: {1, 2, 3, 4, 5},
+        from: '16:00',
+        until: '22:00',
+        oncePerDay: true,
+      ),
+      steps: [
+        step(RoutineStepKind.ask, prompt: 'I just got home. Summarise anything important from today I have not replied to, and what is on tomorrow. 4 short lines.'),
+        step(RoutineStepKind.notify, title: 'Welcome home', body: '{{last}}'),
       ],
     ),
     Routine(

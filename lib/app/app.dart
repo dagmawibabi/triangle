@@ -69,8 +69,9 @@ class _TeleAiAppState extends ConsumerState<TeleAiApp> with WidgetsBindingObserv
     AppColors.applyAccent(Color(settings.accent.value));
     // Colours are read while building, so a new palette rebuilds every
     // screen in place (keeping where you are), not just the themed parts.
-    final icons = AppLook.leadingIcons != settings.leadingIcons;
+    final icons = AppLook.leadingIcons != settings.leadingIcons || AppLook.minimalExplore != settings.exploreMinimal;
     AppLook.leadingIcons = settings.leadingIcons;
+    AppLook.minimalExplore = settings.exploreMinimal;
     if ((_shown != null && _shown != AppColors.palette) || icons) {
       WidgetsBinding.instance.addPostFrameCallback((_) => rebuildAllScreens(context));
     }

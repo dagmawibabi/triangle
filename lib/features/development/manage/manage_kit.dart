@@ -137,12 +137,18 @@ class _HeroLoaderState extends ConsumerState<HeroLoader> {
   void initState() {
     super.initState();
     Future.microtask(() async {
+      // What it showed last time first, then the fresh numbers behind it.
+      try {
+        // ignore: use_build_context_synchronously
+        final c = await devFromCache(() => widget.load(context, ref));
+        if (mounted && _data == null) setState(() => _data = c);
+      } catch (_) {}
       try {
         // ignore: use_build_context_synchronously
         final d = await widget.load(context, ref);
         if (mounted) setState(() => _data = d);
       } catch (e) {
-        if (mounted) setState(() => _error = '$e');
+        if (mounted && _data == null) setState(() => _error = '$e');
       }
     });
   }
@@ -205,27 +211,48 @@ class _ManagedListState extends ConsumerState<ManagedList> with AutomaticKeepAli
     Future.microtask(_load);
   }
 
+  /// Fetching fresh items while the saved ones show.
+  bool _refreshing = false;
+
   Future<void> _load() async {
     setState(() => _error = null);
+    // What this list showed last time, straight away.
+    if (_items == null) {
+      try {
+        final cached = await devFromCache(() => widget.load(context, ref));
+        if (mounted && _items == null) setState(() => _items = cached);
+      } catch (_) {}
+    }
+    if (!mounted) return;
+    setState(() => _refreshing = true);
     try {
+      // ignore: use_build_context_synchronously
       final items = await widget.load(context, ref);
       if (mounted) setState(() => _items = items);
     } catch (e) {
-      if (mounted) setState(() => _error = '$e'.replaceFirst('Exception: ', ''));
+      final msg = '$e'.replaceFirst('Exception: ', '');
+      if (!mounted) return;
+      if (_items == null) {
+        setState(() => _error = msg);
+      } else {
+        showSnack(context, 'Couldn’t refresh: $msg', icon: Icons.cloud_off_rounded);
+      }
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
     }
   }
 
-  void _reload() {
-    setState(() => _items = null);
-    _load();
-  }
+  /// After a change: fetch again, keeping what shows until it's back.
+  void _reload() => _load();
 
   @override
   Widget build(BuildContext context) {
     super.build(context);
     final items = _items;
     final shown = items == null || _q.isEmpty || widget.matches == null ? items : [for (final i in items) if (widget.matches!(i, _q.toLowerCase())) i];
-    return RefreshIndicator(
+    return Stack(
+      children: [
+        RefreshIndicator(
       onRefresh: _load,
       child: ListView(
         padding: const EdgeInsets.only(top: Space.m, bottom: 96),
@@ -276,6 +303,11 @@ class _ManagedListState extends ConsumerState<ManagedList> with AutomaticKeepAli
           ],
         ],
       ),
+        ),
+        // Refreshing behind what's already showing.
+        if (_refreshing && items != null)
+          Positioned(top: 0, left: 0, right: 0, child: LinearProgressIndicator(minHeight: 2, backgroundColor: Colors.transparent, color: AppColors.text3)),
+      ],
     );
   }
 }

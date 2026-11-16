@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme.dart';
 import '../../core/widgets/brand_mark.dart';
+import '../movies/video_mini_player.dart';
 import 'app_lock.dart';
 
 /// Covers the app while it is locked. The screens underneath keep their
@@ -26,6 +27,8 @@ class AppLockGate extends ConsumerWidget {
           enabled: !covered,
           child: ExcludeSemantics(excluding: covered, child: IgnorePointer(ignoring: covered, child: child)),
         ),
+        // A video left playing floats over every screen, under the lock.
+        if (!covered) const VideoMiniPlayerHost(),
         if (!lock.loaded)
           ColoredBox(color: AppColors.bg)
         else if (lock.locked)

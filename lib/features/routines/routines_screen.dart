@@ -12,6 +12,7 @@ import '../assistant/presentation/automation_widgets.dart';
 import '../chat/data/chat_controller.dart';
 import '../settings/data/settings.dart';
 import '../telegram/data/telegram_tools.dart';
+import 'location_trigger_editor.dart';
 import 'routine_runner.dart';
 import 'routines.dart';
 
@@ -82,8 +83,8 @@ class RoutinesScreen extends ConsumerWidget {
           padding: const EdgeInsets.fromLTRB(Space.l, Space.s, Space.l, 96),
           children: [
             Text(
-              'A routine is a list of steps that runs by hand, at a time, every so often, or when something happens on '
-              'the phone: ask the assistant, run a tool, notify you, wait, or continue only if a result says so.',
+              'A routine is a list of steps that runs by hand, at a time, every so often, when you arrive at, leave or stay at a '
+              'place, or when something happens on the phone: ask the assistant, run a tool, notify you, wait, or continue only if a result says so.',
               style: context.text.bodySmall,
             ),
             if (!s.proactive && routines.any((r) => r.trigger.kind != RoutineTriggerKind.manual))
@@ -230,6 +231,7 @@ class _RoutineBuilderScreenState extends ConsumerState<RoutineBuilderScreen> {
     }
     final d = _r.trigger.device;
     if (_r.trigger.kind == RoutineTriggerKind.device && d != null && d.kind.needsPlace && !d.hasPlace) return 'Set the place for the trigger';
+    if (_r.trigger.kind == RoutineTriggerKind.location && !(_r.trigger.place?.hasPlace ?? false)) return 'Pick the place for the trigger';
     return null;
   }
 
@@ -376,7 +378,11 @@ class _RoutineBuilderScreenState extends ConsumerState<RoutineBuilderScreen> {
                     selected: t.kind == k,
                     onSelected: (_) => _change(
                       (r) => r.copyWith(
-                        trigger: t.copyWith(kind: k, device: k == RoutineTriggerKind.device ? (t.device ?? const DeviceCondition(kind: DeviceTriggerKind.charging)) : null),
+                        trigger: t.copyWith(
+                          kind: k,
+                          device: k == RoutineTriggerKind.device ? (t.device ?? const DeviceCondition(kind: DeviceTriggerKind.charging)) : null,
+                          place: k == RoutineTriggerKind.location ? (t.place ?? const DeviceCondition(kind: DeviceTriggerKind.arrive)) : null,
+                        ),
                       ),
                     ),
                   ),
@@ -442,6 +448,8 @@ class _RoutineBuilderScreenState extends ConsumerState<RoutineBuilderScreen> {
                 onChanged: (v) => _change((r) => r.copyWith(trigger: t.copyWith(quietAtNight: v))),
               ),
             ],
+            if (t.kind == RoutineTriggerKind.location)
+              LocationTriggerEditor(trigger: t, onChanged: (x) => _change((r) => r.copyWith(trigger: x))),
             if (t.kind == RoutineTriggerKind.device)
               DeviceConditionEditor(
                 value: t.device ?? const DeviceCondition(kind: DeviceTriggerKind.charging),

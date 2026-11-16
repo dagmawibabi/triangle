@@ -390,12 +390,12 @@ const _emojis = ['🎵', '🎧', '🎸', '🎹', '🥁', '🎤', '🎷', '🎻',
 
 /// Name, words and cover for a new or existing playlist; it, or null if
 /// cancelled.
-Future<Playlist?> showPlaylistEditor(BuildContext context, WidgetRef ref, {Playlist? playlist}) async {
+Future<Playlist?> showPlaylistEditor(BuildContext context, WidgetRef ref, {Playlist? playlist, String shelf = 'music'}) async {
   final out = await showFormSheet<_EditorResult>(context, builder: (_) => _PlaylistEditor(playlist: playlist));
   if (out == null || out.name.trim().isEmpty) return null;
   final store = ref.read(playlistsProvider.notifier);
   if (playlist == null) {
-    final p = await store.create(out.name, description: out.description, emoji: out.emoji, icon: out.icon, collage: out.collage, palette: out.palette);
+    final p = await store.create(out.name, description: out.description, emoji: out.emoji, icon: out.icon, collage: out.collage, palette: out.palette, shelf: shelf);
     if (out.coverPick != null) await store.setCover(p.id, out.coverPick!);
     return store.byId(p.id);
   }

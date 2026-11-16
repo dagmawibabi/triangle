@@ -439,7 +439,7 @@ class _PostViewState extends ConsumerState<PostView> {
         if (m?.content case td.MessageVoiceNote() || td.MessageAudio())
           Padding(
             padding: const EdgeInsets.only(bottom: Space.l),
-            child: _PostAudioPlayer(message: m!),
+            child: _PostAudioPlayer(message: m!, account: account),
           )
         else if (visual)
           Padding(
@@ -656,12 +656,13 @@ class _PostViewState extends ConsumerState<PostView> {
 /// A full player inside an AI-cited post, backed by the same queue and
 /// downloader as Telegram chat rows.
 class _PostAudioPlayer extends ConsumerWidget {
-  const _PostAudioPlayer({required this.message});
+  const _PostAudioPlayer({required this.message, this.account});
   final td.Message message;
+  final String? account;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final track = Track.of(message, ref.read(telegramStoreProvider));
+    final track = Track.of(message, account == null ? ref.read(telegramStoreProvider) : ref.read(telegramStoreFamily(account!)));
     if (track == null) return const SizedBox.shrink();
     final center = ref.watch(audioCenterProvider);
     final current = center.isCurrent(message.chatId, message.id);

@@ -30,8 +30,15 @@ class BriefSettingsScreen extends ConsumerWidget {
     final s = ref.watch(settingsProvider);
     final store = ref.watch(telegramStoreProvider);
     final connected = ref.watch(integrationsProvider).connected;
-    String title(int id) => store.chat(id)?.title ?? p.chatTitles[id] ?? 'Chat $id';
     final accounts = ref.watch(accountsProvider);
+    // A chosen chat may be in any account the brief covers.
+    String title(int id) {
+      for (final a in [accounts.active, ...accounts.within(p.accountIds)]) {
+        final t = ref.read(telegramStoreFamily(a.id)).chat(id)?.title;
+        if (t != null && t.isNotEmpty) return t;
+      }
+      return store.chat(id)?.title ?? p.chatTitles[id] ?? 'Chat $id';
+    }
     // "Work", or "Work · Dagi" when several accounts are signed in.
     String folderLabel(String key, String name) {
       if (!accounts.hasSeveral) return name;
@@ -451,12 +458,23 @@ class _ChatPickerState extends ConsumerState<_ChatPicker> {
 
   @override
   Widget build(BuildContext context) {
-    final store = ref.watch(telegramStoreProvider);
+    // Chats of every account the brief covers (the one on screen first);
+    // a chat in two of them is listed once, under the first.
+    final accounts = ref.watch(accountsProvider);
+    final covered = accounts.within(ref.watch(briefPrefsProvider.select((p) => p.accountIds)));
+    final owners = [
+      if (covered.isEmpty || covered.any((a) => a.id == accounts.activeId)) accounts.active,
+      for (final a in covered)
+        if (a.id != accounts.activeId) a,
+    ];
     final q = _q.toLowerCase().trim();
-    final chats = store.chats.values
-        .where((c) => c.title.isNotEmpty && !widget.skip.contains(c.id) && (q.isEmpty || c.title.toLowerCase().contains(q)))
-        .toList()
-      ..sort((a, b) => (b.lastMessage?.date ?? 0).compareTo(a.lastMessage?.date ?? 0));
+    final seen = <int>{};
+    final chats = <(ChatInfo, TelegramStore, TelegramAccount)>[
+      for (final a in owners)
+        for (final c in ref.watch(accountStoreProvider(a.id)).chats.values)
+          if (c.title.isNotEmpty && !widget.skip.contains(c.id) && (q.isEmpty || c.title.toLowerCase().contains(q)) && seen.add(c.id))
+            (c, ref.read(telegramStoreFamily(a.id)), a),
+    ]..sort((a, b) => (b.$1.lastMessage?.date ?? 0).compareTo(a.$1.lastMessage?.date ?? 0));
     return DraggableScrollableSheet(
       expand: false,
       initialChildSize: 0.86,
@@ -477,11 +495,14 @@ class _ChatPickerState extends ConsumerState<_ChatPicker> {
               controller: scroll,
               itemCount: chats.length.clamp(0, 300),
               itemBuilder: (_, i) {
-                final c = chats[i];
+                final (c, store, owner) = chats[i];
                 return ListTile(
-                  leading: TgAvatar(chatId: c.id, title: c.title, size: 36),
+                  leading: TgAvatar(chatId: c.id, title: c.title, size: 36, accountId: owner.id),
                   title: Text(c.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  subtitle: Text(store.kindOf(c).name, style: context.text.bodySmall),
+                  subtitle: Text(
+                    owners.length > 1 ? '${store.kindOf(c).name} · ${owner.label}' : store.kindOf(c).name,
+                    style: context.text.bodySmall,
+                  ),
                   onTap: () => Navigator.pop(context, (c.id, c.title)),
                 );
               },

@@ -475,9 +475,16 @@ class BooksStore extends Notifier<BooksState> {
   static const notesKey = 'books_notes.v1';
   late Future<void> ready;
 
+  /// Whether the saved library has been read (until then, no books or
+  /// sources means "not known yet", not "none").
+  bool isReady = false;
+
   @override
   BooksState build() {
-    ready = _load();
+    ready = _load().whenComplete(() {
+      isReady = true;
+      state = state.copyWith();
+    });
     return const BooksState();
   }
 
@@ -924,6 +931,9 @@ class BookFeedState {
 }
 
 class BookFeed extends Notifier<BookFeedState> {
+  static final _memory = FeedMemory('books');
+  final _ids = <String, List<int>>{};
+
   @override
   BookFeedState build() => const BookFeedState();
 
@@ -933,12 +943,21 @@ class BookFeed extends Notifier<BookFeedState> {
     try {
       final client = ref.read(telegramClientFamily(s.account));
       final title = ref.read(telegramStoreFamily(s.account)).chat(s.chatId)?.title ?? s.title;
+      // First time this run: what it showed last time, at once.
+      if (!more && query.isEmpty && !state.bySource.containsKey(s.key)) {
+        final kept = [for (final m in await _memory.recall(client, s)) ?BookPost.fromMessage(m, s.account, title)];
+        if (kept.isNotEmpty && !state.bySource.containsKey(s.key)) {
+          state = BookFeedState(bySource: {...state.bySource, s.key: kept}, loading: state.loading, next: state.next, errors: state.errors);
+        }
+      }
       var from = more ? (state.next[s.key] ?? 0) : 0;
       final found = <BookPost>[];
+      final ids = more ? [...?_ids[s.key]] : <int>[];
       var next = 0;
       for (var round = 0; round < 4 && found.length < 30; round++) {
         final page = await loadChatPage(client, s.chatId, filter: const td.SearchMessagesFilterDocument(), query: query, from: from, limit: 80);
         found.addAll([for (final m in page.messages) ?BookPost.fromMessage(m, s.account, title)]);
+        ids.addAll(page.messages.map((m) => m.id));
         next = page.next;
         if (next == 0) break;
         from = next;
@@ -951,6 +970,10 @@ class BookFeed extends Notifier<BookFeedState> {
         next: {...state.next, s.key: next},
         errors: state.errors,
       );
+      if (query.isEmpty) {
+        _ids[s.key] = ids;
+        unawaited(_memory.remember(s, ids, max: 300));
+      }
     } catch (e) {
       state = BookFeedState(bySource: state.bySource, loading: {...state.loading}..remove(s.key), next: state.next, errors: {...state.errors, s.key: '$e'});
     }

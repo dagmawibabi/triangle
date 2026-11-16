@@ -48,6 +48,7 @@ import 'data_screen.dart';
 import 'permissions_screen.dart';
 import '../../account/security_screen.dart';
 import '../../account/storage_screen.dart';
+import 'cache_screen.dart';
 import '../../telegram/data/content_filters.dart';
 import '../../telegram/presentation/block_mute_screen.dart';
 import '../../screen/screen_control_screen.dart';
@@ -446,6 +447,12 @@ class SettingsHub extends ConsumerWidget {
                     return n == 0 ? 'Your numbers, addresses and details, for the assistant' : '$n item${n == 1 ? '' : 's'} · encrypted on this phone';
                   }(),
                   () => _open(context, const VaultScreen()),
+                ),
+                tile(
+                  Icons.cached_rounded,
+                  'Cache',
+                  'Podcasts, radio, web pages, pictures and Telegram files kept to load faster; clear any of it',
+                  () => _open(context, const CacheScreen()),
                 ),
                 tile(
                   Icons.settings_backup_restore_rounded,

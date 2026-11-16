@@ -47,7 +47,7 @@ class RoutineRunner {
         case RoutineTriggerKind.interval:
           if (t.quietAtNight && Watch.isNight(now)) break;
           due = r.lastRunAt == null || now.difference(r.lastRunAt!).inMinutes >= t.everyMinutes;
-        case RoutineTriggerKind.manual || RoutineTriggerKind.device:
+        case RoutineTriggerKind.manual || RoutineTriggerKind.device || RoutineTriggerKind.location:
           break;
       }
       if (due) unawaited(run(r, trigger: t.describe()));
@@ -58,6 +58,9 @@ class RoutineRunner {
   void fireDevice(String routineId, String event) {
     final r = _ref.read(routineStoreProvider.notifier).byId(routineId);
     if (r == null || !r.enabled || !_ref.read(settingsProvider).proactive) return;
+    // A place trigger keeps to its days, hours and once-a-day limit.
+    if (r.trigger.kind == RoutineTriggerKind.location && !r.trigger.allows(DateTime.now(), r.lastRunAt)) return;
+    if (_running.contains(r.id)) return;
     unawaited(run(r, trigger: event));
   }
 

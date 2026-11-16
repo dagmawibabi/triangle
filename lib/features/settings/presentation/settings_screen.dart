@@ -18,9 +18,12 @@ import '../../custom_folders/custom_folders.dart';
 import '../../playlists/playlists.dart' show playlistsProvider;
 import '../../marketplace/market.dart' show marketProvider;
 import '../../movies/movies.dart' show moviesProvider;
+import '../../cinema/cinema.dart' show cinemaProvider;
 import '../../books/books.dart' show booksProvider;
 import '../../gallery/gallery.dart' show galleryProvider;
 import '../../sections/section_kit.dart' show exploreEnabledProvider;
+import '../../opportunity/opportunity.dart' show opportunityProvider;
+import '../../podcasts/podcast_store.dart' show podcastsProvider;
 import '../../telegram/data/telegram_store.dart';
 import '../../telegram/presentation/tg_avatar.dart';
 import '../../voice/player_sheet.dart';
@@ -1289,64 +1292,115 @@ class SettingsScreen extends ConsumerWidget {
                 ),
               ],
               if (section == SettingsSection.appearance) ...[
-                const _Header('Appearance'),
+                const _Header('Theme'),
                 _Card(
                   children: [
                     Padding(
-                      padding: const EdgeInsets.all(Space.l),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      padding: const EdgeInsets.fromLTRB(Space.l, Space.l, Space.l, Space.s),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: SegmentedButton<AppThemeMode>(
+                          showSelectedIcon: false,
+                          segments: [
+                            for (final (m, icon) in const [
+                              (AppThemeMode.system, Icons.brightness_auto_outlined),
+                              (AppThemeMode.light, Icons.light_mode_outlined),
+                              (AppThemeMode.dark, Icons.dark_mode_outlined),
+                            ])
+                              ButtonSegment(value: m, icon: Icon(icon, size: 18), label: Text(m.label)),
+                          ],
+                          selected: {s.themeMode},
+                          onSelectionChanged: (v) => ctl.setThemeMode(v.first),
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(Space.l, Space.m, Space.l, 0),
+                      child: Row(
                         children: [
-                          Text('Theme', style: context.text.titleSmall),
-                          const SizedBox(height: Space.m),
-                          SizedBox(
-                            width: double.infinity,
-                            child: SegmentedButton<AppThemeMode>(
-                              showSelectedIcon: false,
-                              segments: [
-                                for (final (m, icon) in const [
-                                  (AppThemeMode.system, Icons.brightness_auto_outlined),
-                                  (AppThemeMode.light, Icons.light_mode_outlined),
-                                  (AppThemeMode.dark, Icons.dark_mode_outlined),
-                                ])
-                                  ButtonSegment(value: m, icon: Icon(icon, size: 18), label: Text(m.label)),
-                              ],
-                              selected: {s.themeMode},
-                              onSelectionChanged: (v) => ctl.setThemeMode(v.first),
+                          Text('Accent', style: context.text.titleSmall),
+                          const Spacer(),
+                          Text(s.accent.label, style: context.text.bodySmall?.copyWith(color: AppColors.text3)),
+                        ],
+                      ),
+                    ),
+                    SizedBox(
+                      height: 64,
+                      child: ListView(
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.symmetric(horizontal: Space.l, vertical: Space.m),
+                        children: [
+                          for (final a in AccentChoice.values)
+                            Padding(
+                              padding: const EdgeInsets.only(right: Space.m),
+                              child: Tooltip(
+                                message: a.label,
+                                child: InkResponse(
+                                  onTap: () => ctl.setAccent(a),
+                                  radius: 24,
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 180),
+                                    width: 40,
+                                    height: 40,
+                                    padding: const EdgeInsets.all(3),
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      border: Border.all(color: s.accent == a ? AppColors.text : Colors.transparent, width: 2),
+                                    ),
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: Color(a.value),
+                                        border: Border.all(color: AppColors.line),
+                                      ),
+                                      child: s.accent == a
+                                          ? Icon(
+                                              Icons.check_rounded,
+                                              size: 18,
+                                              color: ThemeData.estimateBrightnessForColor(Color(a.value)) == Brightness.dark ? Colors.white : Colors.black,
+                                            )
+                                          : null,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const Divider(indent: Space.l, endIndent: Space.l),
+                    _AppearancePreview(accent: AppColors.activeAccent, fontSize: s.chatFontSize),
+                  ],
+                ),
+                const _Header('Text'),
+                _Card(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(Space.l, Space.l, Space.l, Space.s),
+                      child: Row(
+                        children: [
+                          Text('Chat text size', style: context.text.titleSmall),
+                          const Spacer(),
+                          Text('${s.chatFontSize.toStringAsFixed(0)} pt', style: context.text.bodySmall?.copyWith(color: AppColors.text3)),
+                        ],
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: Space.s),
+                      child: Row(
+                        children: [
+                          Text('A', style: TextStyle(fontSize: 12, color: AppColors.text3)),
+                          Expanded(
+                            child: Slider(
+                              value: s.chatFontSize,
+                              min: 13,
+                              max: 21,
+                              divisions: 8,
+                              label: '${s.chatFontSize.toStringAsFixed(0)} pt',
+                              onChanged: ctl.setChatFontSize,
                             ),
                           ),
-                        ],
-                      ),
-                    ),
-                    const Divider(indent: Space.l, endIndent: Space.l),
-                    _AppearancePreview(
-                      accent: AppColors.activeAccent,
-                      fontSize: s.chatFontSize,
-                    ),
-                    const Divider(indent: Space.l, endIndent: Space.l),
-                    Padding(
-                      padding: const EdgeInsets.all(Space.l),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Accent colour', style: context.text.titleSmall),
-                          const SizedBox(height: Space.m),
-                          Wrap(
-                            spacing: Space.s,
-                            runSpacing: Space.s,
-                            children: [
-                              for (final a in AccentChoice.values)
-                                ChoiceChip(
-                                  label: Text(a.label),
-                                  selected: s.accent == a,
-                                  avatar: CircleAvatar(
-                                    radius: 7,
-                                    backgroundColor: Color(a.value),
-                                  ),
-                                  onSelected: (_) => ctl.setAccent(a),
-                                ),
-                            ],
-                          ),
+                          Text('A', style: TextStyle(fontSize: 20, color: AppColors.text3)),
                         ],
                       ),
                     ),
@@ -1356,23 +1410,6 @@ class SettingsScreen extends ConsumerWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            'Chat text size',
-                            style: context.text.titleSmall,
-                          ),
-                          Text(
-                            '${s.chatFontSize.toStringAsFixed(0)} pt',
-                            style: context.text.bodySmall,
-                          ),
-                          Slider(
-                            value: s.chatFontSize,
-                            min: 13,
-                            max: 21,
-                            divisions: 8,
-                            label: '${s.chatFontSize.toStringAsFixed(0)} pt',
-                            onChanged: ctl.setChatFontSize,
-                          ),
-                          const SizedBox(height: Space.s),
                           Text('Chat font', style: context.text.titleSmall),
                           const SizedBox(height: Space.m),
                           SizedBox(
@@ -1380,11 +1417,7 @@ class SettingsScreen extends ConsumerWidget {
                             child: SegmentedButton<ChatFont>(
                               showSelectedIcon: false,
                               segments: [
-                                for (final f in ChatFont.values)
-                                  ButtonSegment(
-                                    value: f,
-                                    label: Text(f.label, style: TextStyle(fontFamily: f.family)),
-                                  ),
+                                for (final f in ChatFont.values) ButtonSegment(value: f, label: Text(f.label, style: TextStyle(fontFamily: f.family))),
                               ],
                               selected: {s.chatFont},
                               onSelectionChanged: (v) => ctl.setChatFont(v.first),
@@ -1393,6 +1426,15 @@ class SettingsScreen extends ConsumerWidget {
                         ],
                       ),
                     ),
+                  ],
+                ),
+                const _Header('Everywhere'),
+                _Card(
+                  children: [
+                    ..._dividedSwitches(context, [
+                      (Icons.format_list_bulleted_rounded, 'Leading icons', 'Icons at the start of rows in settings, menus and lists', s.leadingIcons, ctl.setLeadingIcons),
+                      (Icons.schedule_rounded, '24-hour clock', s.use24h ? '14:05' : '2:05 PM', s.use24h, ctl.setUse24h),
+                    ]),
                   ],
                 ),
                 const _Header('Opening the app'),
@@ -1445,7 +1487,7 @@ class SettingsScreen extends ConsumerWidget {
                     ),
                   ],
                 ),
-                const _Header('Side drawer'),
+                const _Header('Side drawer', note: 'Explore pages are further down'),
                 _Card(
                   children: [
                     ..._dividedSwitches(context, [
@@ -1457,48 +1499,6 @@ class SettingsScreen extends ConsumerWidget {
                         ref.read(customFoldersProvider.notifier).setInDrawer,
                       ),
                       (
-                        Icons.explore_outlined,
-                        'Explore',
-                        'The heading with Music, Marketplace, Video, Books and Gallery. Each can also be turned off below.',
-                        ref.watch(exploreEnabledProvider),
-                        ref.read(exploreEnabledProvider.notifier).set,
-                      ),
-                      (
-                        Icons.queue_music_rounded,
-                        'Music',
-                        'Your playlists, player and listening stats',
-                        ref.watch(playlistsProvider).inDrawer,
-                        ref.read(playlistsProvider.notifier).setInDrawer,
-                      ),
-                      (
-                        Icons.storefront_outlined,
-                        'Marketplace',
-                        'Channels that sell things, as one shop with a cart and wishlist',
-                        ref.watch(marketProvider).inDrawer,
-                        ref.read(marketProvider.notifier).setInDrawer,
-                      ),
-                      (
-                        Icons.movie_filter_outlined,
-                        'Video',
-                        'Video channels as a streaming service',
-                        ref.watch(moviesProvider).inDrawer,
-                        ref.read(moviesProvider.notifier).setInDrawer,
-                      ),
-                      (
-                        Icons.auto_stories_outlined,
-                        'Books',
-                        'Your library and reader',
-                        ref.watch(booksProvider).inDrawer,
-                        ref.read(booksProvider.notifier).setInDrawer,
-                      ),
-                      (
-                        Icons.photo_library_outlined,
-                        'Gallery',
-                        'Photos and videos from your chats, with albums',
-                        ref.watch(galleryProvider).inDrawer,
-                        ref.read(galleryProvider.notifier).setInDrawer,
-                      ),
-                      (
                         Icons.folder_shared_outlined,
                         'Telegram folders',
                         'The chat folders you made in Telegram',
@@ -1508,16 +1508,71 @@ class SettingsScreen extends ConsumerWidget {
                     ]),
                   ],
                 ),
-                const _Header('Lists'),
+                const _Header('Telegram chats'),
                 _Card(
                   children: [
-                    SwitchListTile(
-                      secondary: lead(const Icon(Icons.format_list_bulleted_rounded)),
-                      title: const Text('Leading icons'),
-                      subtitle: Text('Icons at the start of rows in settings, menus and lists', style: context.text.bodySmall),
-                      value: s.leadingIcons,
-                      onChanged: ctl.setLeadingIcons,
+                    ..._dividedSwitches(context, [
+                      (Icons.view_headline_rounded, 'Compact chat lists', 'Smaller rows, more chats on screen', s.compactList, ctl.setCompactList),
+                      (Icons.account_circle_outlined, 'Avatars in groups', 'Who wrote each message, at a glance', s.groupAvatars, ctl.setGroupAvatars),
+                      (Icons.web_asset_outlined, 'Link previews', 'The site card under messages with links', s.showLinkPreviews, ctl.setShowLinkPreviews),
+                    ]),
+                    const Divider(indent: 56),
+                    ListTile(
+                      leading: lead(const Icon(Icons.translate_rounded)),
+                      title: const Text('Translate into'),
+                      subtitle: Text(
+                        'For the Translate button on messages',
+                        style: context.text.bodySmall,
+                      ),
+                      trailing: DropdownButton<String>(
+                        value: s.translateTo,
+                        underline: const SizedBox(),
+                        items: [
+                          const DropdownMenuItem(
+                            value: '',
+                            child: Text('Phone language'),
+                          ),
+                          for (final e in translateLanguages.entries)
+                            DropdownMenuItem(
+                              value: e.key,
+                              child: Text(e.value),
+                            ),
+                        ],
+                        onChanged: (v) {
+                          if (v != null) ctl.setTranslateTo(v);
+                        },
+                      ),
                     ),
+                  ],
+                ),
+                const _Header('AI chat'),
+                _Card(
+                  children: [
+                    ..._dividedSwitches(context, [
+                      (Icons.density_small_rounded, 'Compact chat', 'Less space between messages', s.compactChat, ctl.setCompactChat),
+                      (Icons.schedule_outlined, 'Dates and time', 'Times on messages and a divider for each day', s.showChatDateTime, ctl.setShowChatDateTime),
+                      (Icons.swap_horiz_rounded, 'Model chip', 'Shows and switches the chat model, above where you type', s.showModelChip, ctl.setShowModelChip),
+                      (Icons.vertical_align_bottom_rounded, 'Scroll-to-bottom button', 'The arrow that jumps to the newest message', s.showScrollToBottom, ctl.setShowScrollToBottom),
+                    ]),
+                  ],
+                ),
+                const _Header('AI answers'),
+                _Card(
+                  children: [
+                    ..._dividedSwitches(context, [
+                      (Icons.lightbulb_outline_rounded, 'Show thinking', 'The model\'s reasoning above its answer', s.showThinking, ctl.setShowThinking),
+                      (Icons.build_circle_outlined, 'Show tool calls', 'A card for each tool the assistant uses. Approvals always show.', s.showToolCalls, ctl.setShowToolCalls),
+                      (Icons.label_outline_rounded, 'Model name', 'Which model wrote each answer', s.showModelName, ctl.setShowModelName),
+                      (Icons.copy_outlined, 'Copy button', 'Under each answer', s.showChatCopyButton, ctl.setShowChatCopyButton),
+                      (Icons.volume_up_outlined, 'Speak button', 'Read an answer aloud from under it', s.showChatSpeakButton, ctl.setShowChatSpeakButton),
+                      (
+                        Icons.toll_outlined,
+                        'Tokens and cost',
+                        'A small line under each reply: tokens in and out, cached and reasoning tokens, and what it cost',
+                        s.showMessageUsage,
+                        ctl.setShowMessageUsage,
+                      ),
+                    ]),
                   ],
                 ),
                 const _Header('Code'),
@@ -1568,106 +1623,89 @@ class SettingsScreen extends ConsumerWidget {
                     ),
                   ],
                 ),
-                const _Header('In the chat'),
+                const _Header('Explore', note: 'Music, Video, Cinema, Podcasts, Library, Gallery, Opportunity, Marketplace'),
                 _Card(
                   children: [
-                    ..._dividedSwitches(context, [
-                      (Icons.schedule_outlined, 'Dates and time', 'Times on messages and a divider for each day', s.showChatDateTime, ctl.setShowChatDateTime),
-                      (Icons.copy_outlined, 'Copy button', 'Under each answer', s.showChatCopyButton, ctl.setShowChatCopyButton),
-                      (Icons.volume_up_outlined, 'Speak button', 'Read an answer aloud from under it', s.showChatSpeakButton, ctl.setShowChatSpeakButton),
-                      (Icons.label_outline_rounded, 'Model name', 'Which model wrote each answer', s.showModelName, ctl.setShowModelName),
-                      (Icons.lightbulb_outline_rounded, 'Show thinking', 'The model\'s reasoning above its answer', s.showThinking, ctl.setShowThinking),
-                      (Icons.build_circle_outlined, 'Show tool calls', 'A card for each tool the assistant uses. Approvals always show.', s.showToolCalls, ctl.setShowToolCalls),
-                      (Icons.density_small_rounded, 'Compact chat', 'Less space between messages', s.compactChat, ctl.setCompactChat),
-                      (Icons.vertical_align_bottom_rounded, 'Scroll-to-bottom button', 'The arrow that jumps to the newest message', s.showScrollToBottom, ctl.setShowScrollToBottom),
-                      (Icons.swap_horiz_rounded, 'Model chip', 'Shows and switches the chat model, above where you type', s.showModelChip, ctl.setShowModelChip),
-                    ]),
-                    const Divider(indent: Space.l, endIndent: Space.l),
-                    SwitchListTile(
-                      secondary: lead(const Icon(Icons.toll_outlined)),
-                      title: const Text('Tokens and cost under answers'),
-                      subtitle: Text(
-                        'A small line under each reply: tokens in and out, cached and reasoning tokens, and what it cost.',
-                        style: context.text.bodySmall,
-                      ),
-                      value: s.showMessageUsage,
-                      onChanged: ctl.setShowMessageUsage,
-                    ),
-                    const Divider(indent: Space.l, endIndent: Space.l),
-                    SwitchListTile(
-                      secondary: lead(const Icon(Icons.web_asset_outlined)),
-                      title: const Text('Link previews'),
-                      subtitle: Text(
-                        'The site card under messages with links',
-                        style: context.text.bodySmall,
-                      ),
-                      value: s.showLinkPreviews,
-                      onChanged: ctl.setShowLinkPreviews,
-                    ),
-                    const Divider(indent: Space.l, endIndent: Space.l),
-                    ListTile(
-                      leading: lead(const Icon(Icons.translate_rounded)),
-                      title: const Text('Translate into'),
-                      subtitle: Text(
-                        'For the Translate button on messages',
-                        style: context.text.bodySmall,
-                      ),
-                      trailing: DropdownButton<String>(
-                        value: s.translateTo,
-                        underline: const SizedBox(),
-                        items: [
-                          const DropdownMenuItem(
-                            value: '',
-                            child: Text('Phone language'),
-                          ),
-                          for (final e in translateLanguages.entries)
-                            DropdownMenuItem(
-                              value: e.key,
-                              child: Text(e.value),
-                            ),
+                    Padding(
+                      padding: const EdgeInsets.all(Space.l),
+                      child: Row(
+                        children: [
+                          Expanded(child: _ExploreStyleOption(minimal: false, selected: !s.exploreMinimal, onTap: () => ctl.setExploreMinimal(false))),
+                          const SizedBox(width: Space.m),
+                          Expanded(child: _ExploreStyleOption(minimal: true, selected: s.exploreMinimal, onTap: () => ctl.setExploreMinimal(true))),
                         ],
-                        onChanged: (v) {
-                          if (v != null) ctl.setTranslateTo(v);
-                        },
                       ),
                     ),
-                  ],
-                ),
-                const _Header('Chats'),
-                _Card(
-                  children: [
-                    SwitchListTile(
-                      secondary: lead(const Icon(Icons.schedule_rounded)),
-                      title: const Text('24-hour clock'),
-                      subtitle: Text(
-                        s.use24h ? '14:05' : '2:05 PM',
-                        style: context.text.bodySmall,
+                    const Divider(indent: Space.l, endIndent: Space.l),
+                    ..._dividedSwitches(context, [
+                      (
+                        Icons.explore_outlined,
+                        'In the side drawer',
+                        'The Explore heading. Turn pages off one by one below.',
+                        ref.watch(exploreEnabledProvider),
+                        ref.read(exploreEnabledProvider.notifier).set,
                       ),
-                      value: s.use24h,
-                      onChanged: ctl.setUse24h,
-                    ),
-                    const Divider(indent: 56),
-                    SwitchListTile(
-                      secondary: lead(const Icon(Icons.account_circle_outlined)),
-                      title: const Text('Avatars in groups'),
-                      subtitle: Text(
-                        'Who wrote each message, at a glance',
-                        style: context.text.bodySmall,
-                      ),
-                      value: s.groupAvatars,
-                      onChanged: ctl.setGroupAvatars,
-                    ),
-                    const Divider(indent: 56),
-                    SwitchListTile(
-                      secondary: lead(const Icon(Icons.view_headline_rounded)),
-                      title: const Text('Compact chat lists'),
-                      subtitle: Text(
-                        'Smaller rows, more chats on screen',
-                        style: context.text.bodySmall,
-                      ),
-                      value: s.compactList,
-                      onChanged: ctl.setCompactList,
-                    ),
+                      // The Explore pages, in the drawer's order; hidden
+                      // while the whole heading is off.
+                      if (ref.watch(exploreEnabledProvider)) ...[
+                        (
+                          Icons.queue_music_rounded,
+                          'Music',
+                          'Your playlists, player and listening stats',
+                          ref.watch(playlistsProvider).inDrawer,
+                          ref.read(playlistsProvider.notifier).setInDrawer,
+                        ),
+                        (
+                          Icons.movie_filter_outlined,
+                          'Video',
+                          'Video channels as a streaming service, with shorts and watch time',
+                          ref.watch(moviesProvider).inDrawer,
+                          ref.read(moviesProvider.notifier).setInDrawer,
+                        ),
+                        (
+                          Icons.theaters_outlined,
+                          'Cinema',
+                          'Films and series from your channels, with posters, seasons and a watchlist',
+                          ref.watch(cinemaProvider).inDrawer,
+                          ref.read(cinemaProvider.notifier).setInDrawer,
+                        ),
+                        (
+                          Icons.podcasts_rounded,
+                          'Podcasts',
+                          'Shows, podcast playlists and live radio',
+                          ref.watch(podcastsProvider.select((p) => p.inDrawer)),
+                          (v) async => ref.read(podcastsProvider).setSettings(drawer: v),
+                        ),
+                        (
+                          Icons.auto_stories_outlined,
+                          'Library',
+                          'Your books and reader',
+                          ref.watch(booksProvider).inDrawer,
+                          ref.read(booksProvider.notifier).setInDrawer,
+                        ),
+                        (
+                          Icons.photo_library_outlined,
+                          'Gallery',
+                          'Photos and videos from your chats, with albums',
+                          ref.watch(galleryProvider).inDrawer,
+                          ref.read(galleryProvider.notifier).setInDrawer,
+                        ),
+                        (
+                          Icons.rocket_launch_outlined,
+                          'Opportunity',
+                          'Events and jobs from the channels that post them',
+                          ref.watch(opportunityProvider).inDrawer,
+                          ref.read(opportunityProvider.notifier).setInDrawer,
+                        ),
+                        (
+                          Icons.storefront_outlined,
+                          'Marketplace',
+                          'Channels that sell things, as one shop with a cart and wishlist',
+                          ref.watch(marketProvider).inDrawer,
+                          ref.read(marketProvider.notifier).setInDrawer,
+                        ),
+                      ],
+                    ]),
                   ],
                 ),
               ],
@@ -2106,6 +2144,117 @@ class _AppearancePreview extends StatelessWidget {
   );
 }
 
+/// One look for the Explore pages, drawn as a tiny page.
+class _ExploreStyleOption extends StatelessWidget {
+  const _ExploreStyleOption({required this.minimal, required this.selected, required this.onTap});
+  final bool minimal;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    const brand = Color(0xFF0EA5E9);
+    final head = minimal ? AppColors.bg : Color.lerp(brand, Colors.black, 0.86)!;
+    final ink = minimal ? AppColors.text : Colors.white;
+    Widget bar(double w, Color c, {double h = 5}) => Container(width: w, height: h, decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(3)));
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            padding: const EdgeInsets.all(3),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(Radii.m + 3),
+              border: Border.all(color: selected ? AppColors.text : AppColors.line, width: selected ? 2 : 1),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(Radii.m),
+              child: Container(
+                height: 120,
+                color: AppColors.bg,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      height: 58,
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(Space.s),
+                      decoration: BoxDecoration(
+                        color: head,
+                        gradient: minimal ? null : RadialGradient(center: const Alignment(1, -1), radius: 1.4, colors: [brand.withValues(alpha: 0.55), head]),
+                        border: minimal ? Border(bottom: BorderSide(color: AppColors.line)) : null,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          bar(44, ink, h: 7),
+                          const SizedBox(height: 5),
+                          Row(
+                            children: [
+                              for (var i = 0; i < 3; i++) ...[
+                                Container(
+                                  width: 20,
+                                  height: 10,
+                                  decoration: BoxDecoration(
+                                    color: minimal ? Colors.transparent : Colors.white.withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(3),
+                                  ),
+                                  alignment: Alignment.centerLeft,
+                                  child: bar(12, ink.withValues(alpha: 0.7), h: 3),
+                                ),
+                                const SizedBox(width: 4),
+                              ],
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.all(Space.s),
+                      child: Row(
+                        children: [
+                          for (var i = 0; i < 3; i++) ...[
+                            Expanded(
+                              child: Container(
+                                height: 30,
+                                decoration: BoxDecoration(
+                                  color: minimal ? AppColors.surface2 : [brand, const Color(0xFFE50914), const Color(0xFFFF7A1A)][i].withValues(alpha: 0.35),
+                                  borderRadius: BorderRadius.circular(5),
+                                ),
+                              ),
+                            ),
+                            if (i < 2) const SizedBox(width: 4),
+                          ],
+                        ],
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: Space.s),
+                      child: bar(40, minimal ? AppColors.text3 : brand, h: 4),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: Space.s),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(selected ? Icons.radio_button_checked_rounded : Icons.radio_button_off_rounded, size: 18, color: selected ? AppColors.text : AppColors.text3),
+              const SizedBox(width: 6),
+              Text(minimal ? 'Minimal' : 'Colourful', style: context.text.bodyMedium?.copyWith(fontWeight: FontWeight.w700)),
+            ],
+          ),
+          Text(minimal ? 'Monochrome, quiet' : 'Each page its own colours', style: context.text.bodySmall?.copyWith(color: AppColors.text3)),
+        ],
+      ),
+    );
+  }
+}
+
 class _Header extends StatelessWidget {
   const _Header(this.text, {this.note});
   final String text;
@@ -2506,6 +2655,7 @@ class _DrawerItemChips extends StatelessWidget {
   final void Function(String key, bool shown) onChanged;
 
   static const _icons = <String, IconData>{
+    'chats.all': Icons.forum_outlined,
     'chats.dms': Icons.person_outline_rounded,
     'chats.bots': Icons.smart_toy_outlined,
     'chats.groups': Icons.groups_outlined,

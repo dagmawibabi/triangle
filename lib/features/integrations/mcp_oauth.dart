@@ -238,6 +238,18 @@ abstract final class McpOAuth {
   /// Whether [serverId] signed in with OAuth here.
   static Future<bool> isOAuth(String serverId) async => (await _load(serverId)) != null;
 
+  /// [serverId]'s sign-in, for diagnosis: whether it signed in here, when
+  /// its token runs out and whether it can be refreshed. No secrets.
+  static Future<({bool signedIn, DateTime? expiresAt, bool canRefresh, String? issuer})> status(String serverId) async {
+    final saved = await _load(serverId);
+    return (
+      signedIn: saved != null,
+      expiresAt: DateTime.tryParse('${saved?['expires_at']}'),
+      canRefresh: saved?['refresh_token'] != null,
+      issuer: saved == null ? null : Uri.tryParse('${saved['token_endpoint']}')?.host,
+    );
+  }
+
   /// Refreshes [serverId]'s token when it ends within 5 minutes (or
   /// [force]); true when the server now has a fresh one.
   static Future<bool> refresh(McpRegistry registry, String serverId, {bool force = false}) async {

@@ -15,9 +15,12 @@ const _sourceActions = {
 /// Every section tool, for the local-tool routing.
 const sectionToolNames = {
   'market_stores', 'market_search', 'market_item', 'market_cart', 'market_wishlist', 'market_ai_settings', 'market_tidy',
-  'movie_channels', 'find_videos', 'movie_library',
+  'movie_channels', 'find_videos', 'movie_library', 'video_stats',
+  'cinema_channels', 'find_titles', 'cinema_title', 'cinema_watchlist', 'cinema_series',
   'book_sources', 'find_books', 'list_books', 'add_book', 'update_book', 'book_shelves', 'book_notes', 'read_book_text', 'reading_stats', 'remove_book',
-  'gallery_sources', 'gallery_items', 'gallery_albums', 'gallery_mark',
+  'gallery_sources', 'gallery_items', 'gallery_albums', 'gallery_mark', 'gallery_search', 'gallery_index',
+  'podcast_discover', 'podcast_shows', 'podcast_library', 'podcast_play', 'radio',
+  'opportunity_sources', 'find_events', 'event_plan', 'find_jobs', 'job_tracker', 'opportunity_settings',
   'app_sections',
 };
 
@@ -179,6 +182,103 @@ const sectionTools = <TelegramTool>[
         'sort': {'type': 'string', 'enum': ['newest', 'oldest', 'views', 'longest', 'shortest'], 'description': 'The order.'},
       },
       'required': ['action'],
+    },
+  ),
+  TelegramTool(
+    name: 'video_stats',
+    label: 'Reading your watch time',
+    category: ToolCategory.movies,
+    cost: ToolCost.device,
+    description: 'Time spent watching in Video (and Cinema, which plays in the same player): today, per day, streak, most-watched videos and channels.',
+    parameters: {'type': 'object', 'properties': {'days': {'type': 'integer', 'description': 'How many past days to show per day (default 14, at most 60).'}}},
+  ),
+  // ---- cinema ----
+  TelegramTool(
+    name: 'cinema_channels',
+    label: 'Managing cinema channels',
+    category: ToolCategory.cinema,
+    cost: ToolCost.device,
+    description:
+        'Cinema\'s channels: the ones that post films and series, read as a catalogue. list (with video counts), add, '
+        'remove, hide, show or reorder (chat_ids). poster_posts true/false also reads (or skips) poster posts: a '
+        'picture with the plot, ratings and links but no video.',
+    parameters: {'type': 'object', 'properties': {'action': _sourceActions, 'chat_ids': _chatIds, 'poster_posts': {'type': 'boolean', 'description': 'Also read poster posts (details and links, no video).'}}},
+  ),
+  TelegramTool(
+    name: 'find_titles',
+    label: 'Browsing the cinema',
+    category: ToolCategory.cinema,
+    cost: ToolCost.telegram,
+    description:
+        'Films and shows in Cinema: videos from its channels gathered into titles by name, year and season/episode, '
+        'newest first, plus the user\'s own series. Filter by words or genre, kind, the watchlist, or only titles with '
+        'a video. Returns title_keys for cinema_title.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'query': {'type': 'string', 'description': 'Words in the title, or a genre such as Drama.'},
+        'kind': {'type': 'string', 'enum': ['any', 'movie', 'show'], 'description': 'Films, shows or both (default).'},
+        'watchlist': {'type': 'boolean', 'description': 'Only titles on the watchlist.'},
+        'with_video': {'type': 'boolean', 'description': 'Leave out titles that only have a poster post.'},
+        'limit': {'type': 'integer', 'description': 'Default 25, at most 80.'},
+        'more': {'type': 'boolean', 'description': 'Read older posts from the channels first.'},
+      },
+    },
+  ),
+  TelegramTool(
+    name: 'cinema_title',
+    label: 'Opening a film or show',
+    category: ToolCategory.cinema,
+    cost: ToolCost.web,
+    description:
+        'One Cinema title by title_key (or its name): plot, genres, IMDb rating, cast, director and runtime looked up '
+        'online; a film\'s copies, or a show\'s episodes by season with how much was watched and what is up next; '
+        'and the links from its poster post. Each video_key plays in Video.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'title_key': {'type': 'string', 'description': 'From find_titles, or the title\'s name.'},
+        'season': {'type': 'integer', 'description': 'Only this season\'s episodes.'},
+        'details': {'type': 'boolean', 'description': 'Look the title up online (default true).'},
+      },
+      'required': ['title_key'],
+    },
+  ),
+  TelegramTool(
+    name: 'cinema_watchlist',
+    label: 'Updating the watchlist',
+    category: ToolCategory.cinema,
+    cost: ToolCost.device,
+    description: 'Cinema\'s watchlist: list (default), add or remove a title_key.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'action': {'type': 'string', 'enum': ['list', 'add', 'remove'], 'description': 'What to do.'},
+        'title_key': {'type': 'string', 'description': 'From find_titles.'},
+      },
+    },
+  ),
+  TelegramTool(
+    name: 'cinema_series',
+    label: 'Putting a series together',
+    category: ToolCategory.cinema,
+    cost: ToolCost.device,
+    description:
+        'The user\'s own series in Cinema, made from channels: list (default); create (name, year, chat_ids whose '
+        'posts are sorted into seasons by "S02E03" and the like); update (series → name, year, chat_ids); '
+        'set_season (series, season, chat_ids whose videos are that season\'s episodes in posting order, season_name); '
+        'remove_season; delete.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'action': {'type': 'string', 'enum': ['list', 'create', 'update', 'set_season', 'remove_season', 'delete'], 'description': 'What to do.'},
+        'series': {'type': 'string', 'description': 'The series: its series_id or name.'},
+        'name': {'type': 'string', 'description': 'The series\' name.'},
+        'year': {'type': 'integer', 'description': 'The year it started.'},
+        'season': {'type': 'integer', 'description': 'A season number.'},
+        'season_name': {'type': 'string', 'description': 'A name for the season, optional.'},
+        'chat_ids': _chatIds,
+      },
     },
   ),
   // ---- books ----
@@ -380,21 +480,287 @@ const sectionTools = <TelegramTool>[
       'required': ['item_keys'],
     },
   ),
+  TelegramTool(
+    name: 'gallery_search',
+    label: 'Searching the gallery',
+    category: ToolCategory.gallery,
+    cost: ToolCost.telegram,
+    description:
+        'Searches the Gallery\'s photos and videos by what they show and say: words in captions, source names, and '
+        '(once indexed with gallery_index) what is in the picture: "receipts", "whiteboard", "beach at sunset", "cat". '
+        'Narrow by type, dates, source, shape or favorites. deep true also asks Telegram for captions in older posts '
+        'that aren\'t loaded. Returns item_keys the other gallery tools take.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'query': {'type': 'string', 'description': 'What to look for.'},
+        'type': {'type': 'string', 'enum': ['photo', 'video'], 'description': 'Only photos or only videos.'},
+        'since': {'type': 'string', 'description': 'From this date, YYYY-MM-DD.'},
+        'until': {'type': 'string', 'description': 'Up to this date, YYYY-MM-DD.'},
+        'chat_id': {'type': 'integer', 'description': 'One source only.'},
+        'shape': {'type': 'string', 'enum': ['portrait', 'landscape', 'square'], 'description': 'The picture\'s shape.'},
+        'favorites': {'type': 'boolean', 'description': 'Only favorites.'},
+        'deep': {'type': 'boolean', 'description': 'Also search Telegram for older posts\' captions.'},
+        'limit': {'type': 'integer', 'description': 'Default 30, at most 100.'},
+      },
+    },
+  ),
+  TelegramTool(
+    name: 'gallery_index',
+    label: 'Indexing photos',
+    category: ToolCategory.gallery,
+    cost: ToolCost.ai,
+    description:
+        'Smart search for the Gallery: a vision model describes photos (objects, scene, any text in them) so '
+        'gallery_search can find them by what they show. status (default) says how many are indexed; run indexes up to '
+        'limit loaded photos not indexed yet (uses the model, costs tokens); stop; forget clears the index.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'action': {'type': 'string', 'enum': ['status', 'run', 'stop', 'forget'], 'description': 'What to do.'},
+        'limit': {'type': 'integer', 'description': 'For run: most photos to describe (default 60, at most 400).'},
+      },
+    },
+  ),
+  // ---- podcasts & radio ----
+  TelegramTool(
+    name: 'podcast_discover',
+    label: 'Finding podcasts',
+    category: ToolCategory.podcasts,
+    cost: ToolCost.web,
+    description: 'Searches Apple\'s podcast directory (query, optional genre such as Technology or History, country code), or gives today\'s top shows when there is no query. Follow one with podcast_shows.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'query': {'type': 'string', 'description': 'Words to search.'},
+        'genre': {'type': 'string', 'description': 'A genre, e.g. Technology, News, Comedy.'},
+        'country': {'type': 'string', 'description': 'Two-letter chart country, e.g. us, gb, ng.'},
+        'limit': {'type': 'integer', 'description': 'Most results.'},
+      },
+    },
+  ),
+  TelegramTool(
+    name: 'podcast_shows',
+    label: 'Managing podcast shows',
+    category: ToolCategory.podcasts,
+    cost: ToolCost.web,
+    description: 'The user\'s podcast shows: list (default), follow (feed_url or apple_id), unfollow (show_id), add_telegram (chat_ids of channels whose audio posts become episodes), refresh.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'action': {'type': 'string', 'enum': ['list', 'follow', 'unfollow', 'add_telegram', 'refresh'], 'description': 'What to do.'},
+        'feed_url': {'type': 'string', 'description': 'An RSS feed address.'},
+        'apple_id': {'type': 'string', 'description': 'From podcast_discover.'},
+        'show_id': {'type': 'string', 'description': 'A followed show id.'},
+        'chat_ids': _chatIds,
+      },
+    },
+  ),
+  TelegramTool(
+    name: 'podcast_library',
+    label: 'Listing episodes',
+    category: ToolCategory.podcasts,
+    cost: ToolCost.web,
+    description: 'Episodes: of one show (show_id), or a list: new (default), in_progress, queue, downloaded, history, saved. query filters by words.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'show_id': {'type': 'string', 'description': 'One show.'},
+        'list': {'type': 'string', 'enum': ['new', 'in_progress', 'queue', 'downloaded', 'history', 'saved'], 'description': 'Which list.'},
+        'query': {'type': 'string', 'description': 'Words in titles or notes.'},
+        'limit': {'type': 'integer', 'description': 'Most results.'},
+      },
+    },
+  ),
+  TelegramTool(
+    name: 'podcast_play',
+    label: 'Playing a podcast',
+    category: ToolCategory.podcasts,
+    cost: ToolCost.device,
+    description: 'Acts on an episode_id: play (resumes where the user stopped), play_next, queue, dequeue, played, unplayed, download, remove_download, favorite; or clear_queue.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'episode_id': {'type': 'string', 'description': 'From podcast_library.'},
+        'action': {'type': 'string', 'enum': ['play', 'play_next', 'queue', 'dequeue', 'played', 'unplayed', 'download', 'remove_download', 'favorite', 'clear_queue'], 'description': 'What to do.'},
+      },
+    },
+  ),
+  TelegramTool(
+    name: 'radio',
+    label: 'Live radio',
+    category: ToolCategory.podcasts,
+    cost: ToolCost.web,
+    description: 'Live radio from every country: search (default; query, tag such as jazz or news, country name or code), play (station_id, or query to play the top match), favorite, unfavorite, favorites, recent.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'action': {'type': 'string', 'enum': ['search', 'play', 'favorite', 'unfavorite', 'favorites', 'recent'], 'description': 'What to do.'},
+        'query': {'type': 'string', 'description': 'A station name.'},
+        'tag': {'type': 'string', 'description': 'A genre tag.'},
+        'country': {'type': 'string', 'description': 'A country name or code; stays picked.'},
+        'station_id': {'type': 'string', 'description': 'From a search.'},
+        'limit': {'type': 'integer', 'description': 'Most results.'},
+      },
+    },
+  ),
+  // ---- events & jobs ----
+  TelegramTool(
+    name: 'opportunity_sources',
+    label: 'Managing event and job channels',
+    category: ToolCategory.opportunities,
+    cost: ToolCost.device,
+    description: 'The Opportunity page\'s sources: channels and groups whose posts are read as events (kind events) or jobs (kind jobs). list, add, remove, hide, show or reorder (chat_ids).',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'kind': {'type': 'string', 'enum': ['events', 'jobs'], 'description': 'Which list.'},
+        'action': _sourceActions,
+        'chat_ids': _chatIds,
+      },
+      'required': ['kind'],
+    },
+  ),
+  TelegramTool(
+    name: 'find_events',
+    label: 'Finding events',
+    category: ToolCategory.opportunities,
+    cost: ToolCost.telegram,
+    description:
+        'Events from the event channels: when, where, online or not, price, registration link, organizer, in time '
+        'order. Filter by words, when (upcoming, today, week, weekend, month, past), a date, online, free, category or '
+        'one channel. Includes which ones the user is going to.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'query': {'type': 'string', 'description': 'Words to match.'},
+        'when': {'type': 'string', 'enum': ['upcoming', 'today', 'week', 'weekend', 'month', 'past'], 'description': 'Default upcoming.'},
+        'date': {'type': 'string', 'description': 'One day, YYYY-MM-DD (overrides when).'},
+        'online': {'type': 'boolean', 'description': 'true only online, false only in person.'},
+        'free': {'type': 'boolean', 'description': 'Only free ones.'},
+        'category': {'type': 'string', 'description': 'e.g. Tech, Music, Faith, Career.'},
+        'chat_id': {'type': 'integer', 'description': 'One channel only.'},
+        'limit': {'type': 'integer', 'description': 'Default 20, at most 60.'},
+        'more': {'type': 'boolean', 'description': 'Read older posts first.'},
+      },
+    },
+  ),
+  TelegramTool(
+    name: 'event_plan',
+    label: 'Planning an event',
+    category: ToolCategory.opportunities,
+    cost: ToolCost.device,
+    description:
+        'The user\'s events: list (default) what they saved; going, interested or went for an event_key; remove; '
+        'remind (minutes_before the start: makes a reminder); note (a note on it).',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'action': {'type': 'string', 'enum': ['list', 'going', 'interested', 'went', 'remove', 'remind', 'note'], 'description': 'What to do.'},
+        'event_key': {'type': 'string', 'description': 'The event, from find_events.'},
+        'minutes_before': {'type': 'integer', 'description': 'For remind: how long before it starts (default 60).'},
+        'note': {'type': 'string', 'description': 'For note.'},
+      },
+    },
+  ),
+  TelegramTool(
+    name: 'find_jobs',
+    label: 'Finding jobs',
+    category: ToolCategory.opportunities,
+    cost: ToolCost.telegram,
+    description:
+        'Jobs from the job channels: role, company, place, remote or not, type, level, pay, deadline, how to apply, '
+        'requirements, and a match score when the user has a profile. Filter and sort. Closed ones are left out unless '
+        'include_closed.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'query': {'type': 'string', 'description': 'Role, company or skill.'},
+        'workplace': {'type': 'string', 'enum': ['remote', 'hybrid', 'onsite'], 'description': 'Where the work is.'},
+        'type': {'type': 'string', 'description': 'Full-time, Part-time, Contract, Internship or Freelance.'},
+        'level': {'type': 'string', 'description': 'Entry, Junior, Mid, Senior, Lead or Executive.'},
+        'category': {'type': 'string', 'description': 'e.g. Engineering, Finance, NGO.'},
+        'closing_within_days': {'type': 'integer', 'description': 'Only ones whose deadline is this close.'},
+        'min_salary': {'type': 'number', 'description': 'Lowest pay, in the post\'s currency.'},
+        'include_closed': {'type': 'boolean', 'description': 'Also ones past their deadline.'},
+        'sort': {'type': 'string', 'enum': ['newest', 'deadline', 'salary', 'match'], 'description': 'The order.'},
+        'chat_id': {'type': 'integer', 'description': 'One channel only.'},
+        'limit': {'type': 'integer', 'description': 'Default 20, at most 60.'},
+        'more': {'type': 'boolean', 'description': 'Read older posts first.'},
+      },
+    },
+  ),
+  TelegramTool(
+    name: 'job_tracker',
+    label: 'Tracking applications',
+    category: ToolCategory.opportunities,
+    cost: ToolCost.device,
+    description:
+        'The user\'s job applications: list (default, optionally one status); for a job_key: save, applied, '
+        'interview, offer, rejected (moves it there), remove, note, or remind (a reminder the day before its deadline).',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'action': {'type': 'string', 'enum': ['list', 'save', 'applied', 'interview', 'offer', 'rejected', 'remove', 'note', 'remind'], 'description': 'What to do.'},
+        'job_key': {'type': 'string', 'description': 'The job, from find_jobs.'},
+        'status': {'type': 'string', 'enum': ['saved', 'applied', 'interview', 'offer', 'rejected'], 'description': 'For list: only this status.'},
+        'note': {'type': 'string', 'description': 'For note.'},
+      },
+    },
+  ),
+  TelegramTool(
+    name: 'opportunity_settings',
+    label: 'Setting up events and jobs',
+    category: ToolCategory.opportunities,
+    cost: ToolCost.device,
+    description:
+        'The Opportunity page\'s AI tidy-up (a model turns posts into clean events and jobs, and gives job ads a trust score) and the user\'s job '
+        'profile (skills, experience, what they want: used for match scores and drafted applications). Change any '
+        'of: ai_enabled, auto, hide_others, model (free, cheap, main or an id), profile, city. read events or jobs '
+        'reads the loaded posts now (force reads them again).',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'ai_enabled': {'type': 'boolean', 'description': 'Read posts with AI.'},
+        'auto': {'type': 'boolean', 'description': 'Read new posts as they load.'},
+        'hide_others': {'type': 'boolean', 'description': 'Hide posts the model says aren\'t events or jobs.'},
+        'model': {'type': 'string', 'description': 'free, cheap, main, or a model id.'},
+        'profile': {'type': 'string', 'description': 'The user\'s job profile; replaces the current one.'},
+        'city': {'type': 'string', 'description': 'The user\'s city.'},
+        'read': {'type': 'string', 'enum': ['events', 'jobs'], 'description': 'Read these posts with AI now.'},
+        'action': {'type': 'string', 'enum': ['status', 'pause', 'resume', 'stop'], 'description': 'The tidy-up run: its progress and latest results, or pause, resume or stop it.'},
+        'extra_instructions': {'type': 'string', 'description': 'The user\'s own instructions for the model (empty to clear).'},
+        'event_summary': {'type': 'boolean', 'description': 'Tidy-up fills in: summary (events).'},
+        'event_place': {'type': 'boolean', 'description': 'Tidy-up fills in: place (events).'},
+        'event_price': {'type': 'boolean', 'description': 'Tidy-up fills in: price (events).'},
+        'event_link': {'type': 'boolean', 'description': 'Tidy-up fills in: link (events).'},
+        'event_tags': {'type': 'boolean', 'description': 'Tidy-up fills in: tags (events).'},
+        'job_pay': {'type': 'boolean', 'description': 'Tidy-up fills in: pay (jobs).'},
+        'job_apply': {'type': 'boolean', 'description': 'Tidy-up fills in: apply (jobs).'},
+        'job_requirements': {'type': 'boolean', 'description': 'Tidy-up fills in: requirements (jobs).'},
+        'job_summary': {'type': 'boolean', 'description': 'Tidy-up fills in: summary (jobs).'},
+        'job_match': {'type': 'boolean', 'description': 'Tidy-up fills in: match (jobs).'},
+        'job_trust': {'type': 'boolean', 'description': 'Tidy-up fills in: trust (jobs).'},
+        'force': {'type': 'boolean', 'description': 'With read: read again even ones already read.'},
+      },
+    },
+  ),
   // ---- all ----
   TelegramTool(
     name: 'app_sections',
     label: 'Arranging the app\'s sections',
-    category: ToolCategory.media,
+    category: ToolCategory.sections,
     cost: ToolCost.device,
     description:
-        'The app\'s sections (playlists, marketplace, movies, books, gallery, my folders): which show in the side '
-        'drawer, and which page the app opens on (start_page: assistant, dms, channels, groups, playlists, '
-        'marketplace, movies, books, gallery, files, brief, canvas, search, calls…). Returns the current setup.',
+        'The side drawer\'s Explore pages (music, video, cinema, podcasts, books, gallery, opportunity, marketplace), '
+        'the whole explore heading, and my_folders: which show; and which page the app opens on (start_page: '
+        'assistant, dms, channels, groups, playlists, movies, cinema, podcasts, books, gallery, opportunity, '
+        'marketplace, files, brief, canvas, search, calls…). Returns the current setup.',
     parameters: {
       'type': 'object',
       'properties': {
-        'show': _keys,
-        'hide': _keys,
+        'show': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Pages to show in the drawer, e.g. cinema, podcasts, explore.'},
+        'hide': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Pages to hide from the drawer.'},
         'start_page': {'type': 'string', 'description': 'The page the app opens on.'},
       },
     },
@@ -412,6 +778,12 @@ const _sectionPolicies = <String, ToolPolicy>{
   'movie_channels': ToolPolicy(ToolAccess.modify),
   'find_videos': ToolPolicy(ToolAccess.read, needsTelegram: true),
   'movie_library': ToolPolicy(ToolAccess.modify),
+  'video_stats': ToolPolicy(ToolAccess.read),
+  'cinema_channels': ToolPolicy(ToolAccess.modify),
+  'find_titles': ToolPolicy(ToolAccess.read, needsTelegram: true),
+  'cinema_title': ToolPolicy(ToolAccess.read, needsTelegram: true),
+  'cinema_watchlist': ToolPolicy(ToolAccess.modify),
+  'cinema_series': ToolPolicy(ToolAccess.modify),
   'book_sources': ToolPolicy(ToolAccess.modify),
   'find_books': ToolPolicy(ToolAccess.read, needsTelegram: true),
   'list_books': ToolPolicy(ToolAccess.read),
@@ -426,6 +798,19 @@ const _sectionPolicies = <String, ToolPolicy>{
   'gallery_items': ToolPolicy(ToolAccess.read, needsTelegram: true),
   'gallery_albums': ToolPolicy(ToolAccess.modify),
   'gallery_mark': ToolPolicy(ToolAccess.modify),
+  'gallery_search': ToolPolicy(ToolAccess.read, needsTelegram: true),
+  'gallery_index': ToolPolicy(ToolAccess.modify, needsTelegram: true),
+  'podcast_discover': ToolPolicy(ToolAccess.read),
+  'podcast_shows': ToolPolicy(ToolAccess.modify),
+  'podcast_library': ToolPolicy(ToolAccess.read),
+  'podcast_play': ToolPolicy(ToolAccess.modify),
+  'radio': ToolPolicy(ToolAccess.modify),
+  'opportunity_sources': ToolPolicy(ToolAccess.modify),
+  'find_events': ToolPolicy(ToolAccess.read, needsTelegram: true),
+  'event_plan': ToolPolicy(ToolAccess.modify),
+  'find_jobs': ToolPolicy(ToolAccess.read, needsTelegram: true),
+  'job_tracker': ToolPolicy(ToolAccess.modify),
+  'opportunity_settings': ToolPolicy(ToolAccess.modify),
   'app_sections': ToolPolicy(ToolAccess.modify),
 };
 
@@ -440,6 +825,12 @@ const _sectionReferences = <String, ToolReference>{
   'movie_channels': ToolReference(['channels: chat_id, title, hidden, videos', 'added', 'removed', 'unknown']),
   'find_videos': ToolReference(['videos: video_key, title, channel, length_minutes, quality, views, watched_percent', 'total']),
   'movie_library': ToolReference(['my_list', 'history', 'done', 'autoplay', 'sort']),
+  'video_stats': ToolReference(['today_minutes', 'total_hours', 'streak_days', 'per_day', 'most_watched: title, channel, minutes, times_started', 'top_channels: channel, minutes', 'since']),
+  'cinema_channels': ToolReference(['channels: chat_id, title, hidden, videos_loaded', 'poster_posts', 'own_series', 'added', 'removed']),
+  'find_titles': ToolReference(['titles: title_key, title, kind, year, seasons, episodes, versions, plot, ratings, genres, in_watchlist', 'total']),
+  'cinema_title': ToolReference(['title_key', 'title', 'kind', 'details: overview, genres, imdb_rating, cast, director, runtime_minutes', 'versions', 'episodes: season, episode, video_key, watched_percent', 'up_next', 'links'], limits: ['episodes: at most 150; pass season for one season.']),
+  'cinema_watchlist': ToolReference(['watchlist', 'count']),
+  'cinema_series': ToolReference(['series: series_id, title_key, name, year, channels, seasons', 'done']),
   'book_sources': ToolReference(['sources: chat_id, title, books', 'added', 'removed']),
   'find_books': ToolReference(['books: post_key, title, file_name, format, size, from, in_library', 'total']),
   'list_books': ToolReference(['books: book_id, title, author, format, status, progress_percent, shelves, rating', 'shelves', 'total']),
@@ -454,5 +845,18 @@ const _sectionReferences = <String, ToolReference>{
   'gallery_items': ToolReference(['items: item_key, type, source, date, caption', 'total']),
   'gallery_albums': ToolReference(['albums: album_id, name, items', 'album', 'added', 'removed']),
   'gallery_mark': ToolReference(['favorites', 'hidden', 'changed']),
+  'gallery_search': ToolReference(['items: item_key, type, source, date, caption, seen', 'total', 'indexed', 'note']),
+  'gallery_index': ToolReference(['indexed', 'loaded_photos', 'running', 'done', 'total', 'model']),
+  'podcast_discover': ToolReference(['shows: title, author, genre, feed_url, apple_id, following']),
+  'podcast_shows': ToolReference(['shows: show_id, title, episodes, latest, new', 'followed', 'unfollowed']),
+  'podcast_library': ToolReference(['episodes: episode_id, title, show, published, minutes, played', 'total']),
+  'podcast_play': ToolReference(['done', 'episode', 'queue']),
+  'radio': ToolReference(['stations: station_id, name, country, tags, kbps, favorite', 'playing', 'country']),
+  'opportunity_sources': ToolReference(['sources: chat_id, title, hidden, posts', 'added', 'removed']),
+  'find_events': ToolReference(['events: event_key, title, starts, where, online, link, price, organizer', 'total', 'categories', 'note']),
+  'event_plan': ToolReference(['my_events: event_key, title, starts, status', 'done']),
+  'find_jobs': ToolReference(['jobs: job_key, title, company, location, salary, deadline, apply_link, match_percent', 'total', 'note']),
+  'job_tracker': ToolReference(['applications: job_key, title, company, status, deadline', 'counts', 'done']),
+  'opportunity_settings': ToolReference(['ai_enabled', 'auto', 'model', 'resolved_model', 'profile', 'city', 'read']),
   'app_sections': ToolReference(['in_drawer', 'start_page', 'start_pages']),
 };

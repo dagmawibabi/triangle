@@ -13,6 +13,7 @@ import '../telegram/data/telegram_store.dart';
 import '../voice/speaker.dart';
 import 'music_stats.dart';
 import '../assistant/notifications.dart' show appNotifierProvider;
+import 'media_session.dart';
 
 /// One voice message or song.
 class Track {
@@ -35,7 +36,46 @@ class Track {
     this.artPath,
     this.artFile,
     this.info = const {},
+    this.startMs = 0,
+    this.spoken = false,
+    this.account,
   });
+
+  /// The Telegram account [file] and [artFile] belong to (a file id means
+  /// nothing in another account); null: the one on screen.
+  final String? account;
+
+  /// Where to start, in milliseconds (a podcast resuming).
+  final int startMs;
+
+  /// Talk (podcasts, audiobooks): plays at its own speed, kept apart from
+  /// the music speed.
+  final bool spoken;
+
+  /// The same track starting at [startMs], or marked [spoken].
+  Track withPlayback({int? startMs, bool? spoken}) => Track(
+    chatId: chatId,
+    messageId: messageId,
+    file: file,
+    localPath: localPath,
+    identifier: key,
+    title: title,
+    subtitle: subtitle,
+    seconds: seconds,
+    voice: voice,
+    cover: cover,
+    url: url,
+    artUrl: artUrl,
+    live: live,
+    resolve: resolve,
+    queueTag: queueTag,
+    artPath: artPath,
+    artFile: artFile,
+    info: info,
+    startMs: startMs ?? this.startMs,
+    spoken: spoken ?? this.spoken,
+    account: account,
+  );
 
   /// Full-size album art saved on the phone.
   final String? artPath;
@@ -62,17 +102,21 @@ class Track {
   /// A live stream: no length, no seeking.
   final bool live;
 
-  factory Track.stream({required String url, required String title, String subtitle = '', String? artUrl, bool live = false, int seconds = 0}) => Track(
+  factory Track.stream({required String url, required String title, String subtitle = '', String? artUrl, bool live = false, int seconds = 0, String? identifier, int startMs = 0, bool spoken = false, Future<Track?> Function()? resolve, String? queueTag}) => Track(
     chatId: 0,
     messageId: 0,
-    identifier: 'url:$url',
+    identifier: identifier ?? 'url:$url',
     title: title,
     subtitle: subtitle,
     seconds: seconds,
     voice: false,
-    url: url,
+    url: url.isEmpty ? null : url,
     artUrl: artUrl,
     live: live,
+    startMs: startMs,
+    spoken: spoken,
+    resolve: resolve,
+    queueTag: queueTag,
   );
 
   final int chatId;
@@ -92,7 +136,7 @@ class Track {
   String get key => identifier ?? '$chatId:$messageId';
 
   /// This track with its playable source filled in, keeping its key.
-  Track withSource({td.File? file, String? localPath, int? seconds, td.Minithumbnail? cover, td.File? artFile, Map<String, String>? info}) => Track(
+  Track withSource({td.File? file, String? localPath, int? seconds, td.Minithumbnail? cover, td.File? artFile, Map<String, String>? info, String? url, String? account}) => Track(
     chatId: chatId,
     messageId: messageId,
     file: file ?? this.file,
@@ -103,13 +147,16 @@ class Track {
     seconds: seconds != null && seconds > 0 ? seconds : this.seconds,
     voice: voice,
     cover: cover ?? this.cover,
-    url: url,
+    url: url ?? this.url,
     artUrl: artUrl,
     live: live,
     queueTag: queueTag,
     artPath: artPath,
     artFile: artFile ?? this.artFile,
     info: info == null ? this.info : {...this.info, ...info},
+    startMs: startMs,
+    spoken: spoken,
+    account: account ?? this.account,
   );
 
   factory Track.localFile({
@@ -136,6 +183,7 @@ class Track {
           chatId: m.chatId,
           messageId: m.id,
           file: voiceNote.voice,
+          account: store.accountId,
           title: m.isOutgoing ? 'You' : store.senderName(m.senderId),
           subtitle: 'Voice message',
           seconds: voiceNote.duration,
@@ -153,6 +201,7 @@ class Track {
           chatId: m.chatId,
           messageId: m.id,
           file: audio.audio,
+          account: store.accountId,
           title: audio.title.isNotEmpty ? audio.title : audio.fileName,
           subtitle: audio.performer.isNotEmpty
               ? audio.performer
@@ -210,12 +259,15 @@ Map<String, String> audioInfo({String? fileName, String? mime, int bytes = 0, in
 /// Plays voice messages and music from any chat, with a queue so the next
 /// one in the chat follows, like Telegram's player.
 class AudioCenter extends ChangeNotifier {
+  /// The loader of the account [t]'s files belong to.
+  FileLoader _loaderOf(Track t) => _ref.read(t.account == null ? fileLoaderProvider : fileLoaderFamily(t.account!));
+
   AudioCenter(this._ref) {
     _player.onPositionChanged.listen((p) {
       // Time actually heard, for the listening stats: small forward steps
       // while playing (not seeks).
       final step = p - _heardAt;
-      if (playing && current != null && step > Duration.zero && step < const Duration(seconds: 4)) {
+      if (playing && current != null && !current!.spoken && step > Duration.zero && step < const Duration(seconds: 4)) {
         _heardMs += step.inMilliseconds;
         if (_heardMs >= 5000) {
           _stats((s) => s.heard(current!.key, _heardMs ~/ 1000));
@@ -246,8 +298,26 @@ class AudioCenter extends ChangeNotifier {
         }
       });
     } catch (_) {}
+    // The system player's buttons, seek bar and headset buttons.
+    _sessionActions = MediaSessionBridge.instance.actions.stream.listen((a) {
+      switch (a.action) {
+        case 'play':
+          if (!playing) toggle();
+        case 'pause':
+          if (playing) toggle();
+        case 'next':
+          next();
+        case 'previous':
+          previous();
+        case 'stop':
+          stop();
+        case 'seek':
+          if (a.arg is num) seek(Duration(milliseconds: (a.arg as num).toInt()));
+      }
+    });
   }
 
+  StreamSubscription<({String action, Object? arg})>? _sessionActions;
   StreamSubscription<String>? _actions;
   String? _shown;
 
@@ -257,18 +327,48 @@ class AudioCenter extends ChangeNotifier {
     final t = current;
     String? art;
     if (t != null) {
-      art = t.artPath != null && File(t.artPath!).existsSync() ? t.artPath : _ref.read(fileLoaderProvider).cachedPath(t.artFile);
+      art = t.artPath != null && File(t.artPath!).existsSync() ? t.artPath : _loaderOf(t).cachedPath(t.artFile);
     }
-    final sig = t == null ? null : '${t.key}|$playing|$art|$hasNext|$loading';
-    if (sig == _shown) return;
+    // The seek position is sent when the play state changes; the system
+    // carries it on from there. A jump of more than a few seconds (a seek)
+    // sends it again.
+    final sig = t == null ? null : '${t.key}|$playing|$art|$hasNext|$loading|${duration.inSeconds}|$speed';
+    final jumped = _sentAt != null && playing && (position - _expected()).abs() > const Duration(seconds: 3);
+    if (sig == _shown && !jumped) return;
     _shown = sig;
+    _sentPos = position;
+    _sentAt = DateTime.now();
+    unawaited(_pushNotification(t, art));
+  }
+
+  Duration? _sentPos;
+  DateTime? _sentAt;
+
+  /// Where the system's seek bar thinks playback is now.
+  Duration _expected() => playing ? (_sentPos ?? Duration.zero) + DateTime.now().difference(_sentAt!) * speed : (_sentPos ?? Duration.zero);
+
+  Future<void> _pushNotification(Track? t, String? art) async {
     try {
       final n = _ref.read(appNotifierProvider);
+      final session = MediaSessionBridge.instance;
       if (t == null) {
-        unawaited(n.clearMedia());
-      } else {
-        unawaited(n.media(title: t.title, subtitle: t.subtitle, playing: playing || loading, art: art, hasNext: hasNext));
+        await session.clear();
+        await n.clearMedia();
+        return;
       }
+      final ok = await session.update(
+        title: t.title,
+        subtitle: t.subtitle,
+        playing: playing || loading,
+        art: art,
+        position: position,
+        duration: duration,
+        speed: speed,
+        hasNext: hasNext,
+        hasPrevious: true,
+      );
+      // Built without the media session: the plain notification instead.
+      if (!ok) await n.media(title: t.title, subtitle: t.subtitle, playing: playing || loading, art: art, hasNext: hasNext);
     } catch (e) {
       debugPrint('[Audio] notification: $e');
     }
@@ -318,7 +418,14 @@ class AudioCenter extends ChangeNotifier {
   bool loading = false;
   Duration position = Duration.zero;
   Duration duration = Duration.zero;
+
+  /// The speed now: [musicSpeed] or [talkSpeed], by what is playing.
   double speed = 1;
+  double musicSpeed = 1;
+  double talkSpeed = 1;
+
+  /// Told when a track plays to its end, before the next one starts.
+  final List<void Function(Track)> onTrackEnded = [];
   String? error;
 
   /// Plays the queue in a random order.
@@ -397,7 +504,8 @@ class AudioCenter extends ChangeNotifier {
     currentPath = null;
     _heardAt = Duration.zero;
     _heardMs = 0;
-    if (!track.live) {
+    // Music stats are for music: not radio, podcasts or audiobooks.
+    if (!track.live && !track.spoken) {
       _stats((s) => s.started(
         key: track.key,
         title: track.title,
@@ -416,21 +524,9 @@ class AudioCenter extends ChangeNotifier {
     loading = true;
     error = null;
     playing = true;
+    speed = track.live ? 1 : (track.spoken ? talkSpeed : musicSpeed);
     notifyListeners();
-    if (track.url != null) {
-      try {
-        await _player.setPlaybackRate(track.live ? 1 : speed);
-        await _player.play(UrlSource(track.url!));
-        if (current?.key == track.key) loading = false;
-      } catch (e) {
-        error = 'Could not play the stream: $e';
-        playing = false;
-        loading = false;
-      }
-      notifyListeners();
-      return;
-    }
-    if (track.file == null && track.localPath == null && track.resolve != null) {
+    if (track.file == null && track.localPath == null && track.url == null && track.resolve != null) {
       Track? found;
       try {
         found = await track.resolve!();
@@ -438,7 +534,8 @@ class AudioCenter extends ChangeNotifier {
         debugPrint('[Audio] $e');
       }
       if (current?.key != track.key) return;
-      if (found == null || (found.file == null && found.localPath == null)) {
+      if (found != null) found = found.withPlayback(startMs: track.startMs, spoken: track.spoken);
+      if (found == null || (found.file == null && found.localPath == null && found.url == null)) {
         loading = false;
         playing = false;
         error = 'This audio is no longer available.';
@@ -454,9 +551,23 @@ class AudioCenter extends ChangeNotifier {
       if (i >= 0) queue = [...queue]..[i] = found;
       notifyListeners();
     }
+    if (track.url != null && track.localPath == null) {
+      try {
+        await _player.setPlaybackRate(track.live ? 1 : speed);
+        await _player.play(UrlSource(track.url!));
+        if (track.startMs > 0 && !track.live) await _player.seek(Duration(milliseconds: track.startMs));
+        if (current?.key == track.key) loading = false;
+      } catch (e) {
+        error = 'Could not play the stream: $e';
+        playing = false;
+        loading = false;
+      }
+      notifyListeners();
+      return;
+    }
     final path =
         track.localPath ??
-        await _ref.read(fileLoaderProvider).download(track.file!, priority: 32);
+        await _loaderOf(track).download(track.file!, priority: 32);
     if (current?.key != track.key) return;
     loading = false;
     if (path == null) {
@@ -469,6 +580,7 @@ class AudioCenter extends ChangeNotifier {
     try {
       await _player.setPlaybackRate(speed);
       await _player.play(DeviceFileSource(path));
+      if (track.startMs > 0) await _player.seek(Duration(milliseconds: track.startMs));
     } catch (e) {
       error = '$e';
       playing = false;
@@ -553,11 +665,26 @@ class AudioCenter extends ChangeNotifier {
 
   Future<void> setSpeed(double v) async {
     speed = v;
+    if (current?.spoken ?? false) {
+      talkSpeed = v;
+    } else {
+      musicSpeed = v;
+    }
     await _player.setPlaybackRate(v);
     notifyListeners();
   }
 
   void _completed() {
+    final ended = current;
+    if (ended != null) {
+      for (final f in [...onTrackEnded]) {
+        try {
+          f(ended);
+        } catch (e) {
+          debugPrint('[Audio] ended: $e');
+        }
+      }
+    }
     if (sleepAtEnd) {
       sleepAtEnd = false;
       playing = false;
@@ -591,6 +718,7 @@ class AudioCenter extends ChangeNotifier {
   @override
   void dispose() {
     _actions?.cancel();
+    _sessionActions?.cancel();
     _sleep?.cancel();
     _player.dispose();
     super.dispose();

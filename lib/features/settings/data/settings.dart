@@ -219,6 +219,7 @@ class AppSettings {
     this.showThinking = true,
     this.showToolCalls = true,
     this.leadingIcons = true,
+    this.exploreMinimal = false,
     this.openLastChat = false,
     this.startPage = 'assistant',
     this.use24h = true,
@@ -416,6 +417,10 @@ class AppSettings {
 
   /// Icons at the start of list rows across the app.
   final bool leadingIcons;
+
+  /// Music, Gallery, Video and Marketplace in the app's own quiet
+  /// monochrome look instead of their branded colours.
+  final bool exploreMinimal;
 
   /// Opening the app shows the last chat instead of a new one.
   final bool openLastChat;
@@ -738,6 +743,7 @@ class AppSettings {
     bool? showThinking,
     bool? showToolCalls,
     bool? leadingIcons,
+    bool? exploreMinimal,
     bool? openLastChat,
     String? startPage,
     bool? use24h,
@@ -864,6 +870,7 @@ class AppSettings {
     showThinking: showThinking ?? this.showThinking,
     showToolCalls: showToolCalls ?? this.showToolCalls,
     leadingIcons: leadingIcons ?? this.leadingIcons,
+    exploreMinimal: exploreMinimal ?? this.exploreMinimal,
     openLastChat: openLastChat ?? this.openLastChat,
     startPage: startPage ?? this.startPage,
     use24h: use24h ?? this.use24h,
@@ -1099,6 +1106,7 @@ class SettingsController extends Notifier<AppSettings> {
       showThinking: p.getBool('show_thinking') ?? d.showThinking,
       showToolCalls: p.getBool('show_tool_calls') ?? d.showToolCalls,
       leadingIcons: p.getBool('leading_icons') ?? d.leadingIcons,
+      exploreMinimal: p.getBool('explore_minimal') ?? d.exploreMinimal,
       openLastChat: p.getBool('open_last_chat') ?? d.openLastChat,
       startPage: p.getString('start_page') ?? d.startPage,
       use24h: p.getBool('use_24h') ?? d.use24h,
@@ -1509,6 +1517,8 @@ class SettingsController extends Notifier<AppSettings> {
       customize(state.copyWith(showToolCalls: v), 'show_tool_calls', v);
   Future<void> setLeadingIcons(bool v) =>
       customize(state.copyWith(leadingIcons: v), 'leading_icons', v);
+  Future<void> setExploreMinimal(bool v) =>
+      customize(state.copyWith(exploreMinimal: v), 'explore_minimal', v);
   Future<void> setStartPage(String v) =>
       customize(state.copyWith(startPage: v), 'start_page', v);
   Future<void> setOpenLastChat(bool v) =>
@@ -1751,6 +1761,7 @@ final settingsProvider = NotifierProvider<SettingsController, AppSettings>(
 /// The drawer's items that can be turned off one by one: (key, label).
 abstract final class DrawerItems {
   static const chats = [
+    ('chats.all', 'All'),
     ('chats.dms', 'DMs'),
     ('chats.bots', 'Bots'),
     ('chats.groups', 'Groups'),

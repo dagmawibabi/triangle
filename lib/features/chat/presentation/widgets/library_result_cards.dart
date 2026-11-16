@@ -213,14 +213,14 @@ class _NowPlayingCard extends ConsumerWidget {
 
 /// Downloads [url] as [name] with a progress ring, then offers to open it.
 class _DownloadButton extends StatefulWidget {
-  const _DownloadButton({required this.url, required this.name, this.label = 'Download', this.icon = Icons.download_rounded, this.meta});
+  const _DownloadButton({required this.url, required this.name, this.label = 'Download', this.meta});
   final String url;
   final String name;
 
   /// What Files shows it as (library, title, subtitle, cover).
   final Map<String, Object?>? meta;
   final String label;
-  final IconData icon;
+  final IconData icon = Icons.download_rounded;
 
   @override
   State<_DownloadButton> createState() => _DownloadButtonState();
@@ -699,7 +699,7 @@ class _AudiobookSheetState extends State<_AudiobookSheet> {
         final chapters = snap.data ?? const [];
         final queue = [
           for (final c in chapters)
-            Track.stream(url: '${c['url']}', title: '${c['title']}', subtitle: '${b['title']}', artUrl: b['cover'] as String?, seconds: (c['seconds'] as int?) ?? 0),
+            Track.stream(url: '${c['url']}', title: '${c['title']}', subtitle: '${b['title']}', artUrl: b['cover'] as String?, seconds: (c['seconds'] as int?) ?? 0, spoken: true),
         ];
         return ListView(
           controller: widget.scroll,
@@ -807,7 +807,7 @@ class _ChapterList extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final title = '${data['title'] ?? 'Audiobook'}';
-    final queue = [for (final c in chapters) Track.stream(url: '${c['url']}', title: '${c['title']}', subtitle: title, seconds: (c['seconds'] as int?) ?? 0)];
+    final queue = [for (final c in chapters) Track.stream(url: '${c['url']}', title: '${c['title']}', subtitle: title, seconds: (c['seconds'] as int?) ?? 0, spoken: true)];
     return _Panel(
       icon: Icons.headphones_rounded,
       title: '$title · ${chapters.length} chapters${_len(data['total_seconds']).isEmpty ? '' : ' · ${_len(data['total_seconds'])}'}',
@@ -1163,6 +1163,7 @@ class _PodcastSheetState extends ConsumerState<_PodcastSheet> {
 
 /// A podcast episode as a stream for the player.
 Track _episodeTrack(Map e, String show, String? showCover) => Track.stream(
+  spoken: true,
   url: '${e['audio']}',
   title: '${e['title']}',
   subtitle: show,

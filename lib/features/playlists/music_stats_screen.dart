@@ -50,7 +50,7 @@ class _MusicStatsScreenState extends ConsumerState<MusicStatsScreen> {
         .where((e) => e.$1 != null)
         .take(6)
         .toList();
-    final colour = const Color(0xFF1DB954);
+    final colour = AppLook.brand(const Color(0xFF1DB954));
 
     Widget card(String title, Widget child) => Padding(
       padding: const EdgeInsets.fromLTRB(Space.l, Space.l, Space.l, 0),

@@ -108,15 +108,14 @@ class _Head extends StatelessWidget {
 }
 
 class _Pill extends StatelessWidget {
-  const _Pill(this.text, {this.icon, this.color, this.filled = false});
+  const _Pill(this.text, {this.icon, this.filled = false});
   final String text;
   final IconData? icon;
-  final Color? color;
   final bool filled;
 
   @override
   Widget build(BuildContext context) {
-    final c = color ?? AppColors.text2;
+    final c = AppColors.text2;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
