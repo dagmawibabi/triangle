@@ -62,8 +62,13 @@ enum SettingsSection {
   ),
   appearance(
     'Appearance',
-    'Accent, chat text and code colours',
+    'Theme, accent, clock, drawer and lists',
     Icons.palette_outlined,
+  ),
+  chat(
+    'Chat',
+    'Text, layout, answers and code in the AI chat',
+    Icons.chat_bubble_outline_rounded,
   ),
   account(
     'Telegram session',
@@ -623,71 +628,6 @@ class SettingsScreen extends ConsumerWidget {
                           ),
                         ],
                       ),
-                    ),
-                  ],
-                ),
-                const _Header('Answers'),
-                _Card(
-                  children: [
-                    ListTile(
-                      leading: lead(const Icon(Icons.short_text_rounded)),
-                      title: const Text('Answer length'),
-                      subtitle: Text(
-                        s.answerStyle.explanation,
-                        style: context.text.bodySmall,
-                      ),
-                      trailing: DropdownButton<AnswerStyle>(
-                        value: s.answerStyle,
-                        underline: const SizedBox(),
-                        items: [
-                          for (final v in AnswerStyle.values)
-                            DropdownMenuItem(value: v, child: Text(v.label)),
-                        ],
-                        onChanged: (v) {
-                          if (v != null) ctl.setAnswerStyle(v);
-                        },
-                      ),
-                    ),
-                    const Divider(indent: 56),
-                    ListTile(
-                      leading: lead(const Icon(Icons.language_rounded)),
-                      title: const Text('Answer language'),
-                      subtitle: Text(
-                        'The language the assistant writes in',
-                        style: context.text.bodySmall,
-                      ),
-                      trailing: DropdownButton<String>(
-                        value: s.answerLanguage,
-                        underline: const SizedBox(),
-                        items: [
-                          const DropdownMenuItem(
-                            value: '',
-                            child: Text('Same as mine'),
-                          ),
-                          for (final v in translateLanguages.values)
-                            DropdownMenuItem(value: v, child: Text(v)),
-                        ],
-                        onChanged: (v) {
-                          if (v != null) ctl.setAnswerLanguage(v);
-                        },
-                      ),
-                    ),
-                    const Divider(indent: 56),
-                    ListTile(
-                      leading: lead(const Icon(Icons.repeat_rounded)),
-                      title: const Text('Steps per answer'),
-                      subtitle: Text(
-                        'Up to ${s.maxSteps} rounds of tool calls. More digs deeper but costs more.',
-                        style: context.text.bodySmall,
-                      ),
-                    ),
-                    Slider(
-                      value: s.maxSteps.toDouble().clamp(4, 30),
-                      min: 4,
-                      max: 30,
-                      divisions: 26,
-                      label: '${s.maxSteps}',
-                      onChanged: (v) => ctl.setMaxSteps(v.round()),
                     ),
                   ],
                 ),
@@ -1372,62 +1312,6 @@ class SettingsScreen extends ConsumerWidget {
                     _AppearancePreview(accent: AppColors.activeAccent, fontSize: s.chatFontSize),
                   ],
                 ),
-                const _Header('Text'),
-                _Card(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(Space.l, Space.l, Space.l, Space.s),
-                      child: Row(
-                        children: [
-                          Text('Chat text size', style: context.text.titleSmall),
-                          const Spacer(),
-                          Text('${s.chatFontSize.toStringAsFixed(0)} pt', style: context.text.bodySmall?.copyWith(color: AppColors.text3)),
-                        ],
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: Space.s),
-                      child: Row(
-                        children: [
-                          Text('A', style: TextStyle(fontSize: 12, color: AppColors.text3)),
-                          Expanded(
-                            child: Slider(
-                              value: s.chatFontSize,
-                              min: 13,
-                              max: 21,
-                              divisions: 8,
-                              label: '${s.chatFontSize.toStringAsFixed(0)} pt',
-                              onChanged: ctl.setChatFontSize,
-                            ),
-                          ),
-                          Text('A', style: TextStyle(fontSize: 20, color: AppColors.text3)),
-                        ],
-                      ),
-                    ),
-                    const Divider(indent: Space.l, endIndent: Space.l),
-                    Padding(
-                      padding: const EdgeInsets.all(Space.l),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Chat font', style: context.text.titleSmall),
-                          const SizedBox(height: Space.m),
-                          SizedBox(
-                            width: double.infinity,
-                            child: SegmentedButton<ChatFont>(
-                              showSelectedIcon: false,
-                              segments: [
-                                for (final f in ChatFont.values) ButtonSegment(value: f, label: Text(f.label, style: TextStyle(fontFamily: f.family))),
-                              ],
-                              selected: {s.chatFont},
-                              onSelectionChanged: (v) => ctl.setChatFont(v.first),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
                 const _Header('Everywhere'),
                 _Card(
                   children: [
@@ -1458,31 +1342,6 @@ class SettingsScreen extends ConsumerWidget {
                         onChanged: (p) {
                           if (p != null) ctl.setStartPage(p.name);
                         },
-                      ),
-                    ),
-                    const Divider(indent: Space.l, endIndent: Space.l),
-                    Padding(
-                      padding: const EdgeInsets.all(Space.l),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          SegmentedButton<bool>(
-                            showSelectedIcon: false,
-                            segments: const [
-                              ButtonSegment(value: false, icon: Icon(Icons.add_comment_outlined), label: Text('New chat')),
-                              ButtonSegment(value: true, icon: Icon(Icons.history_rounded), label: Text('Last chat')),
-                            ],
-                            selected: {s.openLastChat},
-                            onSelectionChanged: (v) => ctl.setOpenLastChat(v.first),
-                          ),
-                          const SizedBox(height: Space.s),
-                          Text(
-                            s.openLastChat
-                                ? 'Opening Triangle shows the chat you last had open. Switching back from another app always keeps where you were.'
-                                : 'Opening Triangle starts a new chat. Switching back from another app always keeps where you were.',
-                            style: context.text.bodySmall,
-                          ),
-                        ],
                       ),
                     ),
                   ],
@@ -1541,84 +1400,6 @@ class SettingsScreen extends ConsumerWidget {
                         onChanged: (v) {
                           if (v != null) ctl.setTranslateTo(v);
                         },
-                      ),
-                    ),
-                  ],
-                ),
-                const _Header('AI chat'),
-                _Card(
-                  children: [
-                    ..._dividedSwitches(context, [
-                      (Icons.density_small_rounded, 'Compact chat', 'Less space between messages', s.compactChat, ctl.setCompactChat),
-                      (Icons.schedule_outlined, 'Dates and time', 'Times on messages and a divider for each day', s.showChatDateTime, ctl.setShowChatDateTime),
-                      (Icons.swap_horiz_rounded, 'Model chip', 'Shows and switches the chat model, above where you type', s.showModelChip, ctl.setShowModelChip),
-                      (Icons.vertical_align_bottom_rounded, 'Scroll-to-bottom button', 'The arrow that jumps to the newest message', s.showScrollToBottom, ctl.setShowScrollToBottom),
-                    ]),
-                  ],
-                ),
-                const _Header('AI answers'),
-                _Card(
-                  children: [
-                    ..._dividedSwitches(context, [
-                      (Icons.lightbulb_outline_rounded, 'Show thinking', 'The model\'s reasoning above its answer', s.showThinking, ctl.setShowThinking),
-                      (Icons.build_circle_outlined, 'Show tool calls', 'A card for each tool the assistant uses. Approvals always show.', s.showToolCalls, ctl.setShowToolCalls),
-                      (Icons.label_outline_rounded, 'Model name', 'Which model wrote each answer', s.showModelName, ctl.setShowModelName),
-                      (Icons.copy_outlined, 'Copy button', 'Under each answer', s.showChatCopyButton, ctl.setShowChatCopyButton),
-                      (Icons.volume_up_outlined, 'Speak button', 'Read an answer aloud from under it', s.showChatSpeakButton, ctl.setShowChatSpeakButton),
-                      (
-                        Icons.toll_outlined,
-                        'Tokens and cost',
-                        'A small line under each reply: tokens in and out, cached and reasoning tokens, and what it cost',
-                        s.showMessageUsage,
-                        ctl.setShowMessageUsage,
-                      ),
-                    ]),
-                  ],
-                ),
-                const _Header('Code'),
-                _Card(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.all(Space.l),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Text('Highlight theme', style: context.text.titleSmall),
-                          const SizedBox(height: 2),
-                          Text('Code in answers and in the code editor', style: context.text.bodySmall),
-                          const SizedBox(height: Space.m),
-                          Wrap(
-                            spacing: Space.s,
-                            runSpacing: Space.s,
-                            children: [
-                              for (final v in CodeThemeChoice.values)
-                                ChoiceChip(
-                                  label: Text(v.label),
-                                  selected: s.codeTheme == v,
-                                  onSelected: (_) => ctl.setCodeTheme(v),
-                                ),
-                            ],
-                          ),
-                          const SizedBox(height: Space.m),
-                          Container(
-                            padding: const EdgeInsets.all(Space.m),
-                            decoration: BoxDecoration(
-                              color: AppColors.bg,
-                              borderRadius: BorderRadius.circular(Radii.m),
-                              border: Border.all(color: AppColors.line),
-                            ),
-                            child: HighlightedCode(
-                              language: 'python',
-                              theme: s.codeTheme,
-                              code: '# Unread messages per chat\n'
-                                  'def unread(chats, limit=5):\n'
-                                  '    busy = [c for c in chats if c.unread > 0]\n'
-                                  '    return sorted(busy, key=lambda c: -c.unread)[:limit]\n'
-                                  '\n'
-                                  'print(unread(my_chats), "done", 42)',
-                            ),
-                          ),
-                        ],
                       ),
                     ),
                   ],
@@ -1705,6 +1486,242 @@ class SettingsScreen extends ConsumerWidget {
                           ref.read(marketProvider.notifier).setInDrawer,
                         ),
                       ],
+                    ]),
+                  ],
+                ),
+              ],
+              if (section == SettingsSection.chat) ...[
+                const _Header('Text'),
+                _Card(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(Space.l, Space.l, Space.l, Space.s),
+                      child: Row(
+                        children: [
+                          Text('Chat text size', style: context.text.titleSmall),
+                          const Spacer(),
+                          Text('${s.chatFontSize.toStringAsFixed(0)} pt', style: context.text.bodySmall?.copyWith(color: AppColors.text3)),
+                        ],
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: Space.s),
+                      child: Row(
+                        children: [
+                          Text('A', style: TextStyle(fontSize: 12, color: AppColors.text3)),
+                          Expanded(
+                            child: Slider(
+                              value: s.chatFontSize,
+                              min: 13,
+                              max: 21,
+                              divisions: 8,
+                              label: '${s.chatFontSize.toStringAsFixed(0)} pt',
+                              onChanged: ctl.setChatFontSize,
+                            ),
+                          ),
+                          Text('A', style: TextStyle(fontSize: 20, color: AppColors.text3)),
+                        ],
+                      ),
+                    ),
+                    const Divider(indent: Space.l, endIndent: Space.l),
+                    Padding(
+                      padding: const EdgeInsets.all(Space.l),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Chat font', style: context.text.titleSmall),
+                          const SizedBox(height: Space.m),
+                          SizedBox(
+                            width: double.infinity,
+                            child: SegmentedButton<ChatFont>(
+                              showSelectedIcon: false,
+                              segments: [
+                                for (final f in ChatFont.values) ButtonSegment(value: f, label: Text(f.label, style: TextStyle(fontFamily: f.family))),
+                              ],
+                              selected: {s.chatFont},
+                              onSelectionChanged: (v) => ctl.setChatFont(v.first),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Divider(indent: Space.l, endIndent: Space.l),
+                    _AppearancePreview(accent: AppColors.activeAccent, fontSize: s.chatFontSize, fontFamily: s.chatFont.family),
+                  ],
+                ),
+                const _Header('Layout'),
+                _Card(
+                  children: [
+                    ..._dividedSwitches(context, [
+                      (Icons.density_small_rounded, 'Compact chat', 'Less space between messages', s.compactChat, ctl.setCompactChat),
+                      (Icons.schedule_outlined, 'Dates and time', 'Times on messages and a divider for each day', s.showChatDateTime, ctl.setShowChatDateTime),
+                      (Icons.swap_horiz_rounded, 'Model chip', 'Shows and switches the chat model, above where you type', s.showModelChip, ctl.setShowModelChip),
+                      (Icons.vertical_align_bottom_rounded, 'Scroll-to-bottom button', 'The arrow that jumps to the newest message', s.showScrollToBottom, ctl.setShowScrollToBottom),
+                    ]),
+                  ],
+                ),
+                const _Header('Answers', note: 'How the assistant writes'),
+                _Card(
+                  children: [
+                    ListTile(
+                      leading: lead(const Icon(Icons.short_text_rounded)),
+                      title: const Text('Answer length'),
+                      subtitle: Text(
+                        s.answerStyle.explanation,
+                        style: context.text.bodySmall,
+                      ),
+                      trailing: DropdownButton<AnswerStyle>(
+                        value: s.answerStyle,
+                        underline: const SizedBox(),
+                        items: [
+                          for (final v in AnswerStyle.values)
+                            DropdownMenuItem(value: v, child: Text(v.label)),
+                        ],
+                        onChanged: (v) {
+                          if (v != null) ctl.setAnswerStyle(v);
+                        },
+                      ),
+                    ),
+                    const Divider(indent: 56),
+                    ListTile(
+                      leading: lead(const Icon(Icons.language_rounded)),
+                      title: const Text('Answer language'),
+                      subtitle: Text(
+                        'The language the assistant writes in',
+                        style: context.text.bodySmall,
+                      ),
+                      trailing: DropdownButton<String>(
+                        value: s.answerLanguage,
+                        underline: const SizedBox(),
+                        items: [
+                          const DropdownMenuItem(
+                            value: '',
+                            child: Text('Same as mine'),
+                          ),
+                          for (final v in translateLanguages.values)
+                            DropdownMenuItem(value: v, child: Text(v)),
+                        ],
+                        onChanged: (v) {
+                          if (v != null) ctl.setAnswerLanguage(v);
+                        },
+                      ),
+                    ),
+                    const Divider(indent: 56),
+                    ListTile(
+                      leading: lead(const Icon(Icons.repeat_rounded)),
+                      title: const Text('Steps per answer'),
+                      subtitle: Text(
+                        'Up to ${s.maxSteps} rounds of tool calls. More digs deeper but costs more.',
+                        style: context.text.bodySmall,
+                      ),
+                    ),
+                    Slider(
+                      value: s.maxSteps.toDouble().clamp(4, 30),
+                      min: 4,
+                      max: 30,
+                      divisions: 26,
+                      label: '${s.maxSteps}',
+                      onChanged: (v) => ctl.setMaxSteps(v.round()),
+                    ),
+                  ],
+                ),
+                const _Header('Under each answer'),
+                _Card(
+                  children: [
+                    ..._dividedSwitches(context, [
+                      (Icons.lightbulb_outline_rounded, 'Show thinking', 'The model\'s reasoning above its answer', s.showThinking, ctl.setShowThinking),
+                      (Icons.build_circle_outlined, 'Show tool calls', 'A card for each tool the assistant uses. Approvals always show.', s.showToolCalls, ctl.setShowToolCalls),
+                      (Icons.label_outline_rounded, 'Model name', 'Which model wrote each answer', s.showModelName, ctl.setShowModelName),
+                      (Icons.copy_outlined, 'Copy button', 'Under each answer', s.showChatCopyButton, ctl.setShowChatCopyButton),
+                      (Icons.volume_up_outlined, 'Speak button', 'Read an answer aloud from under it', s.showChatSpeakButton, ctl.setShowChatSpeakButton),
+                      (
+                        Icons.toll_outlined,
+                        'Tokens and cost',
+                        'A small line under each reply: tokens in and out, cached and reasoning tokens, and what it cost',
+                        s.showMessageUsage,
+                        ctl.setShowMessageUsage,
+                      ),
+                    ]),
+                  ],
+                ),
+                const _Header('Code'),
+                _Card(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(Space.l),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Text('Highlight theme', style: context.text.titleSmall),
+                          const SizedBox(height: 2),
+                          Text('Code in answers and in the code editor', style: context.text.bodySmall),
+                          const SizedBox(height: Space.m),
+                          Wrap(
+                            spacing: Space.s,
+                            runSpacing: Space.s,
+                            children: [
+                              for (final v in CodeThemeChoice.values)
+                                ChoiceChip(
+                                  label: Text(v.label),
+                                  selected: s.codeTheme == v,
+                                  onSelected: (_) => ctl.setCodeTheme(v),
+                                ),
+                            ],
+                          ),
+                          const SizedBox(height: Space.m),
+                          Container(
+                            padding: const EdgeInsets.all(Space.m),
+                            decoration: BoxDecoration(
+                              color: AppColors.bg,
+                              borderRadius: BorderRadius.circular(Radii.m),
+                              border: Border.all(color: AppColors.line),
+                            ),
+                            child: HighlightedCode(
+                              language: 'python',
+                              theme: s.codeTheme,
+                              code: '# Unread messages per chat\n'
+                                  'def unread(chats, limit=5):\n'
+                                  '    busy = [c for c in chats if c.unread > 0]\n'
+                                  '    return sorted(busy, key=lambda c: -c.unread)[:limit]\n'
+                                  '\n'
+                                  'print(unread(my_chats), "done", 42)',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const _Header('Conversations'),
+                _Card(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(Space.l),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          SegmentedButton<bool>(
+                            showSelectedIcon: false,
+                            segments: const [
+                              ButtonSegment(value: false, icon: Icon(Icons.add_comment_outlined), label: Text('New chat')),
+                              ButtonSegment(value: true, icon: Icon(Icons.history_rounded), label: Text('Last chat')),
+                            ],
+                            selected: {s.openLastChat},
+                            onSelectionChanged: (v) => ctl.setOpenLastChat(v.first),
+                          ),
+                          const SizedBox(height: Space.s),
+                          Text(
+                            s.openLastChat
+                                ? 'Opening Triangle shows the chat you last had open. Switching back from another app always keeps where you were.'
+                                : 'Opening Triangle starts a new chat. Switching back from another app always keeps where you were.',
+                            style: context.text.bodySmall,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Divider(indent: Space.l, endIndent: Space.l),
+                    ..._dividedSwitches(context, [
+                      (Icons.auto_mode_rounded, 'Compact automatically', 'At 80% of the context, older messages are summarised before the next answer', s.autoCompact, ctl.setAutoCompact),
                     ]),
                   ],
                 ),
@@ -2053,9 +2070,10 @@ class _ModelTile extends StatelessWidget {
 }
 
 class _AppearancePreview extends StatelessWidget {
-  const _AppearancePreview({required this.accent, required this.fontSize});
+  const _AppearancePreview({required this.accent, required this.fontSize, this.fontFamily});
   final Color accent;
   final double fontSize;
+  final String? fontFamily;
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -2115,7 +2133,7 @@ class _AppearancePreview extends StatelessWidget {
                   ),
                   child: Text(
                     'This is how messages will read.',
-                    style: TextStyle(fontSize: fontSize, color: AppColors.text),
+                    style: TextStyle(fontSize: fontSize, fontFamily: fontFamily, color: AppColors.text),
                   ),
                 ),
               ),

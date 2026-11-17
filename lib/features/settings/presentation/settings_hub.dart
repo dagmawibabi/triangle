@@ -532,11 +532,20 @@ class SettingsHub extends ConsumerWidget {
               group('Appearance', [
                 tile(
                   SettingsSection.appearance.icon,
-                  'Theme & chat',
-                  '${s.themeMode.label} theme · ${s.accent.label} accent · ${s.chatFontSize.toStringAsFixed(0)} pt',
+                  'Theme',
+                  '${s.themeMode.label} theme · ${s.accent.label} accent · ${s.use24h ? '24-hour' : '12-hour'} clock',
                   () => _open(
                     context,
                     const SettingsScreen(section: SettingsSection.appearance),
+                  ),
+                ),
+                tile(
+                  SettingsSection.chat.icon,
+                  SettingsSection.chat.title,
+                  '${s.chatFontSize.toStringAsFixed(0)} pt ${s.chatFont.label.toLowerCase()} · ${s.codeTheme.label} code · ${s.answerStyle.label.toLowerCase()} answers',
+                  () => _open(
+                    context,
+                    const SettingsScreen(section: SettingsSection.chat),
                   ),
                 ),
                 tile(

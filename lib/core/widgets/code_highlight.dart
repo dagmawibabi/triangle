@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../app/theme.dart';
 import '../../features/settings/data/settings.dart';
 
-/// Colours for code, from the code theme chosen in Settings → Appearance.
+/// Colours for code, from the code theme chosen in Settings → Chat.
 class CodePalette {
   const CodePalette({
     required this.keyword,

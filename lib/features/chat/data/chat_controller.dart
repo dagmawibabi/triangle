@@ -399,7 +399,7 @@ class ChatController extends Notifier<ChatState> {
   static const _lastChatKey = 'last_open_chat';
 
   /// The app was opened: the last chat the person had open, or a new one,
-  /// as Settings → Appearance says.
+  /// as Settings → Chat says.
   Future<void> appOpened() async {
     // Watches and routines that start when the app is opened.
     ref.read(deviceEventsProvider).appOpened();

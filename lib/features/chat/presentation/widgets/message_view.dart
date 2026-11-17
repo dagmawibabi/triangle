@@ -24,6 +24,9 @@ import 'thinking_block.dart';
 import 'tool_card.dart';
 import '../../../telegram/presentation/link_opener.dart';
 import '../../../../core/widgets/fullscreen_image.dart';
+import '../../../../core/widgets/net_image.dart' show Skeleton;
+import '../../../../core/widgets/side_scroll.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 final _postRef = RegExp(r'post:(-?\d+):(\d+)');
 
@@ -258,6 +261,7 @@ class AssistantMessage extends ConsumerWidget {
                         ref.watch(settingsProvider).codeTheme,
                       ),
                       builders: {'pre': _CodeBlockBuilder(_CodeHighlighter(ref.watch(settingsProvider).codeTheme))},
+                      imageBuilder: (uri, title, alt) => MarkdownImage(uri: uri, alt: alt),
                       onTapLink: (text, href, title) => _openLink(context, href),
                     )
                   else
@@ -559,6 +563,7 @@ Future<void> showSelectableAnswer(
                         styleSheet: style(context),
                         syntaxHighlighter: highlighter,
                         builders: {'pre': _CodeBlockBuilder(highlighter)},
+                        imageBuilder: (uri, title, alt) => MarkdownImage(uri: uri, alt: alt),
                         onTapLink: (text, href, title) => onLink(context, href),
                       )
                     else
@@ -666,8 +671,7 @@ class _CodeBlock extends StatelessWidget {
                 ],
               ),
             ),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
+            SideScroll(
               padding: const EdgeInsets.all(Space.m),
               // Plain text, so a tap anywhere opens the editor.
               child: Text.rich(TextSpan(style: codeTextStyle, children: highlightCode(code, language, CodePalette.of(theme)))),
@@ -1017,10 +1021,21 @@ class _MarkdownTableState extends State<MarkdownTable> {
     return cells.isNotEmpty && cells.every(_number.hasMatch);
   }
 
-  TextSpan _span(md.Node node, TextStyle style) {
+  InlineSpan _span(md.Node node, TextStyle style) {
     if (node is md.Text) return TextSpan(text: node.text, style: style);
     if (node is! md.Element) return TextSpan(text: node.textContent, style: style);
     if (node.tag == 'br') return const TextSpan(text: '\n');
+    if (node.tag == 'img') {
+      final uri = Uri.tryParse(node.attributes['src'] ?? '');
+      if (uri == null) return TextSpan(text: node.attributes['alt'] ?? '', style: style);
+      return WidgetSpan(
+        alignment: PlaceholderAlignment.middle,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 240, maxHeight: 160),
+          child: MarkdownImage(uri: uri, alt: node.attributes['alt'], compact: true),
+        ),
+      );
+    }
     final next = switch (node.tag) {
       'strong' => style.copyWith(fontWeight: FontWeight.w700),
       'em' => style.copyWith(fontStyle: FontStyle.italic),
@@ -1098,16 +1113,14 @@ class _MarkdownTableState extends State<MarkdownTable> {
             border: Border.all(color: AppColors.line),
           ),
           clipBehavior: Clip.antiAlias,
-          child: Scrollbar(
+          // Claims sideways drags ahead of the chat's drawer swipe.
+          child: SideScroll(
             controller: _scroll,
-            child: SingleChildScrollView(
-              controller: _scroll,
-              scrollDirection: Axis.horizontal,
-              child: ConstrainedBox(
-                // A narrow table still spans the chat's width.
-                constraints: BoxConstraints(minWidth: box.maxWidth - 2),
-                child: IntrinsicWidth(child: table),
-              ),
+            scrollbar: true,
+            child: ConstrainedBox(
+              // A narrow table still spans the chat's width.
+              constraints: BoxConstraints(minWidth: box.maxWidth - 2),
+              child: IntrinsicWidth(child: table),
             ),
           ),
         ),
@@ -1236,6 +1249,118 @@ class _FoldedToolsState extends State<_FoldedTools> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// A picture written into an answer's Markdown (`![alt](url)`): web
+/// links, `data:` URIs and local files, SVG included. Sized to the chat's
+/// width and capped in height, with a shimmer while it loads, the alt text
+/// when it can't, and a tap to open it full screen.
+class MarkdownImage extends StatelessWidget {
+  const MarkdownImage({super.key, required this.uri, this.alt, this.compact = false});
+  final Uri uri;
+  final String? alt;
+
+  /// Smaller, for table cells.
+  final bool compact;
+
+  bool get _web => uri.scheme == 'http' || uri.scheme == 'https';
+
+  bool get _svg =>
+      uri.path.toLowerCase().endsWith('.svg') || (uri.scheme == 'data' && (uri.data?.mimeType.contains('svg') ?? false));
+
+  ImageProvider? _provider() {
+    if (_web) return NetworkImage(uri.toString());
+    if (uri.scheme == 'data') {
+      final d = uri.data;
+      return d == null || !d.mimeType.startsWith('image/') ? null : MemoryImage(d.contentAsBytes());
+    }
+    if (uri.scheme == 'file') return FileImage(File.fromUri(uri));
+    if (uri.scheme.isEmpty && (uri.path.startsWith('/') || RegExp(r'^[A-Za-z]:[\/]').hasMatch(uri.path))) {
+      return FileImage(File(Uri.decodeFull(uri.path)));
+    }
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final label = alt?.trim() ?? '';
+    final loading = Skeleton(width: compact ? 120 : 240, height: compact ? 80 : 150, radius: Radii.m);
+    Widget unavailable() => Container(
+      padding: const EdgeInsets.symmetric(horizontal: Space.m, vertical: Space.s),
+      decoration: BoxDecoration(
+        color: AppColors.surface2,
+        borderRadius: BorderRadius.circular(Radii.m),
+        border: Border.all(color: AppColors.line),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.broken_image_outlined, size: 16, color: AppColors.text3),
+          const SizedBox(width: Space.s),
+          Flexible(
+            child: Text(
+              label.isEmpty ? 'Image unavailable' : label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: context.text.bodySmall?.copyWith(color: AppColors.text2),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    final Widget picture;
+    ImageProvider? provider;
+    if (_svg) {
+      // Usually a badge or diagram: drawn as is, not opened full screen.
+      final Widget? svg = _web
+          ? SvgPicture.network(
+              uri.toString(),
+              fit: BoxFit.contain,
+              semanticsLabel: label,
+              placeholderBuilder: (_) => loading,
+              errorBuilder: (_, _, _) => unavailable(),
+            )
+          : uri.scheme == 'data' && uri.data != null
+          ? SvgPicture.memory(uri.data!.contentAsBytes(), fit: BoxFit.contain, semanticsLabel: label, errorBuilder: (_, _, _) => unavailable())
+          : null;
+      if (svg == null) return unavailable();
+      picture = svg;
+    } else {
+      provider = _provider();
+      if (provider == null) return unavailable();
+      picture = Image(
+        image: provider,
+        fit: BoxFit.contain,
+        semanticLabel: label.isEmpty ? null : label,
+        loadingBuilder: (context, child, progress) => progress == null ? child : loading,
+        frameBuilder: (context, child, frame, sync) => sync
+            ? child
+            : AnimatedOpacity(opacity: frame == null ? 0 : 1, duration: const Duration(milliseconds: 200), child: child),
+        errorBuilder: (_, _, _) => unavailable(),
+      );
+    }
+
+    final shown = ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: compact ? 160 : 360),
+      child: ClipRRect(borderRadius: BorderRadius.circular(Radii.m), child: picture),
+    );
+    final p = provider;
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: compact ? 0 : Space.xs),
+      child: p == null
+          ? shown
+          : MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                onTap: () => _web
+                    ? openFullscreenUrl(context, uri.toString(), title: label.isEmpty ? null : label)
+                    : openFullscreenImage(context, p, title: label.isEmpty ? null : label),
+                child: shown,
+              ),
+            ),
     );
   }
 }

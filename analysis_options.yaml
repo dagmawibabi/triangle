@@ -18,6 +18,9 @@ analyzer:
     - windows/**
     - macos/**
     - linux/**
+    - site/node_modules/**
+    # Runs from companion/ (see site/DESIGN.md), so it only resolves there.
+    - site/scripts/export_companion_tools_test.dart
 
 linter:
   # The lint rules applied to this project can be customized in the

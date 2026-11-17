@@ -9,6 +9,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app/theme.dart';
 import '../../../core/widgets/brand_mark.dart';
+import '../../../core/widgets/side_scroll.dart';
+import 'package:flutter/gestures.dart' show DeviceGestureSettings;
 import '../../ai/data/ai.dart';
 import '../../assistant/notifications.dart';
 import '../../assistant/watch_engine.dart';
@@ -98,7 +100,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
   }
 
-  /// The app was opened: a new chat or the last one, as Appearance says.
+  /// The app was opened: a new chat or the last one, as Settings → Chat says.
   void _opened() {
     final last = ref.read(settingsProvider).openLastChat;
     unawaited(ref.read(chatControllerProvider.notifier).appOpened());
@@ -279,10 +281,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final summary = chat.history.where((h) => h.id == chat.conversation.id).firstOrNull;
     final chatTitle = summary?.title ?? chat.conversation.title;
 
-    return Scaffold(
-      drawer: HistoryDrawer(onOpenSettings: _openSettings),
+    // The drawer's page-wide swipe waits for a longer drag than usual, so
+    // tables, code and cards that scroll sideways claim theirs first; the
+    // page itself and the drawer's contents keep the normal feel.
+    final gestures = MediaQuery.maybeGestureSettingsOf(context);
+    return GestureSettingsScope(
+      settings: DeviceGestureSettings(touchSlop: 24),
+      child: Scaffold(
+      drawer: GestureSettingsScope(settings: gestures, child: HistoryDrawer(onOpenSettings: _openSettings)),
       // A swipe from anywhere opens the drawer, not just from the edge.
-      // Sideways scrolling inside (code, cards) still wins where it can.
+      // Sideways scrolling inside (tables, code, cards) still wins.
       drawerEdgeDragWidth: MediaQuery.sizeOf(context).width,
       appBar: AppBar(
         leading: lead(Builder(
@@ -321,7 +329,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           const SizedBox(width: Space.xs),
         ],
       ),
-      body: SafeArea(
+      body: GestureSettingsScope(
+        settings: gestures,
+        child: SafeArea(
         top: false,
         child: Column(
           children: [
@@ -397,6 +407,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               const _ChatOffBar(),
           ],
         ),
+      ),
+      ),
       ),
     );
   }
